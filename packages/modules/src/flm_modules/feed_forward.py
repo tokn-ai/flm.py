@@ -12,15 +12,13 @@ class SwiGLU(nn.Module):
     self,
     d_model: int,
     d_ff: int,
-    dropout: float = 0.0,
     bias: bool = False,
   ) -> None:
     super().__init__()
     self.up = nn.Linear(d_model, 2 * d_ff, bias=bias)
     self.down = nn.Linear(d_ff, d_model, bias=bias)
-    self.dropout = nn.Dropout(dropout)
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     gate, value = self.up(x).chunk(2, dim=-1)
     x = F.silu(gate) * value
-    return self.down(self.dropout(x))
+    return self.down(x)

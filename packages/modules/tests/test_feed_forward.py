@@ -6,7 +6,7 @@ from transformers.models.llama.modeling_llama import LlamaMLP
 
 
 def test_swiglu_preserves_model_dimension(random_input) -> None:
-  layer = SwiGLU(d_model=6, d_ff=10, dropout=0.0)
+  layer = SwiGLU(d_model=6, d_ff=10)
   x = random_input(2, 4, 6)
 
   y = layer(x)
@@ -14,8 +14,8 @@ def test_swiglu_preserves_model_dimension(random_input) -> None:
   assert y.shape == x.shape
 
 
-def test_swiglu_matches_manual_computation_without_dropout(random_input) -> None:
-  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.0, bias=True)
+def test_swiglu_matches_manual_computation(random_input) -> None:
+  layer = SwiGLU(d_model=4, d_ff=5, bias=True)
   x = random_input(2, 3, 4)
 
   gate, value = layer.up(x).chunk(2, dim=-1)
@@ -25,7 +25,7 @@ def test_swiglu_matches_manual_computation_without_dropout(random_input) -> None
 
 
 def test_swiglu_matches_saved_output(random_input) -> None:
-  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.0, bias=True)
+  layer = SwiGLU(d_model=4, d_ff=5, bias=True)
   x = random_input(2, 3, 4)
 
   y = layer(x)
@@ -43,14 +43,6 @@ def test_swiglu_matches_saved_output(random_input) -> None:
   )
 
 
-def test_swiglu_dropout_variant_is_deterministic_in_eval(random_input) -> None:
-  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.9)
-  x = random_input(2, 3, 4)
-  layer.eval()
-
-  torch.testing.assert_close(layer(x), layer(x))
-
-
 def test_swiglu_matches_transformers_llama_mlp(random_input) -> None:
   config = LlamaConfig(
     hidden_size=4,
@@ -61,7 +53,7 @@ def test_swiglu_matches_transformers_llama_mlp(random_input) -> None:
     mlp_bias=False,
   )
   reference = LlamaMLP(config)
-  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.0, bias=False)
+  layer = SwiGLU(d_model=4, d_ff=5, bias=False)
   x = random_input(2, 3, 4)
 
   with torch.no_grad():

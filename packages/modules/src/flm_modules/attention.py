@@ -14,7 +14,6 @@ class CausalSelfAttention(nn.Module):
     self,
     d_model: int,
     n_heads: int,
-    dropout: float = 0.0,
     bias: bool = False,
     rope_base: float = 10_000.0,
   ) -> None:
@@ -25,7 +24,6 @@ class CausalSelfAttention(nn.Module):
     self.d_model = d_model
     self.n_heads = n_heads
     self.head_dim = d_model // n_heads
-    self.dropout = dropout
 
     self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
     self.out = nn.Linear(d_model, d_model, bias=bias)
@@ -46,7 +44,7 @@ class CausalSelfAttention(nn.Module):
       k,
       v,
       attn_mask=None,
-      dropout_p=self.dropout if self.training else 0.0,
+      dropout_p=0.0,
       is_causal=True,
     )
     y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)

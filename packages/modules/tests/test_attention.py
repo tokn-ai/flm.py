@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover
 def test_causal_self_attention_preserves_input_shape(
   random_input,
 ) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, dropout=0.0)
+  layer = CausalSelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
 
   y = layer(x)
@@ -22,7 +22,7 @@ def test_causal_self_attention_preserves_input_shape(
 
 
 def test_causal_self_attention_matches_saved_output(random_input) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, dropout=0.0)
+  layer = CausalSelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
 
   y = layer(x)
@@ -47,7 +47,7 @@ def test_causal_self_attention_matches_saved_output(random_input) -> None:
 def test_causal_self_attention_matches_scaled_dot_product_attention(
   random_input,
 ) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, dropout=0.0)
+  layer = CausalSelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
   batch_size, seq_len, _ = x.shape
 
@@ -83,7 +83,7 @@ def test_causal_self_attention_matches_flash_attention_backend(random_input) -> 
   if sdpa_kernel is None or SDPBackend is None:
     pytest.skip("SDPA backend controls unavailable")
 
-  layer = CausalSelfAttention(d_model=8, n_heads=2, dropout=0.0).cuda().half()
+  layer = CausalSelfAttention(d_model=8, n_heads=2).cuda().half()
   x = random_input(3, 5, 8).cuda().half()
   layer.eval()
 
@@ -102,17 +102,6 @@ def test_causal_self_attention_supports_bias_variant() -> None:
 
   assert layer.qkv.bias is not None
   assert layer.out.bias is not None
-
-
-def test_causal_self_attention_disables_dropout_in_eval(random_input) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, dropout=0.8)
-  x = random_input(2, 4, 8)
-  layer.eval()
-
-  y1 = layer(x)
-  y2 = layer(x)
-
-  torch.testing.assert_close(y1, y2)
 
 
 def test_causal_self_attention_rejects_invalid_head_count() -> None:

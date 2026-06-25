@@ -17,7 +17,6 @@ class TransformerBlock(nn.Module):
     self.attn = CausalSelfAttention(
       d_model=config.d_model,
       n_heads=config.n_heads,
-      dropout=config.dropout,
       bias=config.bias,
       rope_base=config.rope_base,
     )
@@ -25,7 +24,6 @@ class TransformerBlock(nn.Module):
     self.ffn = SwiGLU(
       d_model=config.d_model,
       d_ff=config.ffn_d_ff,
-      dropout=config.dropout,
       bias=config.bias,
     )
 
@@ -39,7 +37,6 @@ class ReferenceModel(nn.Module):
     super().__init__()
     self.config = config
     self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
-    self.dropout = nn.Dropout(config.dropout)
     self.blocks = nn.ModuleList(
       TransformerBlock(config) for _ in range(config.n_layers)
     )
@@ -58,7 +55,6 @@ class ReferenceModel(nn.Module):
       raise ValueError("sequence length exceeds config.max_seq_len")
 
     x = self.token_embedding(input_ids)
-    x = self.dropout(x)
     for block in self.blocks:
       x = block(x)
     logits = self.lm_head(self.norm(x))

@@ -13,7 +13,6 @@ class ReferenceModelConfig:
   n_layers: int = 12
   n_heads: int = 12
   d_ff: int | None = None
-  dropout: float = 0.0
   bias: bool = False
   rope_base: float = 10_000.0
   norm_eps: float = 1e-6

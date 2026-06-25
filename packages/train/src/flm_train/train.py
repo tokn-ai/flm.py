@@ -33,7 +33,6 @@ class TrainConfig:
   n_layers: int = 2
   n_heads: int = 4
   d_ff: int | None = None
-  dropout: float = 0.0
   device: str = "cpu"
   seed: int = 42
 
@@ -67,7 +66,6 @@ def train_on_repo_sources(config: TrainConfig) -> TrainingResult:
     n_layers=config.n_layers,
     n_heads=config.n_heads,
     d_ff=config.d_ff,
-    dropout=config.dropout,
   )
   model = ReferenceModel(model_config).to(config.device)
   optimizer = configure_adamw(
@@ -117,7 +115,6 @@ def parse_args() -> TrainConfig:
   parser.add_argument("--n-layers", type=int, default=2)
   parser.add_argument("--n-heads", type=int, default=4)
   parser.add_argument("--d-ff", type=int, default=None)
-  parser.add_argument("--dropout", type=float, default=0.0)
   parser.add_argument("--device", default="cpu")
   parser.add_argument("--seed", type=int, default=42)
   args = parser.parse_args()
