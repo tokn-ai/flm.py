@@ -417,3 +417,112 @@ class DeepSeekV4HCACompressor(nn.Module):
     positions = positions.unsqueeze(0).expand(batch_size, -1)
     cos, sin = self.rotary_emb(compressed, positions=positions)
     return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
+
+
+class DeepSeekV4CSACompressor(nn.Module):
+  """Stateless DeepSeek V4 compressed sparse attention compressor."""
+
+  def __init__(
+    self,
+    d_model: int,
+    head_dim: int,
+    q_lora_rank: int,
+    compress_rate: int,
+    index_n_heads: int,
+    index_head_dim: int,
+    index_topk: int,
+    rope_head_dim: int | None = None,
+    rope_base: float = 10_000.0,
+    norm_eps: float = 1e-6,
+  ) -> None:
+    super().__init__()
+    if d_model <= 0:
+      raise ValueError("d_model must be positive")
+    if head_dim <= 0:
+      raise ValueError("head_dim must be positive")
+    if compress_rate <= 0:
+      raise ValueError("compress_rate must be positive")
+
+    rope_head_dim = rope_head_dim if rope_head_dim is not None else head_dim
+    self.compress_rate = compress_rate
+    self.head_dim = head_dim
+    self.kv_proj = nn.Linear(d_model, 2 * head_dim, bias=False)
+    self.gate_proj = nn.Linear(d_model, 2 * head_dim, bias=False)
+    self.position_bias = nn.Parameter(torch.zeros(compress_rate, 2 * head_dim))
+    self.kv_norm = RMSNorm(head_dim, eps=norm_eps)
+    self.rotary_emb = DeepSeekV4RotaryEmbedding(
+      head_dim=head_dim,
+      rope_head_dim=rope_head_dim,
+      base=rope_base,
+    )
+    self.indexer = DeepSeekV4Indexer(
+      d_model=d_model,
+      q_lora_rank=q_lora_rank,
+      compress_rate=compress_rate,
+      index_n_heads=index_n_heads,
+      index_head_dim=index_head_dim,
+      index_topk=index_topk,
+      rope_base=rope_base,
+      norm_eps=norm_eps,
+    )
+
+  def forward(
+    self,
+    hidden_states: torch.Tensor,
+    q_residual: torch.Tensor,
+    positions: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size, seq_len, _ = hidden_states.shape
+    compressed = self.compress(hidden_states)
+    compressed_kv = compressed.unsqueeze(1)
+    top_k_indices = self.indexer(hidden_states, q_residual, positions)
+    compressed_len = compressed_kv.shape[2]
+    valid = top_k_indices >= 0
+    safe_indices = torch.where(
+      valid,
+      top_k_indices,
+      torch.full_like(top_k_indices, compressed_len),
+    )
+    block_bias = compressed_kv.new_full(
+      (batch_size, 1, seq_len, compressed_len + 1),
+      float("-inf"),
+    )
+    block_bias.scatter_(-1, safe_indices.unsqueeze(1), 0.0)
+    return compressed_kv, block_bias[..., :compressed_len]
+
+  def compress(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    batch_size = hidden_states.shape[0]
+    kv = self.kv_proj(hidden_states)
+    gate = self.gate_proj(hidden_states)
+    usable = (kv.shape[1] // self.compress_rate) * self.compress_rate
+    chunk_kv = kv[:, :usable]
+    chunk_gate = gate[:, :usable]
+    if chunk_kv.shape[1] == 0:
+      return chunk_kv.new_zeros((batch_size, 0, self.head_dim))
+
+    n_windows = chunk_kv.shape[1] // self.compress_rate
+    ratio = self.compress_rate
+    chunk_kv = chunk_kv.view(batch_size, n_windows, ratio, -1)
+    chunk_gate = chunk_gate.view(batch_size, n_windows, ratio, -1) + self.position_bias
+
+    new_kv = chunk_kv.new_zeros((batch_size, n_windows, 2 * ratio, self.head_dim))
+    new_gate = chunk_gate.new_full(
+      (batch_size, n_windows, 2 * ratio, self.head_dim),
+      float("-inf"),
+    )
+    new_kv[:, :, ratio:] = chunk_kv[..., self.head_dim :]
+    new_gate[:, :, ratio:] = chunk_gate[..., self.head_dim :]
+    if n_windows > 1:
+      new_kv[:, 1:, :ratio] = chunk_kv[:, :-1, :, : self.head_dim]
+      new_gate[:, 1:, :ratio] = chunk_gate[:, :-1, :, : self.head_dim]
+
+    compressed = self.kv_norm(
+      (new_kv * new_gate.softmax(dim=2, dtype=torch.float32).to(new_kv.dtype)).sum(
+        dim=2,
+      )
+    )
+    positions = torch.arange(n_windows, device=compressed.device)
+    positions = positions * self.compress_rate
+    positions = positions.unsqueeze(0).expand(batch_size, -1)
+    cos, sin = self.rotary_emb(compressed, positions=positions)
+    return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
