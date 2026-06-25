@@ -1,8 +1,8 @@
 import torch
 from flm_llm import DeepSeekV4, DeepSeekV4Config
 from flm_modules import (
-  DeepSeekMLA,
   DeepSeekMoE,
+  DeepSeekV4Attention,
   DeepSeekV4HyperConnection,
   DeepSeekV4HyperHead,
   SwiGLU,
@@ -27,7 +27,7 @@ def test_deepseek_v4_uses_mla_and_moe_blocks() -> None:
   assert isinstance(model.hc_head, DeepSeekV4HyperHead)
   assert isinstance(model.blocks[0].attn_hc, DeepSeekV4HyperConnection)
   assert isinstance(model.blocks[0].ffn_hc, DeepSeekV4HyperConnection)
-  assert isinstance(model.blocks[0].attn, DeepSeekMLA)
+  assert isinstance(model.blocks[0].attn, DeepSeekV4Attention)
   assert isinstance(model.blocks[0].ffn, SwiGLU)
   assert isinstance(model.blocks[1].ffn, DeepSeekMoE)
   assert isinstance(model.blocks[2].ffn, DeepSeekMoE)
@@ -47,7 +47,8 @@ def test_deepseek_v4_backpropagates() -> None:
   assert model.hc_head.hc_fn.grad is not None
   assert model.blocks[0].attn_hc.fn.grad is not None
   assert model.blocks[0].ffn_hc.fn.grad is not None
-  assert model.blocks[0].attn.kv_a_proj_with_mqa.weight.grad is not None
+  assert model.blocks[0].attn.kv_proj.weight.grad is not None
+  assert model.blocks[0].attn.sinks.grad is not None
   assert model.blocks[-1].ffn.gate.weight.grad is not None
 
 
@@ -61,11 +62,15 @@ def _tiny_config(
     d_model=16,
     n_layers=n_layers,
     n_heads=2,
+    head_dim=8,
     q_lora_rank=8,
     kv_lora_rank=8,
     qk_nope_head_dim=4,
     qk_rope_head_dim=4,
     v_head_dim=8,
+    rope_head_dim=8,
+    o_lora_rank=4,
+    o_groups=2,
     moe_d_ff=16,
     n_routed_experts=4,
     n_shared_experts=1,

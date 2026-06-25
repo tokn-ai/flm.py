@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import torch
 from flm_modules import (
-  DeepSeekMLA,
   DeepSeekMoE,
+  DeepSeekV4Attention,
   DeepSeekV4HyperConnection,
   DeepSeekV4HyperHead,
   ExpertKind,
@@ -31,18 +31,17 @@ class DeepSeekV4Block(nn.Module):
       initializer_range=config.initializer_range,
     )
     self.attn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
-    self.attn = DeepSeekMLA(
+    self.attn = DeepSeekV4Attention(
       d_model=config.d_model,
       n_heads=config.n_heads,
-      kv_lora_rank=config.kv_lora_rank,
-      q_lora_rank=config.q_lora_rank,
-      qk_nope_head_dim=config.qk_nope_head_dim,
-      qk_rope_head_dim=config.qk_rope_head_dim,
-      v_head_dim=config.v_head_dim,
+      head_dim=config.attention_head_dim,
+      q_lora_rank=config.attention_q_lora_rank,
+      o_lora_rank=config.attention_o_lora_rank,
+      o_groups=config.o_groups,
+      rope_head_dim=config.attention_rope_head_dim,
       bias=config.bias,
       rope_base=config.rope_base,
       norm_eps=config.norm_eps,
-      backend=config.attention_backend,
     )
     self.ffn_hc = DeepSeekV4HyperConnection(
       d_model=config.d_model,
@@ -66,6 +65,9 @@ class DeepSeekV4Block(nn.Module):
         n_routed_experts=config.n_routed_experts,
         n_shared_experts=config.n_shared_experts,
         n_experts_per_token=config.n_experts_per_token,
+        n_group=config.n_group,
+        topk_group=config.topk_group,
+        norm_topk_prob=config.norm_topk_prob,
         routed_scaling_factor=config.routed_scaling_factor,
         bias=config.bias,
         scoring_func=RouterScoring.SQRT_SOFTPLUS,
@@ -73,10 +75,19 @@ class DeepSeekV4Block(nn.Module):
         expert_kind=ExpertKind.V4,
       )
 
-  def forward(self, hidden_streams: torch.Tensor) -> torch.Tensor:
+  def forward(
+    self,
+    hidden_streams: torch.Tensor,
+    attention_mask: torch.Tensor,
+    positions: torch.Tensor,
+  ) -> torch.Tensor:
     dtype = hidden_streams.dtype
     post, comb, collapsed = self.attn_hc(hidden_streams)
-    attn_output = self.attn(self.attn_norm(collapsed))
+    attn_output = self.attn(
+      self.attn_norm(collapsed),
+      attention_mask=attention_mask,
+      positions=positions,
+    )
     hidden_streams = post.to(dtype).unsqueeze(-1) * attn_output.unsqueeze(
       -2
     ) + torch.matmul(
@@ -123,8 +134,15 @@ class DeepSeekV4(nn.Module):
 
     x = self.token_embedding(input_ids)
     x = x.unsqueeze(2).expand(-1, -1, self.config.hc_mult, -1).contiguous()
+    positions = torch.arange(input_ids.shape[1], device=input_ids.device)
+    attention_mask = _causal_mask(
+      batch_size=input_ids.shape[0],
+      seq_len=input_ids.shape[1],
+      dtype=x.dtype,
+      device=x.device,
+    )
     for block in self.blocks:
-      x = block(x)
+      x = block(x, attention_mask=attention_mask, positions=positions)
     logits = self.lm_head(self.norm(self.hc_head(x)))
 
     loss = None
@@ -134,3 +152,14 @@ class DeepSeekV4(nn.Module):
         targets.view(-1),
       )
     return logits, loss
+
+
+def _causal_mask(
+  batch_size: int,
+  seq_len: int,
+  dtype: torch.dtype,
+  device: torch.device,
+) -> torch.Tensor:
+  mask = torch.full((seq_len, seq_len), torch.finfo(dtype).min, device=device)
+  mask = torch.triu(mask, diagonal=1)
+  return mask.view(1, 1, seq_len, seq_len).expand(batch_size, 1, -1, -1)

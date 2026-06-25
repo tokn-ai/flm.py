@@ -34,11 +34,15 @@ class DeepSeekV4Config:
   d_model: int = 1024
   n_layers: int = 12
   n_heads: int = 16
+  head_dim: int | None = None
   q_lora_rank: int | None = None
   kv_lora_rank: int = 512
   qk_nope_head_dim: int = 64
   qk_rope_head_dim: int = 64
   v_head_dim: int = 64
+  rope_head_dim: int | None = None
+  o_lora_rank: int | None = None
+  o_groups: int = 1
   moe_d_ff: int | None = None
   n_routed_experts: int = 8
   n_shared_experts: int = 1
@@ -62,3 +66,27 @@ class DeepSeekV4Config:
     if self.moe_d_ff is not None:
       return self.moe_d_ff
     return int(8 * self.d_model / 3)
+
+  @property
+  def attention_head_dim(self) -> int:
+    if self.head_dim is not None:
+      return self.head_dim
+    return self.v_head_dim
+
+  @property
+  def attention_rope_head_dim(self) -> int:
+    if self.rope_head_dim is not None:
+      return self.rope_head_dim
+    return self.attention_head_dim
+
+  @property
+  def attention_q_lora_rank(self) -> int:
+    if self.q_lora_rank is not None:
+      return self.q_lora_rank
+    return max(1, self.d_model // 2)
+
+  @property
+  def attention_o_lora_rank(self) -> int:
+    if self.o_lora_rank is not None:
+      return self.o_lora_rank
+    return max(1, self.d_model // 4)

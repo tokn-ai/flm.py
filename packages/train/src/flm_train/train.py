@@ -34,12 +34,16 @@ class TrainConfig:
   d_model: int = 128
   n_layers: int = 2
   n_heads: int = 4
+  head_dim: int | None = None
   d_ff: int | None = None
   q_lora_rank: int | None = None
   kv_lora_rank: int = 64
   qk_nope_head_dim: int = 16
   qk_rope_head_dim: int = 16
   v_head_dim: int = 32
+  rope_head_dim: int | None = None
+  o_lora_rank: int | None = None
+  o_groups: int = 1
   n_routed_experts: int = 4
   n_shared_experts: int = 1
   n_experts_per_token: int = 2
@@ -130,11 +134,15 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         d_model=config.d_model,
         n_layers=config.n_layers,
         n_heads=config.n_heads,
+        head_dim=config.head_dim,
         q_lora_rank=config.q_lora_rank,
         kv_lora_rank=config.kv_lora_rank,
         qk_nope_head_dim=config.qk_nope_head_dim,
         qk_rope_head_dim=config.qk_rope_head_dim,
         v_head_dim=config.v_head_dim,
+        rope_head_dim=config.rope_head_dim,
+        o_lora_rank=config.o_lora_rank,
+        o_groups=config.o_groups,
         moe_d_ff=config.d_ff,
         n_routed_experts=config.n_routed_experts,
         n_shared_experts=config.n_shared_experts,
@@ -164,12 +172,16 @@ def parse_args() -> TrainConfig:
   parser.add_argument("--d-model", type=int, default=128)
   parser.add_argument("--n-layers", type=int, default=2)
   parser.add_argument("--n-heads", type=int, default=4)
+  parser.add_argument("--head-dim", type=int, default=None)
   parser.add_argument("--d-ff", type=int, default=None)
   parser.add_argument("--q-lora-rank", type=int, default=None)
   parser.add_argument("--kv-lora-rank", type=int, default=64)
   parser.add_argument("--qk-nope-head-dim", type=int, default=16)
   parser.add_argument("--qk-rope-head-dim", type=int, default=16)
   parser.add_argument("--v-head-dim", type=int, default=32)
+  parser.add_argument("--rope-head-dim", type=int, default=None)
+  parser.add_argument("--o-lora-rank", type=int, default=None)
+  parser.add_argument("--o-groups", type=int, default=1)
   parser.add_argument("--n-routed-experts", type=int, default=4)
   parser.add_argument("--n-shared-experts", type=int, default=1)
   parser.add_argument("--n-experts-per-token", type=int, default=2)
