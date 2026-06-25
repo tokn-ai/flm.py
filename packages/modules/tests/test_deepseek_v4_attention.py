@@ -1,12 +1,16 @@
 import torch
 from flm_modules import (
   DeepSeekV4Attention,
+  DeepSeekV4Indexer,
+  DeepSeekV4IndexerScorer,
   DeepSeekV4RotaryEmbedding,
   apply_deepseek_v4_rotary,
 )
 from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
 from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
   DeepseekV4Attention,
+  DeepseekV4Indexer,
+  DeepseekV4IndexerScorer,
   DeepseekV4RotaryEmbedding,
   apply_rotary_pos_emb,
 )
@@ -110,6 +114,92 @@ def test_deepseek_v4_attention_backpropagates(random_input) -> None:
   assert layer.o_b_proj.weight.grad is not None
 
 
+def test_deepseek_v4_indexer_scorer_matches_transformers(random_input) -> None:
+  config = _deepseek_v4_config()
+  reference = DeepseekV4IndexerScorer(config)
+  layer = DeepSeekV4IndexerScorer(
+    d_model=8,
+    index_n_heads=2,
+    index_head_dim=4,
+  )
+  q = random_input(2, 5, 2, 4)
+  compressed_kv = random_input(2, 3, 4)
+  hidden_states = random_input(2, 5, 8)
+
+  with torch.no_grad():
+    layer.weights_proj.weight.copy_(reference.weights_proj.weight)
+
+  torch.testing.assert_close(
+    layer(q, compressed_kv, hidden_states),
+    reference(q, compressed_kv, hidden_states),
+  )
+
+
+def test_deepseek_v4_indexer_matches_transformers(random_input) -> None:
+  config = _deepseek_v4_config()
+  reference = DeepseekV4Indexer(config)
+  layer = DeepSeekV4Indexer(
+    d_model=8,
+    q_lora_rank=5,
+    compress_rate=2,
+    index_n_heads=2,
+    index_head_dim=4,
+    index_topk=2,
+    rope_base=10_000.0,
+    norm_eps=1e-6,
+  )
+  hidden_states = random_input(2, 6, 8)
+  q_residual = random_input(2, 6, 5)
+  position_ids = torch.arange(6).unsqueeze(0).expand(2, -1)
+
+  with torch.no_grad():
+    reference.position_bias.copy_(
+      torch.linspace(-0.2, 0.2, steps=reference.position_bias.numel()).view_as(
+        reference.position_bias,
+      )
+    )
+    layer.kv_proj.weight.copy_(reference.kv_proj.weight)
+    layer.gate_proj.weight.copy_(reference.gate_proj.weight)
+    layer.position_bias.copy_(reference.position_bias)
+    layer.kv_norm.weight.copy_(reference.kv_norm.weight)
+    layer.q_b_proj.weight.copy_(reference.q_b_proj.weight)
+    layer.scorer.weights_proj.weight.copy_(reference.scorer.weights_proj.weight)
+
+  torch.testing.assert_close(
+    layer.compress(hidden_states),
+    _reference_indexer_compress(reference, hidden_states, position_ids),
+  )
+  torch.testing.assert_close(
+    layer(hidden_states, q_residual, position_ids.squeeze(0)),
+    reference(
+      hidden_states,
+      q_residual,
+      position_ids,
+      past_key_values=None,
+      layer_idx=0,
+    ),
+  )
+
+
+def test_deepseek_v4_indexer_backpropagates(random_input) -> None:
+  layer = DeepSeekV4Indexer(
+    d_model=8,
+    q_lora_rank=5,
+    compress_rate=2,
+    index_n_heads=2,
+    index_head_dim=4,
+    index_topk=2,
+  )
+  hidden_states = random_input(2, 6, 8).requires_grad_()
+  compressed = layer.compress(hidden_states)
+
+  compressed.square().mean().backward()
+
+  assert hidden_states.grad is not None
+  assert layer.kv_proj.weight.grad is not None
+  assert layer.gate_proj.weight.grad is not None
+
+
 def _deepseek_v4_config() -> DeepseekV4Config:
   return DeepseekV4Config(
     vocab_size=32,
@@ -120,6 +210,13 @@ def _deepseek_v4_config() -> DeepseekV4Config:
     q_lora_rank=5,
     o_lora_rank=3,
     o_groups=2,
+    index_n_heads=2,
+    index_head_dim=4,
+    index_topk=2,
+    compress_rates={
+      "compressed_sparse_attention": 2,
+      "heavily_compressed_attention": 2,
+    },
     layer_types=["sliding_attention"],
     rope_parameters={
       "main": {
@@ -144,3 +241,46 @@ def _causal_mask(batch_size: int, seq_len: int, dtype: torch.dtype) -> torch.Ten
   mask = torch.full((seq_len, seq_len), torch.finfo(dtype).min)
   mask = torch.triu(mask, diagonal=1)
   return mask.view(1, 1, seq_len, seq_len).expand(batch_size, 1, -1, -1)
+
+
+def _reference_indexer_compress(
+  reference: DeepseekV4Indexer,
+  hidden_states: torch.Tensor,
+  position_ids: torch.Tensor,
+) -> torch.Tensor:
+  batch, _, _ = hidden_states.shape
+  kv = reference.kv_proj(hidden_states)
+  gate = reference.gate_proj(hidden_states)
+  usable = (kv.shape[1] // reference.compress_rate) * reference.compress_rate
+  chunk_kv = kv[:, :usable]
+  chunk_gate = gate[:, :usable]
+  n_windows = chunk_kv.shape[1] // reference.compress_rate
+  ratio = reference.compress_rate
+  chunk_kv = chunk_kv.view(batch, n_windows, ratio, -1)
+  chunk_gate = chunk_gate.view(batch, n_windows, ratio, -1) + reference.position_bias
+
+  new_kv = chunk_kv.new_zeros((batch, n_windows, 2 * ratio, reference.head_dim))
+  new_gate = chunk_gate.new_full(
+    (batch, n_windows, 2 * ratio, reference.head_dim),
+    float("-inf"),
+  )
+  new_kv[:, :, ratio:] = chunk_kv[..., reference.head_dim :]
+  new_gate[:, :, ratio:] = chunk_gate[..., reference.head_dim :]
+  if n_windows > 1:
+    new_kv[:, 1:, :ratio] = chunk_kv[:, :-1, :, : reference.head_dim]
+    new_gate[:, 1:, :ratio] = chunk_gate[:, :-1, :, : reference.head_dim]
+
+  compressed = reference.kv_norm(
+    (new_kv * new_gate.softmax(dim=2, dtype=torch.float32).to(new_kv.dtype)).sum(
+      dim=2,
+    )
+  )
+  positions = torch.arange(n_windows, device=compressed.device)
+  positions = positions * reference.compress_rate
+  positions = positions.unsqueeze(0).expand(batch, -1)
+  cos, sin = reference.rotary_emb(
+    compressed,
+    position_ids=positions,
+    layer_type="compress",
+  )
+  return apply_rotary_pos_emb(compressed.unsqueeze(1), cos, sin).squeeze(1)

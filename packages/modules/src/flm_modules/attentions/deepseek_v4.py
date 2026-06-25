@@ -184,3 +184,149 @@ class DeepSeekV4Attention(nn.Module):
     probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)
     attn_weights = probs[..., :-1].to(kv_states.dtype)
     return torch.matmul(attn_weights, key_states).transpose(1, 2).contiguous()
+
+
+class DeepSeekV4IndexerScorer(nn.Module):
+  """Lightning-indexer scoring head for compressed sparse attention."""
+
+  def __init__(
+    self,
+    d_model: int,
+    index_n_heads: int,
+    index_head_dim: int,
+  ) -> None:
+    super().__init__()
+    if d_model <= 0:
+      raise ValueError("d_model must be positive")
+    if index_n_heads <= 0:
+      raise ValueError("index_n_heads must be positive")
+    if index_head_dim <= 0:
+      raise ValueError("index_head_dim must be positive")
+
+    self.softmax_scale = index_head_dim**-0.5
+    self.weights_scaling = index_n_heads**-0.5
+    self.weights_proj = nn.Linear(d_model, index_n_heads, bias=False)
+
+  def forward(
+    self,
+    q: torch.Tensor,
+    compressed_kv: torch.Tensor,
+    hidden_states: torch.Tensor,
+  ) -> torch.Tensor:
+    scores = torch.matmul(
+      q.float(),
+      compressed_kv.transpose(-1, -2).float().unsqueeze(1),
+    )
+    scores = F.relu(scores) * self.softmax_scale
+    weights = self.weights_proj(hidden_states).float() * self.weights_scaling
+    return (scores * weights.unsqueeze(-1)).sum(dim=2)
+
+
+class DeepSeekV4Indexer(nn.Module):
+  """Stateless DeepSeek V4 Lightning Indexer."""
+
+  def __init__(
+    self,
+    d_model: int,
+    q_lora_rank: int,
+    compress_rate: int,
+    index_n_heads: int,
+    index_head_dim: int,
+    index_topk: int,
+    rope_base: float = 10_000.0,
+    norm_eps: float = 1e-6,
+  ) -> None:
+    super().__init__()
+    if compress_rate <= 0:
+      raise ValueError("compress_rate must be positive")
+    if index_topk <= 0:
+      raise ValueError("index_topk must be positive")
+
+    self.compress_rate = compress_rate
+    self.num_heads = index_n_heads
+    self.head_dim = index_head_dim
+    self.index_topk = index_topk
+    self.kv_proj = nn.Linear(d_model, 2 * index_head_dim, bias=False)
+    self.gate_proj = nn.Linear(d_model, 2 * index_head_dim, bias=False)
+    self.position_bias = nn.Parameter(torch.zeros(compress_rate, 2 * index_head_dim))
+    self.kv_norm = RMSNorm(index_head_dim, eps=norm_eps)
+    self.q_b_proj = nn.Linear(q_lora_rank, index_n_heads * index_head_dim, bias=False)
+    self.rotary_emb = DeepSeekV4RotaryEmbedding(
+      head_dim=index_head_dim,
+      rope_head_dim=index_head_dim,
+      base=rope_base,
+    )
+    self.scorer = DeepSeekV4IndexerScorer(
+      d_model=d_model,
+      index_n_heads=index_n_heads,
+      index_head_dim=index_head_dim,
+    )
+
+  def forward(
+    self,
+    hidden_states: torch.Tensor,
+    q_residual: torch.Tensor,
+    positions: torch.Tensor,
+  ) -> torch.Tensor:
+    batch_size, seq_len, _ = hidden_states.shape
+    compressed_kv = self.compress(hidden_states)
+
+    cos_q, sin_q = self.rotary_emb(hidden_states, positions=positions)
+    q = self.q_b_proj(q_residual)
+    q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+    q = apply_deepseek_v4_rotary(q, cos_q, sin_q).transpose(1, 2)
+
+    index_scores = self.scorer(q, compressed_kv, hidden_states)
+    compressed_len = compressed_kv.shape[1]
+    top_k = min(self.index_topk, compressed_len)
+
+    if compressed_len > 0:
+      if positions.ndim == 1:
+        positions = positions.unsqueeze(0)
+      positions = positions.expand(batch_size, -1)
+      causal_threshold = (positions + 1) // self.compress_rate
+      entry_indices = torch.arange(compressed_len, device=index_scores.device)
+      future_mask = entry_indices.view(1, 1, -1) >= causal_threshold.unsqueeze(-1)
+      index_scores = index_scores.masked_fill(future_mask, float("-inf"))
+      top_k_indices = index_scores.topk(top_k, dim=-1).indices
+      invalid = top_k_indices >= causal_threshold.unsqueeze(-1)
+      return torch.where(invalid, torch.full_like(top_k_indices, -1), top_k_indices)
+
+    return index_scores.topk(top_k, dim=-1).indices
+
+  def compress(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    batch_size = hidden_states.shape[0]
+    kv = self.kv_proj(hidden_states)
+    gate = self.gate_proj(hidden_states)
+    usable = (kv.shape[1] // self.compress_rate) * self.compress_rate
+    chunk_kv = kv[:, :usable]
+    chunk_gate = gate[:, :usable]
+    if chunk_kv.shape[1] == 0:
+      return chunk_kv.new_zeros((batch_size, 0, self.head_dim))
+
+    n_windows = chunk_kv.shape[1] // self.compress_rate
+    ratio = self.compress_rate
+    chunk_kv = chunk_kv.view(batch_size, n_windows, ratio, -1)
+    chunk_gate = chunk_gate.view(batch_size, n_windows, ratio, -1) + self.position_bias
+
+    new_kv = chunk_kv.new_zeros((batch_size, n_windows, 2 * ratio, self.head_dim))
+    new_gate = chunk_gate.new_full(
+      (batch_size, n_windows, 2 * ratio, self.head_dim),
+      float("-inf"),
+    )
+    new_kv[:, :, ratio:] = chunk_kv[..., self.head_dim :]
+    new_gate[:, :, ratio:] = chunk_gate[..., self.head_dim :]
+    if n_windows > 1:
+      new_kv[:, 1:, :ratio] = chunk_kv[:, :-1, :, : self.head_dim]
+      new_gate[:, 1:, :ratio] = chunk_gate[:, :-1, :, : self.head_dim]
+
+    compressed = self.kv_norm(
+      (new_kv * new_gate.softmax(dim=2, dtype=torch.float32).to(new_kv.dtype)).sum(
+        dim=2,
+      )
+    )
+    positions = torch.arange(n_windows, device=compressed.device)
+    positions = positions * self.compress_rate
+    positions = positions.unsqueeze(0).expand(batch_size, -1)
+    cos, sin = self.rotary_emb(compressed, positions=positions)
+    return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
