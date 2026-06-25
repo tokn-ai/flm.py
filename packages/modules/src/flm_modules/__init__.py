@@ -8,6 +8,7 @@ from flm_modules.attentions import (
 )
 from flm_modules.feed_forward import SwiGLU
 from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attention
+from flm_modules.linear import GroupedLinear
 from flm_modules.moe import (
   DeepSeekMoE,
   DeepSeekTopKRouter,
@@ -26,6 +27,7 @@ __all__ = [
   "DeepSeekTopKRouter",
   "DeepSeekV4MLP",
   "ExpertKind",
+  "GroupedLinear",
   "RMSNorm",
   "RouterScoring",
   "RopeLayout",
