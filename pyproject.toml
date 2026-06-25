@@ -1,0 +1,28 @@
+[project]
+name = "flm"
+version = "0.1.0"
+description = "LLM monorepo workspace."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+flm-modules = { workspace = true }
+flm-datasets = { workspace = true }
+flm-llm = { workspace = true }
+flm-train = { workspace = true }
+flm-rl = { workspace = true }
+flm-inference = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "flm-modules",
+  "flm-datasets",
+  "flm-llm",
+  "flm-train",
+  "flm-rl",
+  "flm-inference",
+]

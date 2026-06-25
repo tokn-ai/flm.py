@@ -1,0 +1,15 @@
+[project]
+name = "flm-llm"
+version = "0.1.0"
+description = "Core LLM package."
+requires-python = ">=3.12"
+dependencies = [
+  "flm-modules",
+]
+
+[tool.uv.sources]
+flm-modules = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

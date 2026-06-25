@@ -1,0 +1,19 @@
+[project]
+name = "flm-rl"
+version = "0.1.0"
+description = "Reinforcement learning workflows package."
+requires-python = ">=3.12"
+dependencies = [
+  "flm-datasets",
+  "flm-llm",
+  "flm-train",
+]
+
+[tool.uv.sources]
+flm-datasets = { workspace = true }
+flm-llm = { workspace = true }
+flm-train = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

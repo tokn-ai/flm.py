@@ -1,0 +1,10 @@
+[project]
+name = "flm-datasets"
+version = "0.1.0"
+description = "Dataset loading and preprocessing package."
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

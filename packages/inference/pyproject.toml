@@ -1,0 +1,15 @@
+[project]
+name = "flm-inference"
+version = "0.1.0"
+description = "Inference workflows package."
+requires-python = ">=3.12"
+dependencies = [
+  "flm-llm",
+]
+
+[tool.uv.sources]
+flm-llm = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

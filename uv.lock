@@ -1,0 +1,105 @@
+version = 1
+revision = 1
+requires-python = ">=3.12"
+
+[manifest]
+members = [
+  "flm",
+  "flm-datasets",
+  "flm-inference",
+  "flm-llm",
+  "flm-modules",
+  "flm-rl",
+  "flm-train",
+]
+
+[[package]]
+name = "flm"
+version = "0.1.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+  { name = "flm-datasets" },
+  { name = "flm-inference" },
+  { name = "flm-llm" },
+  { name = "flm-modules" },
+  { name = "flm-rl" },
+  { name = "flm-train" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+  { name = "flm-datasets", editable = "packages/datasets" },
+  { name = "flm-inference", editable = "packages/inference" },
+  { name = "flm-llm", editable = "packages/llm" },
+  { name = "flm-modules", editable = "packages/modules" },
+  { name = "flm-rl", editable = "packages/rl" },
+  { name = "flm-train", editable = "packages/train" },
+]
+
+[[package]]
+name = "flm-datasets"
+version = "0.1.0"
+source = { editable = "packages/datasets" }
+
+[[package]]
+name = "flm-inference"
+version = "0.1.0"
+source = { editable = "packages/inference" }
+dependencies = [
+  { name = "flm-llm" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "flm-llm", editable = "packages/llm" }]
+
+[[package]]
+name = "flm-llm"
+version = "0.1.0"
+source = { editable = "packages/llm" }
+dependencies = [
+  { name = "flm-modules" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "flm-modules", editable = "packages/modules" }]
+
+[[package]]
+name = "flm-modules"
+version = "0.1.0"
+source = { editable = "packages/modules" }
+
+[[package]]
+name = "flm-rl"
+version = "0.1.0"
+source = { editable = "packages/rl" }
+dependencies = [
+  { name = "flm-datasets" },
+  { name = "flm-llm" },
+  { name = "flm-train" },
+]
+
+[package.metadata]
+requires-dist = [
+  { name = "flm-datasets", editable = "packages/datasets" },
+  { name = "flm-llm", editable = "packages/llm" },
+  { name = "flm-train", editable = "packages/train" },
+]
+
+[[package]]
+name = "flm-train"
+version = "0.1.0"
+source = { editable = "packages/train" }
+dependencies = [
+  { name = "flm-datasets" },
+  { name = "flm-llm" },
+]
+
+[package.metadata]
+requires-dist = [
+  { name = "flm-datasets", editable = "packages/datasets" },
+  { name = "flm-llm", editable = "packages/llm" },
+]
