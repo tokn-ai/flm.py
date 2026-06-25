@@ -1,6 +1,6 @@
 import pytest
 import torch
-from flm_modules import DeepSeekMoE, DeepSeekTopKRouter, DeepSeekV4TopKRouter, SwiGLU
+from flm_modules import DeepSeekMoE, DeepSeekTopKRouter, SwiGLU
 from transformers import DeepseekV3Config
 from transformers.models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3MoE
 from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
@@ -105,10 +105,11 @@ def test_deepseek_v4_topk_router_matches_transformers(random_input) -> None:
     routed_scaling_factor=1.25,
   )
   reference = DeepseekV4TopKRouter(config)
-  layer = DeepSeekV4TopKRouter(
+  layer = DeepSeekTopKRouter(
     d_model=4,
     n_routed_experts=4,
     n_experts_per_token=2,
+    scoring_func="sqrtsoftplus",
     routed_scaling_factor=1.25,
   )
   x = random_input(2, 3, 4)
@@ -117,7 +118,7 @@ def test_deepseek_v4_topk_router_matches_transformers(random_input) -> None:
     layer.weight.copy_(reference.weight)
     layer.e_score_correction_bias.copy_(reference.e_score_correction_bias)
 
-  actual_logits, actual_weights, actual_indices = layer(x)
+  actual_logits, actual_weights, actual_indices = layer.route(x)
   expected_logits, expected_weights, expected_indices = reference(x)
 
   torch.testing.assert_close(actual_logits, expected_logits)
