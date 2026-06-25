@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from flm_modules import DeepSeekMLA, DeepSeekV4MoE, RMSNorm, SwiGLU
+from flm_modules import DeepSeekMLA, DeepSeekMoE, RMSNorm, SwiGLU
 from torch import nn
 from torch.nn import functional as F
 
@@ -35,7 +35,7 @@ class DeepSeekV4Block(nn.Module):
         bias=config.bias,
       )
     else:
-      self.ffn = DeepSeekV4MoE(
+      self.ffn = DeepSeekMoE(
         d_model=config.d_model,
         d_ff=config.ffn_d_ff,
         n_routed_experts=config.n_routed_experts,
@@ -43,6 +43,9 @@ class DeepSeekV4Block(nn.Module):
         n_experts_per_token=config.n_experts_per_token,
         routed_scaling_factor=config.routed_scaling_factor,
         bias=config.bias,
+        scoring_func="sqrtsoftplus",
+        grouped_topk=False,
+        expert_kind="v4",
       )
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:

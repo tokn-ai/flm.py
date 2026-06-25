@@ -11,6 +11,37 @@ from torch.nn import functional as F
 from flm_modules.feed_forward import SwiGLU
 
 
+def route_to_experts(
+  hidden_states: torch.Tensor,
+  experts: nn.ModuleList,
+  topk_indices: torch.Tensor,
+  topk_weights: torch.Tensor,
+) -> torch.Tensor:
+  n_routed_experts = len(experts)
+  final_hidden_states = torch.zeros_like(hidden_states)
+  expert_mask = F.one_hot(
+    topk_indices,
+    num_classes=n_routed_experts,
+  ).permute(2, 1, 0)
+
+  for expert_idx in torch.nonzero(expert_mask.sum(dim=(-1, -2)), as_tuple=False):
+    expert_idx = expert_idx.item()
+    topk_pos, token_idx = torch.where(expert_mask[expert_idx])
+    current_hidden_states = experts[expert_idx](hidden_states[token_idx])
+    current_hidden_states = current_hidden_states * topk_weights[
+      token_idx,
+      topk_pos,
+      None,
+    ].to(current_hidden_states.dtype)
+    final_hidden_states.index_add_(
+      0,
+      token_idx,
+      current_hidden_states.to(final_hidden_states.dtype),
+    )
+
+  return final_hidden_states
+
+
 class DeepSeekTopKRouter(nn.Module):
   def __init__(
     self,
@@ -127,7 +158,7 @@ class DeepSeekTopKRouter(nn.Module):
 
 
 class DeepSeekMoE(nn.Module):
-  """DeepSeek-style MoE layer with routed and shared SwiGLU experts."""
+  """DeepSeek MoE layer with configurable routing and expert variants."""
 
   def __init__(
     self,
@@ -141,6 +172,10 @@ class DeepSeekMoE(nn.Module):
     norm_topk_prob: bool = True,
     routed_scaling_factor: float = 1.0,
     bias: bool = False,
+    scoring_func: str = "sigmoid",
+    grouped_topk: bool = True,
+    expert_kind: str = "swiglu",
+    swiglu_limit: float = 10.0,
   ) -> None:
     super().__init__()
     if n_routed_experts <= 0:
@@ -149,14 +184,16 @@ class DeepSeekMoE(nn.Module):
       raise ValueError("n_shared_experts must be non-negative")
     if n_experts_per_token <= 0 or n_experts_per_token > n_routed_experts:
       raise ValueError("n_experts_per_token must be in [1, n_routed_experts]")
+    if expert_kind not in {"swiglu", "v4"}:
+      raise ValueError("expert_kind must be 'swiglu' or 'v4'")
     if n_group <= 0 or n_routed_experts % n_group != 0:
       raise ValueError("n_group must divide n_routed_experts")
     if topk_group <= 0 or topk_group > n_group:
       raise ValueError("topk_group must be in [1, n_group]")
     group_size = n_routed_experts // n_group
-    if group_size < 2:
+    if grouped_topk and group_size < 2:
       raise ValueError("each expert group must contain at least two experts")
-    if n_experts_per_token > topk_group * group_size:
+    if grouped_topk and n_experts_per_token > topk_group * group_size:
       raise ValueError("n_experts_per_token exceeds selected expert groups")
 
     self.d_model = d_model
@@ -168,23 +205,41 @@ class DeepSeekMoE(nn.Module):
     self.topk_group = topk_group
     self.norm_topk_prob = norm_topk_prob
     self.routed_scaling_factor = routed_scaling_factor
+    self.scoring_func = scoring_func
+    self.grouped_topk = grouped_topk
+    self.expert_kind = expert_kind
 
     self.gate = DeepSeekTopKRouter(
       d_model,
       n_routed_experts,
       n_experts_per_token=n_experts_per_token,
-      scoring_func="sigmoid",
+      scoring_func=scoring_func,
       routed_scaling_factor=routed_scaling_factor,
       norm_topk_prob=norm_topk_prob,
-      grouped_topk=True,
+      grouped_topk=grouped_topk,
       n_group=n_group,
       topk_group=topk_group,
     )
     self.experts = nn.ModuleList(
-      [SwiGLU(d_model=d_model, d_ff=d_ff, bias=bias) for _ in range(n_routed_experts)]
+      [
+        _make_expert(
+          d_model=d_model,
+          d_ff=d_ff,
+          bias=bias,
+          expert_kind=expert_kind,
+          swiglu_limit=swiglu_limit,
+        )
+        for _ in range(n_routed_experts)
+      ]
     )
     self.shared_experts = (
-      SwiGLU(d_model=d_model, d_ff=d_ff * n_shared_experts, bias=bias)
+      _make_expert(
+        d_model=d_model,
+        d_ff=d_ff * n_shared_experts,
+        bias=bias,
+        expert_kind=expert_kind,
+        swiglu_limit=swiglu_limit,
+      )
       if n_shared_experts > 0
       else None
     )
@@ -200,8 +255,9 @@ class DeepSeekMoE(nn.Module):
     flat_hidden_states = hidden_states.reshape(-1, self.d_model)
     router_logits = self.gate(hidden_states)
     topk_indices, topk_weights = self.route_tokens_to_experts(router_logits)
-    routed = self._route_to_experts(
+    routed = route_to_experts(
       flat_hidden_states,
+      self.experts,
       topk_indices,
       topk_weights,
     ).view(original_shape)
@@ -209,35 +265,6 @@ class DeepSeekMoE(nn.Module):
     if self.shared_experts is None:
       return routed
     return routed + self.shared_experts(hidden_states)
-
-  def _route_to_experts(
-    self,
-    hidden_states: torch.Tensor,
-    topk_indices: torch.Tensor,
-    topk_weights: torch.Tensor,
-  ) -> torch.Tensor:
-    final_hidden_states = torch.zeros_like(hidden_states)
-    expert_mask = F.one_hot(
-      topk_indices,
-      num_classes=self.n_routed_experts,
-    ).permute(2, 1, 0)
-
-    for expert_idx in torch.nonzero(expert_mask.sum(dim=(-1, -2)), as_tuple=False):
-      expert_idx = expert_idx.item()
-      topk_pos, token_idx = torch.where(expert_mask[expert_idx])
-      current_hidden_states = self.experts[expert_idx](hidden_states[token_idx])
-      current_hidden_states = current_hidden_states * topk_weights[
-        token_idx,
-        topk_pos,
-        None,
-      ].to(current_hidden_states.dtype)
-      final_hidden_states.index_add_(
-        0,
-        token_idx,
-        current_hidden_states.to(final_hidden_states.dtype),
-      )
-
-    return final_hidden_states
 
 
 class DeepSeekV4MLP(nn.Module):
@@ -260,95 +287,18 @@ class DeepSeekV4MLP(nn.Module):
     return self.down_proj(F.silu(gate) * up)
 
 
-class DeepSeekV4MoE(nn.Module):
-  """DeepSeek V4 sparse MoE with sqrt-softplus top-k routing."""
-
-  def __init__(
-    self,
-    d_model: int,
-    d_ff: int,
-    n_routed_experts: int,
-    n_shared_experts: int,
-    n_experts_per_token: int,
-    routed_scaling_factor: float = 1.5,
-    bias: bool = False,
-    swiglu_limit: float = 10.0,
-  ) -> None:
-    super().__init__()
-    if n_shared_experts < 0:
-      raise ValueError("n_shared_experts must be non-negative")
-    self.d_model = d_model
-    self.n_routed_experts = n_routed_experts
-    self.gate = DeepSeekTopKRouter(
-      d_model,
-      n_routed_experts,
-      n_experts_per_token=n_experts_per_token,
-      scoring_func="sqrtsoftplus",
-      routed_scaling_factor=routed_scaling_factor,
-      norm_topk_prob=True,
-      grouped_topk=False,
+def _make_expert(
+  d_model: int,
+  d_ff: int,
+  bias: bool,
+  expert_kind: str,
+  swiglu_limit: float,
+) -> nn.Module:
+  if expert_kind == "v4":
+    return DeepSeekV4MLP(
+      d_model=d_model,
+      d_ff=d_ff,
+      bias=bias,
+      swiglu_limit=swiglu_limit,
     )
-    self.experts = nn.ModuleList(
-      [
-        DeepSeekV4MLP(
-          d_model=d_model,
-          d_ff=d_ff,
-          bias=bias,
-          swiglu_limit=swiglu_limit,
-        )
-        for _ in range(n_routed_experts)
-      ]
-    )
-    self.shared_experts = (
-      DeepSeekV4MLP(
-        d_model=d_model,
-        d_ff=d_ff * n_shared_experts,
-        bias=bias,
-        swiglu_limit=swiglu_limit,
-      )
-      if n_shared_experts > 0
-      else None
-    )
-
-  def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-    original_shape = hidden_states.shape
-    flat_hidden_states = hidden_states.reshape(-1, self.d_model)
-    _, topk_weights, topk_indices = self.gate.route(hidden_states)
-    routed = self._route_to_experts(
-      flat_hidden_states,
-      topk_indices,
-      topk_weights,
-    ).view(original_shape)
-
-    if self.shared_experts is None:
-      return routed
-    return routed + self.shared_experts(hidden_states)
-
-  def _route_to_experts(
-    self,
-    hidden_states: torch.Tensor,
-    topk_indices: torch.Tensor,
-    topk_weights: torch.Tensor,
-  ) -> torch.Tensor:
-    final_hidden_states = torch.zeros_like(hidden_states)
-    expert_mask = F.one_hot(
-      topk_indices,
-      num_classes=self.n_routed_experts,
-    ).permute(2, 1, 0)
-
-    for expert_idx in torch.nonzero(expert_mask.sum(dim=(-1, -2)), as_tuple=False):
-      expert_idx = expert_idx.item()
-      topk_pos, token_idx = torch.where(expert_mask[expert_idx])
-      current_hidden_states = self.experts[expert_idx](hidden_states[token_idx])
-      current_hidden_states = current_hidden_states * topk_weights[
-        token_idx,
-        topk_pos,
-        None,
-      ].to(current_hidden_states.dtype)
-      final_hidden_states.index_add_(
-        0,
-        token_idx,
-        current_hidden_states.to(final_hidden_states.dtype),
-      )
-
-    return final_hidden_states
+  return SwiGLU(d_model=d_model, d_ff=d_ff, bias=bias)

@@ -4,7 +4,6 @@ from flm_modules import (
   DeepSeekMoE,
   DeepSeekTopKRouter,
   DeepSeekV4MLP,
-  DeepSeekV4MoE,
   SwiGLU,
 )
 from transformers import DeepseekV3Config
@@ -124,6 +123,8 @@ def test_deepseek_v4_topk_router_matches_transformers(random_input) -> None:
   x = random_input(2, 3, 4)
 
   with torch.no_grad():
+    reference.weight.copy_(torch.linspace(-0.5, 0.5, steps=16).view(4, 4))
+    reference.e_score_correction_bias.copy_(torch.tensor([0.1, -0.2, 0.0, 0.3]))
     layer.weight.copy_(reference.weight)
     layer.e_score_correction_bias.copy_(reference.e_score_correction_bias)
 
@@ -157,14 +158,17 @@ def test_deepseek_v4_mlp_matches_transformers(random_input) -> None:
   torch.testing.assert_close(layer(x), reference(x))
 
 
-def test_deepseek_v4_moe_uses_configurable_topk_router(random_input) -> None:
-  layer = DeepSeekV4MoE(
+def test_deepseek_moe_supports_v4_router_and_experts(random_input) -> None:
+  layer = DeepSeekMoE(
     d_model=4,
     d_ff=5,
     n_routed_experts=4,
     n_shared_experts=1,
     n_experts_per_token=2,
     routed_scaling_factor=1.25,
+    scoring_func="sqrtsoftplus",
+    grouped_topk=False,
+    expert_kind="v4",
   )
   x = random_input(2, 3, 4)
 
@@ -173,6 +177,7 @@ def test_deepseek_v4_moe_uses_configurable_topk_router(random_input) -> None:
   assert y.shape == x.shape
   assert layer.gate.scoring_func == "sqrtsoftplus"
   assert not layer.gate.grouped_topk
+  assert isinstance(layer.experts[0], DeepSeekV4MLP)
 
 
 def test_deepseek_moe_matches_manual_expert_routing(random_input) -> None:
