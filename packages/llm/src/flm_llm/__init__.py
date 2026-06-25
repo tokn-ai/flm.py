@@ -1,7 +1,9 @@
-"""Core LLM package placeholder."""
+"""Core LLM package."""
 
-__all__ = ["hello"]
+from flm_llm.config import ReferenceModelConfig
+from flm_llm.model import ReferenceModel
 
-
-def hello() -> str:
-  return "flm-llm"
+__all__ = [
+  "ReferenceModel",
+  "ReferenceModelConfig",
+]

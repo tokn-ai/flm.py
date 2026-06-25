@@ -25,4 +25,24 @@ dev = [
   "flm-train",
   "flm-rl",
   "flm-inference",
+  "ruff>=0.13.0",
 ]
+
+[tool.ruff]
+line-length = 88
+indent-width = 2
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "UP",
+  "B",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
