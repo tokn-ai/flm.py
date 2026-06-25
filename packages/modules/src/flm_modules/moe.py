@@ -167,3 +167,47 @@ class DeepSeekMoE(nn.Module):
       )
 
     return final_hidden_states
+
+
+class DeepSeekV4TopKRouter(nn.Module):
+  """DeepSeek V4 learned top-k router."""
+
+  def __init__(
+    self,
+    d_model: int,
+    n_routed_experts: int,
+    n_experts_per_token: int,
+    routed_scaling_factor: float = 1.5,
+  ) -> None:
+    super().__init__()
+    if n_routed_experts <= 0:
+      raise ValueError("n_routed_experts must be positive")
+    if n_experts_per_token <= 0 or n_experts_per_token > n_routed_experts:
+      raise ValueError("n_experts_per_token must be in [1, n_routed_experts]")
+    self.d_model = d_model
+    self.n_routed_experts = n_routed_experts
+    self.n_experts_per_token = n_experts_per_token
+    self.routed_scaling_factor = routed_scaling_factor
+    self.weight = nn.Parameter(torch.empty(n_routed_experts, d_model))
+    self.register_buffer("e_score_correction_bias", torch.zeros(n_routed_experts))
+    self.reset_parameters()
+
+  def reset_parameters(self) -> None:
+    nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+
+  def forward(
+    self,
+    hidden_states: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    flat = hidden_states.reshape(-1, self.d_model)
+    logits = F.linear(flat, self.weight)
+    scores = F.softplus(logits).sqrt()
+    indices = torch.topk(
+      scores + self.e_score_correction_bias,
+      self.n_experts_per_token,
+      dim=-1,
+      sorted=False,
+    ).indices
+    weights = scores.gather(1, indices)
+    weights = weights / (weights.sum(dim=-1, keepdim=True) + 1e-20)
+    return logits, weights * self.routed_scaling_factor, indices

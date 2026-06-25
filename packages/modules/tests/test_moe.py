@@ -1,8 +1,10 @@
 import pytest
 import torch
-from flm_modules import DeepSeekMoE, DeepSeekTopKRouter, SwiGLU
+from flm_modules import DeepSeekMoE, DeepSeekTopKRouter, DeepSeekV4TopKRouter, SwiGLU
 from transformers import DeepseekV3Config
 from transformers.models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3MoE
+from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
+from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4TopKRouter
 
 
 def test_deepseek_moe_preserves_model_dimension(random_input) -> None:
@@ -91,6 +93,34 @@ def test_deepseek_moe_matches_transformers_route_tokens() -> None:
   actual_indices, actual_weights = layer.route_tokens_to_experts(router_logits)
   expected_indices, expected_weights = reference.route_tokens_to_experts(router_logits)
 
+  torch.testing.assert_close(actual_indices, expected_indices)
+  torch.testing.assert_close(actual_weights, expected_weights)
+
+
+def test_deepseek_v4_topk_router_matches_transformers(random_input) -> None:
+  config = DeepseekV4Config(
+    hidden_size=4,
+    n_routed_experts=4,
+    num_experts_per_tok=2,
+    routed_scaling_factor=1.25,
+  )
+  reference = DeepseekV4TopKRouter(config)
+  layer = DeepSeekV4TopKRouter(
+    d_model=4,
+    n_routed_experts=4,
+    n_experts_per_token=2,
+    routed_scaling_factor=1.25,
+  )
+  x = random_input(2, 3, 4)
+
+  with torch.no_grad():
+    layer.weight.copy_(reference.weight)
+    layer.e_score_correction_bias.copy_(reference.e_score_correction_bias)
+
+  actual_logits, actual_weights, actual_indices = layer(x)
+  expected_logits, expected_weights, expected_indices = reference(x)
+
+  torch.testing.assert_close(actual_logits, expected_logits)
   torch.testing.assert_close(actual_indices, expected_indices)
   torch.testing.assert_close(actual_weights, expected_weights)
 
