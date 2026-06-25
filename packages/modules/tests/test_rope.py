@@ -1,6 +1,6 @@
 import pytest
 import torch
-from flm_modules.rope import RotaryEmbedding, apply_rotary, rotate_half
+from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary, rotate_half
 from transformers import LlamaConfig
 from transformers.models.llama.modeling_llama import (
   LlamaRotaryEmbedding,
@@ -16,12 +16,30 @@ def test_rotate_half_rotates_hidden_dimension_halves() -> None:
   torch.testing.assert_close(y, torch.tensor([[[[-3.0, -4.0, 1.0, 2.0]]]]))
 
 
+def test_rotate_half_supports_interleaved_layout() -> None:
+  x = torch.tensor([[[[1.0, 2.0, 3.0, 4.0]]]])
+
+  y = rotate_half(x, layout=RopeLayout.INTERLEAVED)
+
+  torch.testing.assert_close(y, torch.tensor([[[[-2.0, 1.0, -4.0, 3.0]]]]))
+
+
 def test_apply_rotary_identity_when_sin_is_zero(random_input) -> None:
   x = random_input(2, 3, 4, 6)
   cos = torch.ones(4, 6)
   sin = torch.zeros(4, 6)
 
   y = apply_rotary(x, cos, sin)
+
+  torch.testing.assert_close(y, x)
+
+
+def test_apply_rotary_identity_supports_interleaved_layout(random_input) -> None:
+  x = random_input(2, 3, 4, 6)
+  cos = torch.ones(4, 6)
+  sin = torch.zeros(4, 6)
+
+  y = apply_rotary(x, cos, sin, layout=RopeLayout.INTERLEAVED)
 
   torch.testing.assert_close(y, x)
 
@@ -116,3 +134,25 @@ def test_rotary_embedding_matches_transformers_llama_rope(random_input) -> None:
 
   torch.testing.assert_close(q_out, expected_q)
   torch.testing.assert_close(k_out, expected_k)
+
+
+def test_rotary_embedding_supports_interleaved_layout(random_input) -> None:
+  rope = RotaryEmbedding(dim=4, layout=RopeLayout.INTERLEAVED)
+  q = random_input(1, 2, 3, 4)
+  k = random_input(1, 2, 3, 4)
+
+  q_out, k_out = rope(q, k)
+
+  assert q_out.shape == q.shape
+  assert k_out.shape == k.shape
+  torch.testing.assert_close(
+    q_out[0, 0, 1],
+    torch.tensor(
+      [
+        1.4053846597671509,
+        -0.09615802764892578,
+        -0.027018923312425613,
+        -1.6050174236297607,
+      ]
+    ),
+  )
