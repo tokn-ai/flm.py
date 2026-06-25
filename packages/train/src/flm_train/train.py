@@ -222,3 +222,7 @@ def main() -> None:
   for step, loss in enumerate(result.losses, start=1):
     print(f"step={step} loss={loss:.4f}")
   print(f"tokens={result.token_count} files={result.file_count}")
+
+
+if __name__ == "__main__":
+  main()
