@@ -12,6 +12,8 @@ from flm_modules.moe import (
   DeepSeekMoE,
   DeepSeekTopKRouter,
   DeepSeekV4MLP,
+  ExpertKind,
+  RouterScoring,
 )
 from flm_modules.norm import RMSNorm
 from flm_modules.optim import configure_adamw
@@ -23,7 +25,9 @@ __all__ = [
   "DeepSeekMoE",
   "DeepSeekTopKRouter",
   "DeepSeekV4MLP",
+  "ExpertKind",
   "RMSNorm",
+  "RouterScoring",
   "RopeLayout",
   "RotaryEmbedding",
   "SelfAttention",

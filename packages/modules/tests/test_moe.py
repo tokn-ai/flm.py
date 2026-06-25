@@ -4,6 +4,8 @@ from flm_modules import (
   DeepSeekMoE,
   DeepSeekTopKRouter,
   DeepSeekV4MLP,
+  ExpertKind,
+  RouterScoring,
   SwiGLU,
 )
 from transformers import DeepseekV3Config
@@ -117,7 +119,7 @@ def test_deepseek_v4_topk_router_matches_transformers(random_input) -> None:
     d_model=4,
     n_routed_experts=4,
     n_experts_per_token=2,
-    scoring_func="sqrtsoftplus",
+    scoring_func=RouterScoring.SQRT_SOFTPLUS,
     routed_scaling_factor=1.25,
   )
   x = random_input(2, 3, 4)
@@ -166,18 +168,45 @@ def test_deepseek_moe_supports_v4_router_and_experts(random_input) -> None:
     n_shared_experts=1,
     n_experts_per_token=2,
     routed_scaling_factor=1.25,
-    scoring_func="sqrtsoftplus",
+    scoring_func=RouterScoring.SQRT_SOFTPLUS,
     grouped_topk=False,
-    expert_kind="v4",
+    expert_kind=ExpertKind.V4,
   )
   x = random_input(2, 3, 4)
 
   y = layer(x)
 
   assert y.shape == x.shape
-  assert layer.gate.scoring_func == "sqrtsoftplus"
+  assert layer.gate.scoring_func == RouterScoring.SQRT_SOFTPLUS
   assert not layer.gate.grouped_topk
   assert isinstance(layer.experts[0], DeepSeekV4MLP)
+
+
+def test_deepseek_router_accepts_enum_flags() -> None:
+  router = DeepSeekTopKRouter(
+    d_model=4,
+    n_routed_experts=4,
+    n_experts_per_token=2,
+    scoring_func=RouterScoring.SQRT_SOFTPLUS,
+  )
+
+  assert router.scoring_func == RouterScoring.SQRT_SOFTPLUS
+
+
+def test_deepseek_moe_accepts_enum_flags() -> None:
+  layer = DeepSeekMoE(
+    d_model=4,
+    d_ff=5,
+    n_routed_experts=4,
+    n_shared_experts=1,
+    n_experts_per_token=2,
+    scoring_func=RouterScoring.SQRT_SOFTPLUS,
+    grouped_topk=False,
+    expert_kind=ExpertKind.V4,
+  )
+
+  assert layer.scoring_func == RouterScoring.SQRT_SOFTPLUS
+  assert layer.expert_kind == ExpertKind.V4
 
 
 def test_deepseek_moe_matches_manual_expert_routing(random_input) -> None:

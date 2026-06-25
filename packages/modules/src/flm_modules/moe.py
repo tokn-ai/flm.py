@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import math
+from enum import StrEnum
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from flm_modules.feed_forward import SwiGLU
+
+
+class RouterScoring(StrEnum):
+  SIGMOID = "sigmoid"
+  SQRT_SOFTPLUS = "sqrtsoftplus"
+
+
+class ExpertKind(StrEnum):
+  SWIGLU = "swiglu"
+  V4 = "v4"
 
 
 def route_to_experts(
@@ -48,7 +59,7 @@ class DeepSeekTopKRouter(nn.Module):
     d_model: int,
     n_routed_experts: int,
     n_experts_per_token: int | None = None,
-    scoring_func: str = "sigmoid",
+    scoring_func: RouterScoring | str = RouterScoring.SIGMOID,
     routed_scaling_factor: float = 1.0,
     norm_topk_prob: bool = True,
     grouped_topk: bool = False,
@@ -62,8 +73,7 @@ class DeepSeekTopKRouter(nn.Module):
       n_experts_per_token <= 0 or n_experts_per_token > n_routed_experts
     ):
       raise ValueError("n_experts_per_token must be in [1, n_routed_experts]")
-    if scoring_func not in {"sigmoid", "sqrtsoftplus"}:
-      raise ValueError("scoring_func must be 'sigmoid' or 'sqrtsoftplus'")
+    scoring_func = RouterScoring(scoring_func)
     if n_group <= 0 or n_routed_experts % n_group != 0:
       raise ValueError("n_group must divide n_routed_experts")
     if topk_group <= 0 or topk_group > n_group:
@@ -132,7 +142,7 @@ class DeepSeekTopKRouter(nn.Module):
     return indices, weights * self.routed_scaling_factor
 
   def _score(self, router_logits: torch.Tensor) -> torch.Tensor:
-    if self.scoring_func == "sqrtsoftplus":
+    if self.scoring_func == RouterScoring.SQRT_SOFTPLUS:
       return F.softplus(router_logits).sqrt()
     return router_logits.sigmoid()
 
@@ -172,9 +182,9 @@ class DeepSeekMoE(nn.Module):
     norm_topk_prob: bool = True,
     routed_scaling_factor: float = 1.0,
     bias: bool = False,
-    scoring_func: str = "sigmoid",
+    scoring_func: RouterScoring | str = RouterScoring.SIGMOID,
     grouped_topk: bool = True,
-    expert_kind: str = "swiglu",
+    expert_kind: ExpertKind | str = ExpertKind.SWIGLU,
     swiglu_limit: float = 10.0,
   ) -> None:
     super().__init__()
@@ -184,8 +194,8 @@ class DeepSeekMoE(nn.Module):
       raise ValueError("n_shared_experts must be non-negative")
     if n_experts_per_token <= 0 or n_experts_per_token > n_routed_experts:
       raise ValueError("n_experts_per_token must be in [1, n_routed_experts]")
-    if expert_kind not in {"swiglu", "v4"}:
-      raise ValueError("expert_kind must be 'swiglu' or 'v4'")
+    scoring_func = RouterScoring(scoring_func)
+    expert_kind = ExpertKind(expert_kind)
     if n_group <= 0 or n_routed_experts % n_group != 0:
       raise ValueError("n_group must divide n_routed_experts")
     if topk_group <= 0 or topk_group > n_group:
@@ -291,10 +301,10 @@ def _make_expert(
   d_model: int,
   d_ff: int,
   bias: bool,
-  expert_kind: str,
+  expert_kind: ExpertKind,
   swiglu_limit: float,
 ) -> nn.Module:
-  if expert_kind == "v4":
+  if expert_kind == ExpertKind.V4:
     return DeepSeekV4MLP(
       d_model=d_model,
       d_ff=d_ff,
