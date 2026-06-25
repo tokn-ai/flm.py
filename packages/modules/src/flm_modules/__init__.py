@@ -7,6 +7,11 @@ from flm_modules.attentions import (
   scaled_dot_product_attention,
 )
 from flm_modules.feed_forward import SwiGLU
+from flm_modules.hyper import (
+  DeepSeekV4HyperConnection,
+  DeepSeekV4HyperHead,
+  UnweightedRMSNorm,
+)
 from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attention
 from flm_modules.linear import GroupedLinear
 from flm_modules.moe import (
@@ -25,6 +30,8 @@ __all__ = [
   "DeepSeekMLA",
   "DeepSeekMoE",
   "DeepSeekTopKRouter",
+  "DeepSeekV4HyperConnection",
+  "DeepSeekV4HyperHead",
   "DeepSeekV4MLP",
   "ExpertKind",
   "GroupedLinear",
@@ -34,6 +41,7 @@ __all__ = [
   "RotaryEmbedding",
   "SelfAttention",
   "SwiGLU",
+  "UnweightedRMSNorm",
   "apply_rotary",
   "configure_adamw",
   "scaled_dot_product_attention",
