@@ -238,3 +238,117 @@ class DeepSeekMoE(nn.Module):
       )
 
     return final_hidden_states
+
+
+class DeepSeekV4MLP(nn.Module):
+  def __init__(
+    self,
+    d_model: int,
+    d_ff: int,
+    bias: bool = False,
+    swiglu_limit: float = 10.0,
+  ) -> None:
+    super().__init__()
+    self.swiglu_limit = swiglu_limit
+    self.gate_proj = nn.Linear(d_model, d_ff, bias=bias)
+    self.up_proj = nn.Linear(d_model, d_ff, bias=bias)
+    self.down_proj = nn.Linear(d_ff, d_model, bias=bias)
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    gate = self.gate_proj(x).clamp(max=self.swiglu_limit)
+    up = self.up_proj(x).clamp(min=-self.swiglu_limit, max=self.swiglu_limit)
+    return self.down_proj(F.silu(gate) * up)
+
+
+class DeepSeekV4MoE(nn.Module):
+  """DeepSeek V4 sparse MoE with sqrt-softplus top-k routing."""
+
+  def __init__(
+    self,
+    d_model: int,
+    d_ff: int,
+    n_routed_experts: int,
+    n_shared_experts: int,
+    n_experts_per_token: int,
+    routed_scaling_factor: float = 1.5,
+    bias: bool = False,
+    swiglu_limit: float = 10.0,
+  ) -> None:
+    super().__init__()
+    if n_shared_experts < 0:
+      raise ValueError("n_shared_experts must be non-negative")
+    self.d_model = d_model
+    self.n_routed_experts = n_routed_experts
+    self.gate = DeepSeekTopKRouter(
+      d_model,
+      n_routed_experts,
+      n_experts_per_token=n_experts_per_token,
+      scoring_func="sqrtsoftplus",
+      routed_scaling_factor=routed_scaling_factor,
+      norm_topk_prob=True,
+      grouped_topk=False,
+    )
+    self.experts = nn.ModuleList(
+      [
+        DeepSeekV4MLP(
+          d_model=d_model,
+          d_ff=d_ff,
+          bias=bias,
+          swiglu_limit=swiglu_limit,
+        )
+        for _ in range(n_routed_experts)
+      ]
+    )
+    self.shared_experts = (
+      DeepSeekV4MLP(
+        d_model=d_model,
+        d_ff=d_ff * n_shared_experts,
+        bias=bias,
+        swiglu_limit=swiglu_limit,
+      )
+      if n_shared_experts > 0
+      else None
+    )
+
+  def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    original_shape = hidden_states.shape
+    flat_hidden_states = hidden_states.reshape(-1, self.d_model)
+    _, topk_weights, topk_indices = self.gate.route(hidden_states)
+    routed = self._route_to_experts(
+      flat_hidden_states,
+      topk_indices,
+      topk_weights,
+    ).view(original_shape)
+
+    if self.shared_experts is None:
+      return routed
+    return routed + self.shared_experts(hidden_states)
+
+  def _route_to_experts(
+    self,
+    hidden_states: torch.Tensor,
+    topk_indices: torch.Tensor,
+    topk_weights: torch.Tensor,
+  ) -> torch.Tensor:
+    final_hidden_states = torch.zeros_like(hidden_states)
+    expert_mask = F.one_hot(
+      topk_indices,
+      num_classes=self.n_routed_experts,
+    ).permute(2, 1, 0)
+
+    for expert_idx in torch.nonzero(expert_mask.sum(dim=(-1, -2)), as_tuple=False):
+      expert_idx = expert_idx.item()
+      topk_pos, token_idx = torch.where(expert_mask[expert_idx])
+      current_hidden_states = self.experts[expert_idx](hidden_states[token_idx])
+      current_hidden_states = current_hidden_states * topk_weights[
+        token_idx,
+        topk_pos,
+        None,
+      ].to(current_hidden_states.dtype)
+      final_hidden_states.index_add_(
+        0,
+        token_idx,
+        current_hidden_states.to(final_hidden_states.dtype),
+      )
+
+    return final_hidden_states

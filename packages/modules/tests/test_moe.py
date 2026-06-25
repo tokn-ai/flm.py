@@ -1,10 +1,19 @@
 import pytest
 import torch
-from flm_modules import DeepSeekMoE, DeepSeekTopKRouter, SwiGLU
+from flm_modules import (
+  DeepSeekMoE,
+  DeepSeekTopKRouter,
+  DeepSeekV4MLP,
+  DeepSeekV4MoE,
+  SwiGLU,
+)
 from transformers import DeepseekV3Config
 from transformers.models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3MoE
 from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
-from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4TopKRouter
+from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+  DeepseekV4MLP,
+  DeepseekV4TopKRouter,
+)
 
 
 def test_deepseek_moe_preserves_model_dimension(random_input) -> None:
@@ -124,6 +133,46 @@ def test_deepseek_v4_topk_router_matches_transformers(random_input) -> None:
   torch.testing.assert_close(actual_logits, expected_logits)
   torch.testing.assert_close(actual_indices, expected_indices)
   torch.testing.assert_close(actual_weights, expected_weights)
+
+
+def test_deepseek_v4_mlp_matches_transformers(random_input) -> None:
+  config = DeepseekV4Config(
+    hidden_size=4,
+    moe_intermediate_size=5,
+    swiglu_limit=2.0,
+  )
+  reference = DeepseekV4MLP(config)
+  layer = DeepSeekV4MLP(
+    d_model=4,
+    d_ff=5,
+    swiglu_limit=2.0,
+  )
+  x = random_input(2, 3, 4)
+
+  with torch.no_grad():
+    layer.gate_proj.weight.copy_(reference.gate_proj.weight)
+    layer.up_proj.weight.copy_(reference.up_proj.weight)
+    layer.down_proj.weight.copy_(reference.down_proj.weight)
+
+  torch.testing.assert_close(layer(x), reference(x))
+
+
+def test_deepseek_v4_moe_uses_configurable_topk_router(random_input) -> None:
+  layer = DeepSeekV4MoE(
+    d_model=4,
+    d_ff=5,
+    n_routed_experts=4,
+    n_shared_experts=1,
+    n_experts_per_token=2,
+    routed_scaling_factor=1.25,
+  )
+  x = random_input(2, 3, 4)
+
+  y = layer(x)
+
+  assert y.shape == x.shape
+  assert layer.gate.scoring_func == "sqrtsoftplus"
+  assert not layer.gate.grouped_topk
 
 
 def test_deepseek_moe_matches_manual_expert_routing(random_input) -> None:

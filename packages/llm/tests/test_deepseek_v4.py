@@ -1,6 +1,6 @@
 import torch
 from flm_llm import DeepSeekV4, DeepSeekV4Config
-from flm_modules import DeepSeekMLA, DeepSeekMoE, SwiGLU
+from flm_modules import DeepSeekMLA, DeepSeekV4MoE, SwiGLU
 
 
 def test_deepseek_v4_returns_logits_and_loss() -> None:
@@ -20,8 +20,8 @@ def test_deepseek_v4_uses_mla_and_moe_blocks() -> None:
 
   assert isinstance(model.blocks[0].attn, DeepSeekMLA)
   assert isinstance(model.blocks[0].ffn, SwiGLU)
-  assert isinstance(model.blocks[1].ffn, DeepSeekMoE)
-  assert isinstance(model.blocks[2].ffn, DeepSeekMoE)
+  assert isinstance(model.blocks[1].ffn, DeepSeekV4MoE)
+  assert isinstance(model.blocks[2].ffn, DeepSeekV4MoE)
 
 
 def test_deepseek_v4_backpropagates() -> None:
