@@ -1,6 +1,8 @@
+import importlib.util
+
 import pytest
 import torch
-from flm_modules import CausalSelfAttention
+from flm_modules import AttentionBackend, CausalSelfAttention
 from torch.nn import functional as F
 
 try:
@@ -19,6 +21,12 @@ def test_causal_self_attention_preserves_input_shape(
   y = layer(x)
 
   assert y.shape == x.shape
+
+
+def test_causal_self_attention_accepts_backend_string() -> None:
+  layer = CausalSelfAttention(d_model=8, n_heads=2, backend="torch")
+
+  assert layer.backend == AttentionBackend.TORCH
 
 
 def test_causal_self_attention_matches_saved_output(random_input) -> None:
@@ -78,6 +86,28 @@ def test_causal_self_attention_matches_scaled_dot_product_attention(
   torch.testing.assert_close(layer(x), expected)
 
 
+def test_causal_self_attention_rejects_unknown_backend() -> None:
+  with pytest.raises(ValueError):
+    CausalSelfAttention(d_model=8, n_heads=2, backend="unknown")
+
+
+def test_causal_self_attention_flash_attention2_requires_package(
+  random_input,
+) -> None:
+  if importlib.util.find_spec("flash_attn") is not None:
+    pytest.skip("flash-attn installed; package-missing path not applicable")
+
+  layer = CausalSelfAttention(
+    d_model=8,
+    n_heads=2,
+    backend=AttentionBackend.FLASH_ATTENTION2,
+  )
+  x = random_input(3, 5, 8)
+
+  with pytest.raises(ImportError, match="flash-attn package"):
+    layer(x)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
 def test_causal_self_attention_matches_flash_attention_backend(random_input) -> None:
   if sdpa_kernel is None or SDPBackend is None:
@@ -95,6 +125,39 @@ def test_causal_self_attention_matches_flash_attention_backend(random_input) -> 
     pytest.skip(f"FlashAttention backend unavailable: {exc}")
 
   torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+def test_causal_self_attention_matches_flash_attention2_backend(random_input) -> None:
+  pytest.importorskip("flash_attn", reason="flash-attn unavailable")
+
+  torch_layer = (
+    CausalSelfAttention(
+      d_model=8,
+      n_heads=2,
+      backend=AttentionBackend.TORCH,
+    )
+    .cuda()
+    .half()
+  )
+  flash_layer = (
+    CausalSelfAttention(
+      d_model=8,
+      n_heads=2,
+      backend=AttentionBackend.FLASH_ATTENTION2,
+    )
+    .cuda()
+    .half()
+  )
+  flash_layer.load_state_dict(torch_layer.state_dict())
+  x = random_input(3, 5, 8).cuda().half()
+
+  torch.testing.assert_close(
+    flash_layer(x),
+    torch_layer(x),
+    rtol=1e-3,
+    atol=1e-3,
+  )
 
 
 def test_causal_self_attention_supports_bias_variant() -> None:

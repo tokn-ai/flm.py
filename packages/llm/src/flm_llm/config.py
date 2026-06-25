@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from flm_modules import AttentionBackend
+
 
 @dataclass(frozen=True)
 class ReferenceModelConfig:
@@ -16,6 +18,7 @@ class ReferenceModelConfig:
   bias: bool = False
   rope_base: float = 10_000.0
   norm_eps: float = 1e-6
+  attention_backend: AttentionBackend | str = AttentionBackend.TORCH
 
   @property
   def ffn_d_ff(self) -> int:

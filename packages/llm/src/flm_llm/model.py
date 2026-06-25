@@ -19,6 +19,7 @@ class TransformerBlock(nn.Module):
       n_heads=config.n_heads,
       bias=config.bias,
       rope_base=config.rope_base,
+      backend=config.attention_backend,
     )
     self.ffn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.ffn = SwiGLU(
