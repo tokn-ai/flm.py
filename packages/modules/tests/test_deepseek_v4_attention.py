@@ -1,6 +1,7 @@
 import torch
 from flm_modules import (
   DeepSeekV4Attention,
+  DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
   DeepSeekV4IndexerScorer,
   DeepSeekV4RotaryEmbedding,
@@ -9,6 +10,7 @@ from flm_modules import (
 from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
 from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
   DeepseekV4Attention,
+  DeepseekV4HCACompressor,
   DeepseekV4Indexer,
   DeepseekV4IndexerScorer,
   DeepseekV4RotaryEmbedding,
@@ -189,6 +191,62 @@ def test_deepseek_v4_indexer_backpropagates(random_input) -> None:
     index_n_heads=2,
     index_head_dim=4,
     index_topk=2,
+  )
+  hidden_states = random_input(2, 6, 8).requires_grad_()
+  compressed = layer.compress(hidden_states)
+
+  compressed.square().mean().backward()
+
+  assert hidden_states.grad is not None
+  assert layer.kv_proj.weight.grad is not None
+  assert layer.gate_proj.weight.grad is not None
+
+
+def test_deepseek_v4_hca_compressor_matches_transformers(random_input) -> None:
+  config = _deepseek_v4_config()
+  reference = DeepseekV4HCACompressor(config)
+  layer = DeepSeekV4HCACompressor(
+    d_model=8,
+    head_dim=4,
+    compress_rate=2,
+    rope_head_dim=4,
+    rope_base=10_000.0,
+    norm_eps=1e-6,
+  )
+  hidden_states = random_input(2, 6, 8)
+  position_ids = torch.arange(6).unsqueeze(0).expand(2, -1)
+
+  with torch.no_grad():
+    reference.position_bias.copy_(
+      torch.linspace(-0.2, 0.2, steps=reference.position_bias.numel()).view_as(
+        reference.position_bias,
+      )
+    )
+    layer.kv_proj.weight.copy_(reference.kv_proj.weight)
+    layer.gate_proj.weight.copy_(reference.gate_proj.weight)
+    layer.position_bias.copy_(reference.position_bias)
+    layer.kv_norm.weight.copy_(reference.kv_norm.weight)
+
+  actual_kv, actual_bias = layer(hidden_states, position_ids.squeeze(0))
+  expected_kv, expected_bias = reference(
+    hidden_states,
+    q_residual=random_input(2, 6, 5),
+    position_ids=position_ids,
+    past_key_values=None,
+    layer_idx=0,
+  )
+
+  torch.testing.assert_close(layer.compress(hidden_states), expected_kv.squeeze(1))
+  torch.testing.assert_close(actual_kv, expected_kv)
+  torch.testing.assert_close(actual_bias, expected_bias)
+
+
+def test_deepseek_v4_hca_compressor_backpropagates(random_input) -> None:
+  layer = DeepSeekV4HCACompressor(
+    d_model=8,
+    head_dim=4,
+    compress_rate=2,
+    rope_head_dim=4,
   )
   hidden_states = random_input(2, 6, 8).requires_grad_()
   compressed = layer.compress(hidden_states)

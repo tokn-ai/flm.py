@@ -330,3 +330,90 @@ class DeepSeekV4Indexer(nn.Module):
     positions = positions.unsqueeze(0).expand(batch_size, -1)
     cos, sin = self.rotary_emb(compressed, positions=positions)
     return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
+
+
+class DeepSeekV4HCACompressor(nn.Module):
+  """Stateless DeepSeek V4 heavily-compressed attention compressor."""
+
+  def __init__(
+    self,
+    d_model: int,
+    head_dim: int,
+    compress_rate: int,
+    rope_head_dim: int | None = None,
+    rope_base: float = 10_000.0,
+    norm_eps: float = 1e-6,
+  ) -> None:
+    super().__init__()
+    if d_model <= 0:
+      raise ValueError("d_model must be positive")
+    if head_dim <= 0:
+      raise ValueError("head_dim must be positive")
+    if compress_rate <= 0:
+      raise ValueError("compress_rate must be positive")
+
+    rope_head_dim = rope_head_dim if rope_head_dim is not None else head_dim
+    self.compress_rate = compress_rate
+    self.head_dim = head_dim
+    self.kv_proj = nn.Linear(d_model, head_dim, bias=False)
+    self.gate_proj = nn.Linear(d_model, head_dim, bias=False)
+    self.position_bias = nn.Parameter(torch.zeros(compress_rate, head_dim))
+    self.kv_norm = RMSNorm(head_dim, eps=norm_eps)
+    self.rotary_emb = DeepSeekV4RotaryEmbedding(
+      head_dim=head_dim,
+      rope_head_dim=rope_head_dim,
+      base=rope_base,
+    )
+
+  def forward(
+    self,
+    hidden_states: torch.Tensor,
+    positions: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    compressed = self.compress(hidden_states)
+    compressed_kv = compressed.unsqueeze(1)
+    compressed_len = compressed_kv.shape[2]
+    seq_len = positions.shape[-1]
+    if seq_len == 1 or compressed_len == 0:
+      return compressed_kv, None
+
+    if positions.ndim == 1:
+      positions = positions.unsqueeze(0)
+    positions = positions.expand(hidden_states.shape[0], -1)
+    entry_indices = torch.arange(compressed_len, device=compressed_kv.device)
+    causal_threshold = (positions + 1) // self.compress_rate
+    block_bias = compressed_kv.new_zeros(
+      (hidden_states.shape[0], 1, seq_len, compressed_len),
+    )
+    block_bias = block_bias.masked_fill(
+      entry_indices.view(1, 1, 1, -1) >= causal_threshold.unsqueeze(1).unsqueeze(-1),
+      float("-inf"),
+    )
+    return compressed_kv, block_bias
+
+  def compress(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    batch_size = hidden_states.shape[0]
+    kv = self.kv_proj(hidden_states)
+    gate = self.gate_proj(hidden_states)
+    usable = (kv.shape[1] // self.compress_rate) * self.compress_rate
+    chunk_kv = kv[:, :usable]
+    chunk_gate = gate[:, :usable]
+    if chunk_kv.shape[1] == 0:
+      return chunk_kv.new_zeros((batch_size, 0, self.head_dim))
+
+    n_windows = chunk_kv.shape[1] // self.compress_rate
+    chunk_kv = chunk_kv.view(batch_size, n_windows, self.compress_rate, -1)
+    chunk_gate = (
+      chunk_gate.view(batch_size, n_windows, self.compress_rate, -1)
+      + self.position_bias
+    )
+    compressed = self.kv_norm(
+      (
+        chunk_kv * chunk_gate.softmax(dim=2, dtype=torch.float32).to(chunk_kv.dtype)
+      ).sum(dim=2)
+    )
+    positions = torch.arange(n_windows, device=compressed.device)
+    positions = positions * self.compress_rate
+    positions = positions.unsqueeze(0).expand(batch_size, -1)
+    cos, sin = self.rotary_emb(compressed, positions=positions)
+    return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
