@@ -56,6 +56,7 @@ line-ending = "lf"
 [tool.pytest.ini_options]
 testpaths = [
   "packages/datasets/tests",
+  "packages/llm/tests",
   "packages/modules/tests",
   "packages/train/tests",
 ]
