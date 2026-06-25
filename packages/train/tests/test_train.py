@@ -63,3 +63,51 @@ def test_train_on_repo_sources_smoke_trains_deepseek_v4(tmp_path: Path) -> None:
   assert result.token_count > result.file_count
   assert len(result.losses) == 1
   assert result.losses[0] > 0
+
+
+def test_train_on_repo_sources_smoke_trains_compressed_deepseek_v4(
+  tmp_path: Path,
+) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def h_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+
+  result = train_on_repo_sources(
+    TrainConfig(
+      repo_root=tmp_path,
+      model_name="deepseek_v4",
+      seq_len=8,
+      batch_size=2,
+      steps=1,
+      d_model=16,
+      n_layers=2,
+      n_heads=2,
+      head_dim=8,
+      d_ff=16,
+      q_lora_rank=8,
+      rope_head_dim=8,
+      o_lora_rank=4,
+      o_groups=2,
+      attention_layer_types=(
+        "compressed_sparse_attention",
+        "heavily_compressed_attention",
+      ),
+      compress_rate_csa=2,
+      compress_rate_hca=2,
+      index_n_heads=2,
+      index_head_dim=4,
+      index_topk=2,
+      n_routed_experts=4,
+      n_shared_experts=1,
+      n_experts_per_token=2,
+      n_group=2,
+      topk_group=1,
+      dense_layers=1,
+    )
+  )
+
+  assert result.file_count == 1
+  assert result.token_count > result.file_count
+  assert len(result.losses) == 1
+  assert result.losses[0] > 0
