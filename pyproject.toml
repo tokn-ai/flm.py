@@ -25,6 +25,7 @@ dev = [
   "flm-train",
   "flm-rl",
   "flm-inference",
+  "pytest>=8.0",
   "ruff>=0.13.0",
 ]
 
@@ -46,3 +47,8 @@ select = [
 quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
+
+[tool.pytest.ini_options]
+testpaths = [
+  "packages/modules/tests",
+]
