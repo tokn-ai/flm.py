@@ -29,6 +29,12 @@ def test_causal_self_attention_accepts_backend_string() -> None:
   assert layer.backend == AttentionBackend.TORCH
 
 
+def test_causal_self_attention_accepts_tilelang_backend_string() -> None:
+  layer = CausalSelfAttention(d_model=8, n_heads=2, backend="tilelang")
+
+  assert layer.backend == AttentionBackend.TILELANG
+
+
 def test_causal_self_attention_matches_saved_output(random_input) -> None:
   layer = CausalSelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
@@ -108,6 +114,18 @@ def test_causal_self_attention_flash_attention2_requires_package(
     layer(x)
 
 
+def test_causal_self_attention_tilelang_requires_cuda(random_input) -> None:
+  layer = CausalSelfAttention(
+    d_model=8,
+    n_heads=2,
+    backend=AttentionBackend.TILELANG,
+  )
+  x = random_input(3, 5, 8)
+
+  with pytest.raises(RuntimeError, match="CUDA tensors"):
+    layer(x)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
 def test_causal_self_attention_matches_flash_attention_backend(random_input) -> None:
   if sdpa_kernel is None or SDPBackend is None:
@@ -157,6 +175,39 @@ def test_causal_self_attention_matches_flash_attention2_backend(random_input) ->
     torch_layer(x),
     rtol=1e-3,
     atol=1e-3,
+  )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+def test_causal_self_attention_matches_tilelang_backend(random_input) -> None:
+  pytest.importorskip("tilelang", reason="TileLang unavailable")
+
+  torch_layer = (
+    CausalSelfAttention(
+      d_model=8,
+      n_heads=2,
+      backend=AttentionBackend.TORCH,
+    )
+    .cuda()
+    .half()
+  )
+  tilelang_layer = (
+    CausalSelfAttention(
+      d_model=8,
+      n_heads=2,
+      backend=AttentionBackend.TILELANG,
+    )
+    .cuda()
+    .half()
+  )
+  tilelang_layer.load_state_dict(torch_layer.state_dict())
+  x = random_input(3, 5, 8).cuda().half()
+
+  torch.testing.assert_close(
+    tilelang_layer(x),
+    torch_layer(x),
+    rtol=1e-2,
+    atol=1e-2,
   )
 
 

@@ -14,6 +14,7 @@ from flm_modules.rope import RotaryEmbedding
 class AttentionBackend(StrEnum):
   TORCH = "torch"
   FLASH_ATTENTION2 = "flash_attention2"
+  TILELANG = "tilelang"
 
 
 class CausalSelfAttention(nn.Module):
@@ -51,6 +52,9 @@ class CausalSelfAttention(nn.Module):
     if self.backend == AttentionBackend.FLASH_ATTENTION2:
       y = self._flash_attention2(q, k, v)
       return self.out(y)
+    if self.backend == AttentionBackend.TILELANG:
+      y = self._tilelang_attention(q, k, v)
+      return self.out(y)
 
     y = F.scaled_dot_product_attention(
       q,
@@ -81,4 +85,16 @@ class CausalSelfAttention(nn.Module):
     k = k.transpose(1, 2).contiguous()
     v = v.transpose(1, 2).contiguous()
     y = flash_attn_func(q, k, v, causal=True)
+    return y.contiguous().view(batch_size, seq_len, self.d_model)
+
+  def _tilelang_attention(
+    self,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+  ) -> torch.Tensor:
+    from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attention
+
+    y = tilelang_flash_attention(q, k, v)
+    batch_size, _, seq_len, _ = q.shape
     return y.contiguous().view(batch_size, seq_len, self.d_model)
