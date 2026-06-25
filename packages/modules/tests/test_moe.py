@@ -1,6 +1,8 @@
 import pytest
 import torch
 from flm_modules import DeepSeekMoE, DeepSeekTopKRouter, SwiGLU
+from transformers import DeepseekV3Config
+from transformers.models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3MoE
 
 
 def test_deepseek_moe_preserves_model_dimension(random_input) -> None:
@@ -51,12 +53,6 @@ def test_deepseek_moe_shared_experts_add_to_routed_output(random_input) -> None:
 
 
 def test_deepseek_moe_matches_transformers_route_tokens() -> None:
-  transformers = pytest.importorskip("transformers")
-  DeepseekV3Config = transformers.DeepseekV3Config
-  DeepseekV3MoE = pytest.importorskip(
-    "transformers.models.deepseek_v3.modeling_deepseek_v3"
-  ).DeepseekV3MoE
-
   config = DeepseekV3Config(
     hidden_size=4,
     intermediate_size=5,
