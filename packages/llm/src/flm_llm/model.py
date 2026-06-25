@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from flm_modules import CausalSelfAttention, RMSNorm, SwiGLU
+from flm_modules import RMSNorm, SelfAttention, SwiGLU
 from torch import nn
 from torch.nn import functional as F
 
@@ -14,7 +14,7 @@ class TransformerBlock(nn.Module):
   def __init__(self, config: ReferenceModelConfig) -> None:
     super().__init__()
     self.attn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
-    self.attn = CausalSelfAttention(
+    self.attn = SelfAttention(
       d_model=config.d_model,
       n_heads=config.n_heads,
       bias=config.bias,

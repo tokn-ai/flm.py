@@ -17,6 +17,7 @@ def test_deepseek_mla_preserves_model_dimension(random_input) -> None:
     qk_nope_head_dim=4,
     qk_rope_head_dim=4,
     v_head_dim=4,
+    backend="torch",
   )
   x = random_input(2, 5, 8)
 

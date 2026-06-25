@@ -1,10 +1,15 @@
 """Attention layers."""
 
-from flm_modules.attentions.causal import AttentionBackend, CausalSelfAttention
+from flm_modules.attentions.backends import (
+  AttentionBackend,
+  scaled_dot_product_attention,
+)
 from flm_modules.attentions.mla import DeepSeekMLA
+from flm_modules.attentions.self_attention import SelfAttention
 
 __all__ = [
   "AttentionBackend",
-  "CausalSelfAttention",
   "DeepSeekMLA",
+  "SelfAttention",
+  "scaled_dot_product_attention",
 ]

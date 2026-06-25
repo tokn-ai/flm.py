@@ -2,7 +2,7 @@ import importlib.util
 
 import pytest
 import torch
-from flm_modules import AttentionBackend, CausalSelfAttention
+from flm_modules import AttentionBackend, SelfAttention
 from torch.nn import functional as F
 
 try:
@@ -12,10 +12,10 @@ except ImportError:  # pragma: no cover
   sdpa_kernel = None
 
 
-def test_causal_self_attention_preserves_input_shape(
+def test_self_attention_preserves_input_shape(
   random_input,
 ) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2)
+  layer = SelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
 
   y = layer(x)
@@ -23,20 +23,20 @@ def test_causal_self_attention_preserves_input_shape(
   assert y.shape == x.shape
 
 
-def test_causal_self_attention_accepts_backend_string() -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, backend="torch")
+def test_self_attention_accepts_backend_string() -> None:
+  layer = SelfAttention(d_model=8, n_heads=2, backend="torch")
 
   assert layer.backend == AttentionBackend.TORCH
 
 
-def test_causal_self_attention_accepts_tilelang_backend_string() -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, backend="tilelang")
+def test_self_attention_accepts_tilelang_backend_string() -> None:
+  layer = SelfAttention(d_model=8, n_heads=2, backend="tilelang")
 
   assert layer.backend == AttentionBackend.TILELANG
 
 
-def test_causal_self_attention_matches_saved_output(random_input) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2)
+def test_self_attention_matches_saved_output(random_input) -> None:
+  layer = SelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
 
   y = layer(x)
@@ -58,10 +58,10 @@ def test_causal_self_attention_matches_saved_output(random_input) -> None:
   )
 
 
-def test_causal_self_attention_matches_scaled_dot_product_attention(
+def test_self_attention_matches_scaled_dot_product_attention(
   random_input,
 ) -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2)
+  layer = SelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)
   batch_size, seq_len, _ = x.shape
 
@@ -92,18 +92,42 @@ def test_causal_self_attention_matches_scaled_dot_product_attention(
   torch.testing.assert_close(layer(x), expected)
 
 
-def test_causal_self_attention_rejects_unknown_backend() -> None:
+def test_self_attention_supports_non_causal_attention(random_input) -> None:
+  layer = SelfAttention(d_model=8, n_heads=2, causal=False)
+  x = random_input(3, 5, 8)
+  batch_size, seq_len, _ = x.shape
+
+  q, k, v = layer.qkv(x).chunk(3, dim=-1)
+  q = q.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
+  k = k.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
+  v = v.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
+  q, k = layer.rope(q, k)
+  expected = F.scaled_dot_product_attention(
+    q,
+    k,
+    v,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
+  )
+  expected = expected.transpose(1, 2).contiguous().view(batch_size, seq_len, 8)
+  expected = layer.out(expected)
+
+  torch.testing.assert_close(layer(x), expected)
+
+
+def test_self_attention_rejects_unknown_backend() -> None:
   with pytest.raises(ValueError):
-    CausalSelfAttention(d_model=8, n_heads=2, backend="unknown")
+    SelfAttention(d_model=8, n_heads=2, backend="unknown")
 
 
-def test_causal_self_attention_flash_attention2_requires_package(
+def test_self_attention_flash_attention2_requires_package(
   random_input,
 ) -> None:
   if importlib.util.find_spec("flash_attn") is not None:
     pytest.skip("flash-attn installed; package-missing path not applicable")
 
-  layer = CausalSelfAttention(
+  layer = SelfAttention(
     d_model=8,
     n_heads=2,
     backend=AttentionBackend.FLASH_ATTENTION2,
@@ -114,8 +138,8 @@ def test_causal_self_attention_flash_attention2_requires_package(
     layer(x)
 
 
-def test_causal_self_attention_tilelang_requires_cuda(random_input) -> None:
-  layer = CausalSelfAttention(
+def test_self_attention_tilelang_requires_cuda(random_input) -> None:
+  layer = SelfAttention(
     d_model=8,
     n_heads=2,
     backend=AttentionBackend.TILELANG,
@@ -127,11 +151,11 @@ def test_causal_self_attention_tilelang_requires_cuda(random_input) -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
-def test_causal_self_attention_matches_flash_attention_backend(random_input) -> None:
+def test_self_attention_matches_flash_attention_backend(random_input) -> None:
   if sdpa_kernel is None or SDPBackend is None:
     pytest.skip("SDPA backend controls unavailable")
 
-  layer = CausalSelfAttention(d_model=8, n_heads=2).cuda().half()
+  layer = SelfAttention(d_model=8, n_heads=2).cuda().half()
   x = random_input(3, 5, 8).cuda().half()
   layer.eval()
 
@@ -146,11 +170,11 @@ def test_causal_self_attention_matches_flash_attention_backend(random_input) -> 
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
-def test_causal_self_attention_matches_flash_attention2_backend(random_input) -> None:
+def test_self_attention_matches_flash_attention2_backend(random_input) -> None:
   pytest.importorskip("flash_attn", reason="flash-attn unavailable")
 
   torch_layer = (
-    CausalSelfAttention(
+    SelfAttention(
       d_model=8,
       n_heads=2,
       backend=AttentionBackend.TORCH,
@@ -159,7 +183,7 @@ def test_causal_self_attention_matches_flash_attention2_backend(random_input) ->
     .half()
   )
   flash_layer = (
-    CausalSelfAttention(
+    SelfAttention(
       d_model=8,
       n_heads=2,
       backend=AttentionBackend.FLASH_ATTENTION2,
@@ -179,11 +203,11 @@ def test_causal_self_attention_matches_flash_attention2_backend(random_input) ->
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
-def test_causal_self_attention_matches_tilelang_backend(random_input) -> None:
+def test_self_attention_matches_tilelang_backend(random_input) -> None:
   pytest.importorskip("tilelang", reason="TileLang unavailable")
 
   torch_layer = (
-    CausalSelfAttention(
+    SelfAttention(
       d_model=8,
       n_heads=2,
       backend=AttentionBackend.TORCH,
@@ -192,7 +216,7 @@ def test_causal_self_attention_matches_tilelang_backend(random_input) -> None:
     .half()
   )
   tilelang_layer = (
-    CausalSelfAttention(
+    SelfAttention(
       d_model=8,
       n_heads=2,
       backend=AttentionBackend.TILELANG,
@@ -212,13 +236,13 @@ def test_causal_self_attention_matches_tilelang_backend(random_input) -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
-def test_causal_self_attention_tilelang_matches_torch_gradients(
+def test_self_attention_tilelang_matches_torch_gradients(
   random_input,
 ) -> None:
   pytest.importorskip("tilelang", reason="TileLang unavailable")
 
   torch_layer = (
-    CausalSelfAttention(
+    SelfAttention(
       d_model=8,
       n_heads=2,
       backend=AttentionBackend.TORCH,
@@ -227,7 +251,7 @@ def test_causal_self_attention_tilelang_matches_torch_gradients(
     .half()
   )
   tilelang_layer = (
-    CausalSelfAttention(
+    SelfAttention(
       d_model=8,
       n_heads=2,
       backend=AttentionBackend.TILELANG,
@@ -258,13 +282,13 @@ def test_causal_self_attention_tilelang_matches_torch_gradients(
     )
 
 
-def test_causal_self_attention_supports_bias_variant() -> None:
-  layer = CausalSelfAttention(d_model=8, n_heads=2, bias=True)
+def test_self_attention_supports_bias_variant() -> None:
+  layer = SelfAttention(d_model=8, n_heads=2, bias=True)
 
   assert layer.qkv.bias is not None
   assert layer.out.bias is not None
 
 
-def test_causal_self_attention_rejects_invalid_head_count() -> None:
+def test_self_attention_rejects_invalid_head_count() -> None:
   with pytest.raises(ValueError, match="d_model must be divisible"):
-    CausalSelfAttention(d_model=10, n_heads=3)
+    SelfAttention(d_model=10, n_heads=3)

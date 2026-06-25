@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
+from flm_modules.attentions.backends import (
+  AttentionBackend,
+  scaled_dot_product_attention,
+)
 from flm_modules.norm import RMSNorm
 from flm_modules.rope import RotaryEmbedding
 
@@ -27,6 +30,7 @@ class DeepSeekMLA(nn.Module):
     rope_layout: str = "llama",
     norm_eps: float = 1e-6,
     causal: bool = True,
+    backend: AttentionBackend | str = AttentionBackend.TORCH,
   ) -> None:
     super().__init__()
     if n_heads <= 0:
@@ -52,6 +56,7 @@ class DeepSeekMLA(nn.Module):
     self.v_head_dim = v_head_dim
     self.scaling = self.qk_head_dim**-0.5
     self.causal = causal
+    self.backend = AttentionBackend(backend)
 
     if q_lora_rank is None:
       self.q_proj = nn.Linear(d_model, n_heads * self.qk_head_dim, bias=False)
@@ -89,13 +94,13 @@ class DeepSeekMLA(nn.Module):
       hidden_states,
       positions=positions,
     )
-    attn_output = F.scaled_dot_product_attention(
+    attn_output = scaled_dot_product_attention(
       query_states,
       key_states,
       value_states,
+      backend=self.backend,
       attn_mask=attention_mask,
-      dropout_p=0.0,
-      is_causal=self.causal and attention_mask is None,
+      causal=self.causal,
       scale=self.scaling,
     )
     attn_output = attn_output.transpose(1, 2).contiguous()
