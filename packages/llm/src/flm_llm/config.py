@@ -48,9 +48,13 @@ class DeepSeekV4Config:
   norm_topk_prob: bool = True
   routed_scaling_factor: float = 1.0
   dense_layers: int = 1
+  hc_mult: int = 2
+  hc_sinkhorn_iters: int = 3
+  hc_eps: float = 1e-6
   bias: bool = False
   rope_base: float = 10_000.0
   norm_eps: float = 1e-6
+  initializer_range: float = 0.02
   attention_backend: AttentionBackend | str = AttentionBackend.TORCH
 
   @property

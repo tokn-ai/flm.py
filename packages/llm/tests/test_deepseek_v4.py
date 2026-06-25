@@ -1,6 +1,12 @@
 import torch
 from flm_llm import DeepSeekV4, DeepSeekV4Config
-from flm_modules import DeepSeekMLA, DeepSeekMoE, SwiGLU
+from flm_modules import (
+  DeepSeekMLA,
+  DeepSeekMoE,
+  DeepSeekV4HyperConnection,
+  DeepSeekV4HyperHead,
+  SwiGLU,
+)
 
 
 def test_deepseek_v4_returns_logits_and_loss() -> None:
@@ -18,6 +24,9 @@ def test_deepseek_v4_returns_logits_and_loss() -> None:
 def test_deepseek_v4_uses_mla_and_moe_blocks() -> None:
   model = DeepSeekV4(_tiny_config(n_layers=3, dense_layers=1))
 
+  assert isinstance(model.hc_head, DeepSeekV4HyperHead)
+  assert isinstance(model.blocks[0].attn_hc, DeepSeekV4HyperConnection)
+  assert isinstance(model.blocks[0].ffn_hc, DeepSeekV4HyperConnection)
   assert isinstance(model.blocks[0].attn, DeepSeekMLA)
   assert isinstance(model.blocks[0].ffn, SwiGLU)
   assert isinstance(model.blocks[1].ffn, DeepSeekMoE)
@@ -35,6 +44,9 @@ def test_deepseek_v4_backpropagates() -> None:
   loss.backward()
 
   assert model.token_embedding.weight.grad is not None
+  assert model.hc_head.hc_fn.grad is not None
+  assert model.blocks[0].attn_hc.fn.grad is not None
+  assert model.blocks[0].ffn_hc.fn.grad is not None
   assert model.blocks[0].attn.kv_a_proj_with_mqa.weight.grad is not None
   assert model.blocks[-1].ffn.gate.weight.grad is not None
 

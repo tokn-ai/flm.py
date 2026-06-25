@@ -6,6 +6,8 @@ import torch
 from flm_modules import (
   DeepSeekMLA,
   DeepSeekMoE,
+  DeepSeekV4HyperConnection,
+  DeepSeekV4HyperHead,
   ExpertKind,
   RMSNorm,
   RouterScoring,
@@ -20,6 +22,14 @@ from flm_llm.config import DeepSeekV4Config
 class DeepSeekV4Block(nn.Module):
   def __init__(self, config: DeepSeekV4Config, layer_idx: int) -> None:
     super().__init__()
+    self.attn_hc = DeepSeekV4HyperConnection(
+      d_model=config.d_model,
+      hc_mult=config.hc_mult,
+      hc_sinkhorn_iters=config.hc_sinkhorn_iters,
+      hc_eps=config.hc_eps,
+      rms_norm_eps=config.norm_eps,
+      initializer_range=config.initializer_range,
+    )
     self.attn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.attn = DeepSeekMLA(
       d_model=config.d_model,
@@ -33,6 +43,14 @@ class DeepSeekV4Block(nn.Module):
       rope_base=config.rope_base,
       norm_eps=config.norm_eps,
       backend=config.attention_backend,
+    )
+    self.ffn_hc = DeepSeekV4HyperConnection(
+      d_model=config.d_model,
+      hc_mult=config.hc_mult,
+      hc_sinkhorn_iters=config.hc_sinkhorn_iters,
+      hc_eps=config.hc_eps,
+      rms_norm_eps=config.norm_eps,
+      initializer_range=config.initializer_range,
     )
     self.ffn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     if layer_idx < config.dense_layers:
@@ -55,9 +73,23 @@ class DeepSeekV4Block(nn.Module):
         expert_kind=ExpertKind.V4,
       )
 
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    x = x + self.attn(self.attn_norm(x))
-    return x + self.ffn(self.ffn_norm(x))
+  def forward(self, hidden_streams: torch.Tensor) -> torch.Tensor:
+    dtype = hidden_streams.dtype
+    post, comb, collapsed = self.attn_hc(hidden_streams)
+    attn_output = self.attn(self.attn_norm(collapsed))
+    hidden_streams = post.to(dtype).unsqueeze(-1) * attn_output.unsqueeze(
+      -2
+    ) + torch.matmul(
+      comb.to(dtype).transpose(-1, -2),
+      hidden_streams,
+    )
+
+    post, comb, collapsed = self.ffn_hc(hidden_streams)
+    ffn_output = self.ffn(self.ffn_norm(collapsed))
+    return post.to(dtype).unsqueeze(-1) * ffn_output.unsqueeze(-2) + torch.matmul(
+      comb.to(dtype).transpose(-1, -2),
+      hidden_streams,
+    )
 
 
 class DeepSeekV4(nn.Module):
@@ -67,6 +99,13 @@ class DeepSeekV4(nn.Module):
     self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
     self.blocks = nn.ModuleList(
       DeepSeekV4Block(config, layer_idx) for layer_idx in range(config.n_layers)
+    )
+    self.hc_head = DeepSeekV4HyperHead(
+      d_model=config.d_model,
+      hc_mult=config.hc_mult,
+      hc_eps=config.hc_eps,
+      rms_norm_eps=config.norm_eps,
+      initializer_range=config.initializer_range,
     )
     self.norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
@@ -83,9 +122,10 @@ class DeepSeekV4(nn.Module):
       raise ValueError("sequence length exceeds config.max_seq_len")
 
     x = self.token_embedding(input_ids)
+    x = x.unsqueeze(2).expand(-1, -1, self.config.hc_mult, -1).contiguous()
     for block in self.blocks:
       x = block(x)
-    logits = self.lm_head(self.norm(x))
+    logits = self.lm_head(self.norm(self.hc_head(x)))
 
     loss = None
     if targets is not None:

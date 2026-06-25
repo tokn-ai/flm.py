@@ -27,6 +27,7 @@ class DeepSeekV4HyperConnection(nn.Module):
     hc_sinkhorn_iters: int = 3,
     hc_eps: float = 1e-6,
     rms_norm_eps: float = 1e-6,
+    initializer_range: float = 0.02,
   ) -> None:
     super().__init__()
     if d_model <= 0:
@@ -44,6 +45,12 @@ class DeepSeekV4HyperConnection(nn.Module):
     self.fn = nn.Parameter(torch.empty(mix, hc_mult * d_model))
     self.base = nn.Parameter(torch.empty(mix))
     self.scale = nn.Parameter(torch.empty(3))
+    self.reset_parameters(initializer_range)
+
+  def reset_parameters(self, initializer_range: float = 0.02) -> None:
+    nn.init.normal_(self.fn, mean=0.0, std=initializer_range)
+    nn.init.zeros_(self.base)
+    nn.init.ones_(self.scale)
 
   def forward(
     self,
@@ -86,6 +93,7 @@ class DeepSeekV4HyperHead(nn.Module):
     hc_mult: int,
     hc_eps: float = 1e-6,
     rms_norm_eps: float = 1e-6,
+    initializer_range: float = 0.02,
   ) -> None:
     super().__init__()
     if d_model <= 0:
@@ -99,6 +107,12 @@ class DeepSeekV4HyperHead(nn.Module):
     self.hc_fn = nn.Parameter(torch.empty(hc_mult, hc_mult * d_model))
     self.hc_base = nn.Parameter(torch.empty(hc_mult))
     self.hc_scale = nn.Parameter(torch.empty(1))
+    self.reset_parameters(initializer_range)
+
+  def reset_parameters(self, initializer_range: float = 0.02) -> None:
+    nn.init.normal_(self.hc_fn, mean=0.0, std=initializer_range)
+    nn.init.zeros_(self.hc_base)
+    nn.init.ones_(self.hc_scale)
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     if x.shape[-2] != self.hc_mult:
