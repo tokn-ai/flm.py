@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -10,6 +12,12 @@ from flm_modules.hyper import UnweightedRMSNorm
 from flm_modules.linear import GroupedLinear
 from flm_modules.norm import RMSNorm
 from flm_modules.rope import RopeLayout, rotate_half
+
+
+class DeepSeekV4AttentionKind(StrEnum):
+  SLIDING = "sliding_attention"
+  COMPRESSED_SPARSE = "compressed_sparse_attention"
+  HEAVILY_COMPRESSED = "heavily_compressed_attention"
 
 
 class DeepSeekV4RotaryEmbedding(nn.Module):
@@ -69,7 +77,7 @@ def apply_deepseek_v4_rotary(
 
 
 class DeepSeekV4Attention(nn.Module):
-  """Sliding DeepSeek V4 attention with shared K/V and attention sinks."""
+  """DeepSeek V4 attention with optional compressed K/V blocks."""
 
   def __init__(
     self,
@@ -83,6 +91,12 @@ class DeepSeekV4Attention(nn.Module):
     bias: bool = False,
     rope_base: float = 10_000.0,
     norm_eps: float = 1e-6,
+    layer_type: DeepSeekV4AttentionKind | str = DeepSeekV4AttentionKind.SLIDING,
+    compress_rate_csa: int = 4,
+    compress_rate_hca: int = 128,
+    index_n_heads: int = 64,
+    index_head_dim: int = 128,
+    index_topk: int = 512,
   ) -> None:
     super().__init__()
     if d_model <= 0:
@@ -107,6 +121,7 @@ class DeepSeekV4Attention(nn.Module):
     self.o_groups = o_groups
     self.rope_head_dim = rope_head_dim
     self.scaling = head_dim**-0.5
+    self.layer_type = DeepSeekV4AttentionKind(layer_type)
 
     self.q_a_proj = nn.Linear(d_model, q_lora_rank, bias=bias)
     self.q_a_norm = RMSNorm(q_lora_rank, eps=norm_eps)
@@ -127,6 +142,31 @@ class DeepSeekV4Attention(nn.Module):
       rope_head_dim=rope_head_dim,
       base=rope_base,
     )
+    self.compressor: DeepSeekV4CSACompressor | DeepSeekV4HCACompressor | None
+    if self.layer_type == DeepSeekV4AttentionKind.COMPRESSED_SPARSE:
+      self.compressor = DeepSeekV4CSACompressor(
+        d_model=d_model,
+        head_dim=head_dim,
+        q_lora_rank=q_lora_rank,
+        compress_rate=compress_rate_csa,
+        index_n_heads=index_n_heads,
+        index_head_dim=index_head_dim,
+        index_topk=index_topk,
+        rope_head_dim=rope_head_dim,
+        rope_base=rope_base,
+        norm_eps=norm_eps,
+      )
+    elif self.layer_type == DeepSeekV4AttentionKind.HEAVILY_COMPRESSED:
+      self.compressor = DeepSeekV4HCACompressor(
+        d_model=d_model,
+        head_dim=head_dim,
+        compress_rate=compress_rate_hca,
+        rope_head_dim=rope_head_dim,
+        rope_base=rope_base,
+        norm_eps=norm_eps,
+      )
+    else:
+      self.compressor = None
 
   def forward(
     self,
@@ -146,6 +186,24 @@ class DeepSeekV4Attention(nn.Module):
     kv_states = self.kv_norm(self.kv_proj(hidden_states))
     kv_states = kv_states.view(*input_shape, 1, self.head_dim).transpose(1, 2)
     kv_states = apply_deepseek_v4_rotary(kv_states, cos, sin)
+
+    if self.compressor is not None:
+      if positions is None:
+        positions = torch.arange(hidden_states.shape[1], device=hidden_states.device)
+      if self.layer_type == DeepSeekV4AttentionKind.COMPRESSED_SPARSE:
+        compressed_kv, block_bias = self.compressor(
+          hidden_states,
+          q_residual,
+          positions,
+        )
+      else:
+        compressed_kv, block_bias = self.compressor(hidden_states, positions)
+      kv_states = torch.cat((kv_states, compressed_kv), dim=2)
+      if attention_mask is not None and block_bias is not None:
+        attention_mask = torch.cat(
+          (attention_mask, block_bias.to(attention_mask.dtype)),
+          dim=-1,
+        )
 
     attn_output = self._attention(
       query_states,

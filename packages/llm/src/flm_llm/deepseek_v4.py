@@ -42,6 +42,12 @@ class DeepSeekV4Block(nn.Module):
       bias=config.bias,
       rope_base=config.rope_base,
       norm_eps=config.norm_eps,
+      layer_type=config.attention_layer_type(layer_idx),
+      compress_rate_csa=config.compress_rate_csa,
+      compress_rate_hca=config.compress_rate_hca,
+      index_n_heads=config.index_n_heads,
+      index_head_dim=config.index_head_dim,
+      index_topk=config.index_topk,
     )
     self.ffn_hc = DeepSeekV4HyperConnection(
       d_model=config.d_model,

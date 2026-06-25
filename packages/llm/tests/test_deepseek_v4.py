@@ -3,6 +3,8 @@ from flm_llm import DeepSeekV4, DeepSeekV4Config
 from flm_modules import (
   DeepSeekMoE,
   DeepSeekV4Attention,
+  DeepSeekV4AttentionKind,
+  DeepSeekV4CSACompressor,
   DeepSeekV4HyperConnection,
   DeepSeekV4HyperHead,
   SwiGLU,
@@ -34,6 +36,23 @@ def test_deepseek_v4_uses_mla_and_moe_blocks() -> None:
   assert model.blocks[1].ffn.expert_kind == "v4"
 
 
+def test_deepseek_v4_supports_compressed_attention_layer() -> None:
+  model = DeepSeekV4(
+    _tiny_config(
+      n_layers=1,
+      dense_layers=1,
+      attention_layer_types=(DeepSeekV4AttentionKind.COMPRESSED_SPARSE,),
+    )
+  )
+  input_ids = torch.randint(0, 32, (2, 8))
+
+  logits, loss = model(input_ids, input_ids)
+
+  assert logits.shape == (2, 8, 32)
+  assert loss is not None
+  assert isinstance(model.blocks[0].attn.compressor, DeepSeekV4CSACompressor)
+
+
 def test_deepseek_v4_backpropagates() -> None:
   model = DeepSeekV4(_tiny_config())
   input_ids = torch.randint(0, 32, (2, 8))
@@ -55,6 +74,7 @@ def test_deepseek_v4_backpropagates() -> None:
 def _tiny_config(
   n_layers: int = 2,
   dense_layers: int = 1,
+  attention_layer_types: tuple[DeepSeekV4AttentionKind | str, ...] | None = None,
 ) -> DeepSeekV4Config:
   return DeepSeekV4Config(
     vocab_size=32,
@@ -71,6 +91,12 @@ def _tiny_config(
     rope_head_dim=8,
     o_lora_rank=4,
     o_groups=2,
+    attention_layer_types=attention_layer_types,
+    compress_rate_csa=2,
+    compress_rate_hca=2,
+    index_n_heads=2,
+    index_head_dim=4,
+    index_topk=2,
     moe_d_ff=16,
     n_routed_experts=4,
     n_shared_experts=1,

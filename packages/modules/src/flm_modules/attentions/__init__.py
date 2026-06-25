@@ -6,6 +6,7 @@ from flm_modules.attentions.backends import (
 )
 from flm_modules.attentions.deepseek_v4 import (
   DeepSeekV4Attention,
+  DeepSeekV4AttentionKind,
   DeepSeekV4CSACompressor,
   DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
@@ -20,6 +21,7 @@ __all__ = [
   "AttentionBackend",
   "DeepSeekMLA",
   "DeepSeekV4Attention",
+  "DeepSeekV4AttentionKind",
   "DeepSeekV4CSACompressor",
   "DeepSeekV4HCACompressor",
   "DeepSeekV4Indexer",

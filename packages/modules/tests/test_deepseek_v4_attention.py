@@ -1,6 +1,7 @@
 import torch
 from flm_modules import (
   DeepSeekV4Attention,
+  DeepSeekV4AttentionKind,
   DeepSeekV4CSACompressor,
   DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
@@ -116,6 +117,55 @@ def test_deepseek_v4_attention_backpropagates(random_input) -> None:
   assert layer.kv_proj.weight.grad is not None
   assert layer.sinks.grad is not None
   assert layer.o_b_proj.weight.grad is not None
+
+
+def test_deepseek_v4_attention_supports_hca_compressor(random_input) -> None:
+  layer = DeepSeekV4Attention(
+    d_model=8,
+    n_heads=2,
+    head_dim=4,
+    q_lora_rank=5,
+    o_lora_rank=3,
+    o_groups=2,
+    rope_head_dim=4,
+    layer_type=DeepSeekV4AttentionKind.HEAVILY_COMPRESSED,
+    compress_rate_hca=2,
+  )
+  x = random_input(2, 6, 8).requires_grad_()
+  attention_mask = _causal_mask(batch_size=2, seq_len=6, dtype=x.dtype)
+
+  y = layer(x, attention_mask=attention_mask)
+  y.square().mean().backward()
+
+  assert y.shape == x.shape
+  assert layer.compressor is not None
+  assert x.grad is not None
+
+
+def test_deepseek_v4_attention_supports_csa_compressor(random_input) -> None:
+  layer = DeepSeekV4Attention(
+    d_model=8,
+    n_heads=2,
+    head_dim=4,
+    q_lora_rank=5,
+    o_lora_rank=3,
+    o_groups=2,
+    rope_head_dim=4,
+    layer_type=DeepSeekV4AttentionKind.COMPRESSED_SPARSE,
+    compress_rate_csa=2,
+    index_n_heads=2,
+    index_head_dim=4,
+    index_topk=2,
+  )
+  x = random_input(2, 6, 8).requires_grad_()
+  attention_mask = _causal_mask(batch_size=2, seq_len=6, dtype=x.dtype)
+
+  y = layer(x, attention_mask=attention_mask)
+  y.square().mean().backward()
+
+  assert y.shape == x.shape
+  assert layer.compressor is not None
+  assert x.grad is not None
 
 
 def test_deepseek_v4_indexer_scorer_matches_transformers(random_input) -> None:

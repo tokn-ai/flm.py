@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from flm_modules import AttentionBackend
+from flm_modules import AttentionBackend, DeepSeekV4AttentionKind
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,12 @@ class DeepSeekV4Config:
   rope_head_dim: int | None = None
   o_lora_rank: int | None = None
   o_groups: int = 1
+  attention_layer_types: tuple[DeepSeekV4AttentionKind | str, ...] | None = None
+  compress_rate_csa: int = 4
+  compress_rate_hca: int = 128
+  index_n_heads: int = 64
+  index_head_dim: int = 128
+  index_topk: int = 512
   moe_d_ff: int | None = None
   n_routed_experts: int = 8
   n_shared_experts: int = 1
@@ -90,3 +96,10 @@ class DeepSeekV4Config:
     if self.o_lora_rank is not None:
       return self.o_lora_rank
     return max(1, self.d_model // 4)
+
+  def attention_layer_type(self, layer_idx: int) -> DeepSeekV4AttentionKind:
+    if not self.attention_layer_types:
+      return DeepSeekV4AttentionKind.SLIDING
+    return DeepSeekV4AttentionKind(
+      self.attention_layer_types[layer_idx % len(self.attention_layer_types)]
+    )

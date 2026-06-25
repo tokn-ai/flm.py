@@ -44,6 +44,12 @@ class TrainConfig:
   rope_head_dim: int | None = None
   o_lora_rank: int | None = None
   o_groups: int = 1
+  attention_layer_types: tuple[str, ...] | None = None
+  compress_rate_csa: int = 4
+  compress_rate_hca: int = 128
+  index_n_heads: int = 64
+  index_head_dim: int = 128
+  index_topk: int = 512
   n_routed_experts: int = 4
   n_shared_experts: int = 1
   n_experts_per_token: int = 2
@@ -143,6 +149,12 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         rope_head_dim=config.rope_head_dim,
         o_lora_rank=config.o_lora_rank,
         o_groups=config.o_groups,
+        attention_layer_types=config.attention_layer_types,
+        compress_rate_csa=config.compress_rate_csa,
+        compress_rate_hca=config.compress_rate_hca,
+        index_n_heads=config.index_n_heads,
+        index_head_dim=config.index_head_dim,
+        index_topk=config.index_topk,
         moe_d_ff=config.d_ff,
         n_routed_experts=config.n_routed_experts,
         n_shared_experts=config.n_shared_experts,
@@ -182,6 +194,12 @@ def parse_args() -> TrainConfig:
   parser.add_argument("--rope-head-dim", type=int, default=None)
   parser.add_argument("--o-lora-rank", type=int, default=None)
   parser.add_argument("--o-groups", type=int, default=1)
+  parser.add_argument("--attention-layer-types", nargs="*", default=None)
+  parser.add_argument("--compress-rate-csa", type=int, default=4)
+  parser.add_argument("--compress-rate-hca", type=int, default=128)
+  parser.add_argument("--index-n-heads", type=int, default=64)
+  parser.add_argument("--index-head-dim", type=int, default=128)
+  parser.add_argument("--index-topk", type=int, default=512)
   parser.add_argument("--n-routed-experts", type=int, default=4)
   parser.add_argument("--n-shared-experts", type=int, default=1)
   parser.add_argument("--n-experts-per-token", type=int, default=2)
@@ -191,7 +209,12 @@ def parse_args() -> TrainConfig:
   parser.add_argument("--device", default="cpu")
   parser.add_argument("--seed", type=int, default=42)
   args = parser.parse_args()
-  return TrainConfig(**vars(args))
+  values = vars(args)
+  if values["attention_layer_types"]:
+    values["attention_layer_types"] = tuple(values["attention_layer_types"])
+  else:
+    values["attention_layer_types"] = None
+  return TrainConfig(**values)
 
 
 def main() -> None:
