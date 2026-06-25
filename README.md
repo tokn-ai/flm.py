@@ -18,6 +18,14 @@ attention, SwiGLU feed-forward blocks, RMSNorm, tied token embeddings, and a
 cross-entropy language modeling loss. `flm-modules` exposes the reusable
 building blocks and an AdamW optimizer helper.
 
+## Training
+
+Train a small reference model on source files in this repository:
+
+```sh
+uv run flm-train-repo --repo-root . --steps 10
+```
+
 ## Setup
 
 ```sh

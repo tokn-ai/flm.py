@@ -6,11 +6,17 @@ requires-python = ">=3.12"
 dependencies = [
   "flm-datasets",
   "flm-llm",
+  "flm-modules",
+  "torch>=2.5",
 ]
 
 [tool.uv.sources]
 flm-datasets = { workspace = true }
 flm-llm = { workspace = true }
+flm-modules = { workspace = true }
+
+[project.scripts]
+flm-train-repo = "flm_train.train:main"
 
 [build-system]
 requires = ["hatchling"]

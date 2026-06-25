@@ -1,7 +1,9 @@
-"""Training workflows package placeholder."""
+"""Training workflows."""
 
-__all__ = ["hello"]
+from flm_train.train import TrainConfig, TrainingResult, train_on_repo_sources
 
-
-def hello() -> str:
-  return "flm-train"
+__all__ = [
+  "TrainConfig",
+  "TrainingResult",
+  "train_on_repo_sources",
+]

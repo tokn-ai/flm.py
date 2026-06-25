@@ -3,7 +3,10 @@ name = "flm-datasets"
 version = "0.1.0"
 description = "Dataset loading and preprocessing package."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "tiktoken>=0.8.0",
+  "torch>=2.5",
+]
 
 [build-system]
 requires = ["hatchling"]
