@@ -211,6 +211,53 @@ def test_causal_self_attention_matches_tilelang_backend(random_input) -> None:
   )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+def test_causal_self_attention_tilelang_matches_torch_gradients(
+  random_input,
+) -> None:
+  pytest.importorskip("tilelang", reason="TileLang unavailable")
+
+  torch_layer = (
+    CausalSelfAttention(
+      d_model=8,
+      n_heads=2,
+      backend=AttentionBackend.TORCH,
+    )
+    .cuda()
+    .half()
+  )
+  tilelang_layer = (
+    CausalSelfAttention(
+      d_model=8,
+      n_heads=2,
+      backend=AttentionBackend.TILELANG,
+    )
+    .cuda()
+    .half()
+  )
+  tilelang_layer.load_state_dict(torch_layer.state_dict())
+  torch_x = random_input(3, 5, 8).cuda().half().requires_grad_()
+  tilelang_x = torch_x.detach().clone().requires_grad_()
+
+  torch_loss = torch_layer(torch_x).float().square().mean()
+  tilelang_loss = tilelang_layer(tilelang_x).float().square().mean()
+  torch_loss.backward()
+  tilelang_loss.backward()
+
+  torch.testing.assert_close(tilelang_x.grad, torch_x.grad, rtol=3e-2, atol=3e-2)
+  for tilelang_param, torch_param in zip(
+    tilelang_layer.parameters(),
+    torch_layer.parameters(),
+    strict=True,
+  ):
+    torch.testing.assert_close(
+      tilelang_param.grad,
+      torch_param.grad,
+      rtol=3e-2,
+      atol=3e-2,
+    )
+
+
 def test_causal_self_attention_supports_bias_variant() -> None:
   layer = CausalSelfAttention(d_model=8, n_heads=2, bias=True)
 
