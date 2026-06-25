@@ -24,7 +24,7 @@ class TransformerBlock(nn.Module):
     self.ffn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.ffn = SwiGLU(
       d_model=config.d_model,
-      hidden_dim=config.ffn_hidden_dim,
+      d_ff=config.ffn_d_ff,
       dropout=config.dropout,
       bias=config.bias,
     )

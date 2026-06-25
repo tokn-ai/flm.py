@@ -27,6 +27,7 @@ dev = [
   "flm-inference",
   "pytest>=8.0",
   "ruff>=0.13.0",
+  "transformers>=4.50",
 ]
 
 [tool.ruff]

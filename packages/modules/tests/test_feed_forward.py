@@ -1,10 +1,12 @@
 import torch
 from flm_modules import SwiGLU
 from torch.nn import functional as F
+from transformers import LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaMLP
 
 
 def test_swiglu_preserves_model_dimension(random_input) -> None:
-  layer = SwiGLU(d_model=6, hidden_dim=10, dropout=0.0)
+  layer = SwiGLU(d_model=6, d_ff=10, dropout=0.0)
   x = random_input(2, 4, 6)
 
   y = layer(x)
@@ -13,7 +15,7 @@ def test_swiglu_preserves_model_dimension(random_input) -> None:
 
 
 def test_swiglu_matches_manual_computation_without_dropout(random_input) -> None:
-  layer = SwiGLU(d_model=4, hidden_dim=5, dropout=0.0, bias=True)
+  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.0, bias=True)
   x = random_input(2, 3, 4)
 
   gate, value = layer.up(x).chunk(2, dim=-1)
@@ -23,7 +25,7 @@ def test_swiglu_matches_manual_computation_without_dropout(random_input) -> None
 
 
 def test_swiglu_matches_saved_output(random_input) -> None:
-  layer = SwiGLU(d_model=4, hidden_dim=5, dropout=0.0, bias=True)
+  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.0, bias=True)
   x = random_input(2, 3, 4)
 
   y = layer(x)
@@ -42,8 +44,29 @@ def test_swiglu_matches_saved_output(random_input) -> None:
 
 
 def test_swiglu_dropout_variant_is_deterministic_in_eval(random_input) -> None:
-  layer = SwiGLU(d_model=4, hidden_dim=5, dropout=0.9)
+  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.9)
   x = random_input(2, 3, 4)
   layer.eval()
 
   torch.testing.assert_close(layer(x), layer(x))
+
+
+def test_swiglu_matches_transformers_llama_mlp(random_input) -> None:
+  config = LlamaConfig(
+    hidden_size=4,
+    intermediate_size=5,
+    num_attention_heads=1,
+    num_key_value_heads=1,
+    hidden_act="silu",
+    mlp_bias=False,
+  )
+  reference = LlamaMLP(config)
+  layer = SwiGLU(d_model=4, d_ff=5, dropout=0.0, bias=False)
+  x = random_input(2, 3, 4)
+
+  with torch.no_grad():
+    layer.up.weight[:5].copy_(reference.gate_proj.weight)
+    layer.up.weight[5:].copy_(reference.up_proj.weight)
+    layer.down.weight.copy_(reference.down_proj.weight)
+
+  torch.testing.assert_close(layer(x), reference(x))

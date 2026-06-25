@@ -7,8 +7,9 @@ from torch import nn
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
-  x1, x2 = x[..., ::2], x[..., 1::2]
-  return torch.stack((-x2, x1), dim=-1).flatten(-2)
+  x1 = x[..., : x.shape[-1] // 2]
+  x2 = x[..., x.shape[-1] // 2 :]
+  return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rotary(
@@ -39,7 +40,7 @@ class RotaryEmbedding(nn.Module):
     if positions is None:
       positions = torch.arange(seq_len, device=q.device)
     freqs = torch.outer(positions.to(self.inv_freq.dtype), self.inv_freq)
-    emb = torch.repeat_interleave(freqs, repeats=2, dim=-1)
+    emb = torch.cat((freqs, freqs), dim=-1)
     cos = emb.cos().to(dtype=q.dtype)
     sin = emb.sin().to(dtype=q.dtype)
     return apply_rotary(q, cos, sin), apply_rotary(k, cos, sin)
