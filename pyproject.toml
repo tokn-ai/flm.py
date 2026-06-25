@@ -9,6 +9,9 @@ dependencies = []
 [tool.uv.workspace]
 members = ["packages/*"]
 
+[tool.uv]
+no-build-isolation-package = ["flash-attn"]
+
 [tool.uv.sources]
 flm-modules = { workspace = true }
 flm-datasets = { workspace = true }
@@ -25,6 +28,7 @@ dev = [
   "flm-train",
   "flm-rl",
   "flm-inference",
+  "flash-attn>=2.8.0",
   "pytest>=8.0",
   "ruff>=0.13.0",
   "transformers>=4.50",

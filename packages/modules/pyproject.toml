@@ -9,6 +9,7 @@ dependencies = [
 
 [project.optional-dependencies]
 nvidia = [
+  "apache-tvm-ffi<0.1.12",
   "tilelang>=0.1.11",
 ]
 

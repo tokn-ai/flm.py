@@ -21,6 +21,9 @@ def tilelang_flash_attention(
   flatten it directly back to model dimension.
   """
   _validate_inputs(q, k, v)
+  q = q.contiguous()
+  k = k.contiguous()
+  v = v.contiguous()
   batch_size, n_heads, seq_len, head_dim = q.shape
   kernel = _get_tilelang_kernel(
     batch_size=batch_size,
