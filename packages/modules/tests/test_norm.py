@@ -50,3 +50,10 @@ def test_rms_norm_matches_transformers_llama_rms_norm(random_input) -> None:
     reference.weight.copy_(layer.weight)
 
   torch.testing.assert_close(layer(x), reference(x))
+
+
+def test_rms_norm_preserves_input_dtype(random_input) -> None:
+  layer = RMSNorm(d_model=4, eps=1e-6)
+  x = random_input(2, 3, 4).bfloat16()
+
+  assert layer(x).dtype == torch.bfloat16
