@@ -35,6 +35,7 @@ def test_deepseek_dsa_indexer_matches_golden(
     attention_mask=attention_mask,
     positions=positions,
   )
+  print(actual, expected)
 
   torch.testing.assert_close(actual, expected)
 

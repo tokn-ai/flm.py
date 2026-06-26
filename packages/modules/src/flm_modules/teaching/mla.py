@@ -1,9 +1,12 @@
 """Multi-head latent attention layers."""
 
+# ruff: noqa: E501,F722
+
 from __future__ import annotations
 
 import torch
 from einops import rearrange, repeat
+from jaxtyping import Float
 from torch import Tensor, nn
 
 from flm_modules.attentions.backends import (
@@ -13,6 +16,59 @@ from flm_modules.attentions.backends import (
 from flm_modules.norm import RMSNorm
 from flm_modules.rope import RotaryEmbedding, apply_rotary
 
+
+# class DeepSeekLoraRoPE(nn.Module):
+#   def __init__(
+#     self,
+#     d_input: int,
+#     d_lora_rank: int,
+#     d_nope_head: int,
+#     d_rope_head: int,
+#     n_heads: int,
+#     bias: bool = False,
+#     rope_base: float = 10_000.0,
+#     rope_layout: str = "llama",
+#     norm_eps: float = 1e-6,
+#     shared_rope_head: bool = False,
+#   ):
+#     super().__init__()
+#     self.d_input = d_input
+#     self.d_lora_rank = d_lora_rank
+#     self.d_nope_head = d_nope_head
+#     self.d_rope_head = d_rope_head
+#     self.n_heads = n_heads
+#     self.shared_rope_head = shared_rope_head
+
+#     self.d_head = d_nope_head + d_rope_head
+
+#     self.d_proj = nn.Linear(d_input, d_lora_rank, bias=bias)
+#     self.layernorm = RMSNorm(d_lora_rank, eps=norm_eps)
+#     self.u_proj = nn.Linear(d_lora_rank, n_heads * d_nope_head, bias=bias)
+#     if shared_rope_head:
+#       self.r_proj = nn.Linear(d_lora_rank, d_rope_head, bias=bias)
+#     else:
+#       self.r_proj = nn.Linear(d_lora_rank, n_heads * d_rope_head, bias=bias)
+
+#     self.rope = RotaryEmbedding(
+#       d_rope_head, base=rope_base, layout=rope_layout
+#     )
+
+#   def forward(
+#     self,
+#     hidden_states: Float[Tensor, "... seq d_input"],
+#     positions: Float[Tensor, "... seq"] | None = None,
+#   ) -> tuple[
+#     Float[Tensor, "... n_heads seq d_head"],
+#     Float[Tensor, "... n_heads seq d_head"],
+#   ]:
+#     c: Float[Tensor, "... n_heads seq d_lora_rank"] = self._compress(hidden_states)
+
+#   def _compress(
+#     self,
+#     hidden_states: Float[Tensor, "... seq d_input"],
+#   ) -> Float[Tensor, "... n_heads seq d_lora_rank"]:
+#     c: Float[Tensor, "... seq d_lora_rank"] = self.layernorm(self.d_proj(hidden_states))
+#     return rearrange(c, "... seq (n_heads d_lora_rank) -> ... n_heads seq d_lora_rank", n_heads=self.n_heads)
 
 class DeepSeekMLA(nn.Module):
   """DeepSeek-style multi-head latent attention."""
@@ -89,11 +145,12 @@ class DeepSeekMLA(nn.Module):
 
   def forward(
     self,
-    hidden_states: torch.Tensor,
-    attention_mask: torch.Tensor | None = None,
-    positions: torch.Tensor | None = None,
-  ) -> torch.Tensor:
-    q, k, v = self._project_qkv(hidden_states, positions=positions)
+    hidden_states: Float[Tensor, "... seq d_model"],
+    attention_mask: Float[Tensor, "... seq seq"] | None = None,
+    positions: Float[Tensor, "... seq"] | None = None,
+  ) -> Float[Tensor, "... seq d_model"]:
+    c_kv, c_q = self._compress(hidden_states)
+    q, k, v = self._project_qkv(hidden_states, c_kv, c_q, positions=positions)
     o = scaled_dot_product_attention(
       q,
       k,
@@ -105,59 +162,50 @@ class DeepSeekMLA(nn.Module):
     )
     return self._project_o(o)
 
+  def _compress(
+      self,
+      hidden_states: Float[Tensor, "... seq d_model"]
+  ) -> tuple[
+    Float[Tensor, "... seq kv_lora_rank"],
+    Float[Tensor, "... seq q"],
+  ]:
+    c_kv: Float[Tensor, "... seq kv_lora_rank"] = self.kv_d_layernorm(
+      self.kv_d_proj(hidden_states)
+    )
+    if self.q_lora_rank is not None:
+      c_q: Float[Tensor, "... seq q_lora_rank"] = self.q_d_layernorm(self.q_d_proj(hidden_states))
+    else:
+      c_q: Float[Tensor, "... seq q"] = self.q_proj(hidden_states)
+    return c_kv, c_q
+
   def _project_qkv(
     self,
-    hidden_states: torch.Tensor,
-    positions: torch.Tensor | None = None,
-  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    c_kv = self.kv_d_layernorm(self.kv_d_proj(hidden_states))
-    k_C = rearrange(
-      self.k_u_proj(c_kv),
-      "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
-      n_heads=self.n_heads,
-    )
-    k_R = repeat(
-      self.k_r_proj(hidden_states),
-      "... seq qk_rope_head_dim -> ... n_heads seq qk_rope_head_dim",
-      n_heads=self.n_heads,
-    )
-    v_C = rearrange(
-      self.v_u_proj(c_kv),
-      "... seq (n_heads v_head_dim) -> ... n_heads seq v_head_dim",
-      n_heads=self.n_heads,
-    )
+    hidden_states: Float[Tensor, "... seq d_model"],
+    c_kv: Float[Tensor, "... seq kv_lora_rank"],
+    c_q: Float[Tensor, "... seq q_lora_rank"],
+    positions: Float[Tensor, "... seq"] | None = None,
+  ) -> tuple[
+    Float[Tensor, "... n_heads seq qk_head_dim"],
+    Float[Tensor, "... n_heads seq qk_head_dim"],
+    Float[Tensor, "... n_heads seq v_head_dim"],
+  ]:
+    k_C: Float[Tensor, "... n_heads seq qk_nope_head_dim"] = rearrange(self.k_u_proj(c_kv), "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
+    k_R: Float[Tensor, "... n_heads seq qk_rope_head_dim"] = repeat(self.k_r_proj(hidden_states), "... seq qk_rope_head_dim -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
+    v_C: Float[Tensor, "... n_heads seq v_head_dim"] = rearrange(self.v_u_proj(c_kv), "... seq (n_heads v_head_dim) -> ... n_heads seq v_head_dim", n_heads=self.n_heads)
     if self.q_lora_rank is None:
-      q = self.q_proj(hidden_states)
       q_C, q_R = torch.split(
-        q,
+        c_q,
         [
           self.n_heads * self.qk_nope_head_dim,
           self.n_heads * self.qk_rope_head_dim,
         ],
         dim=-1,
       )
-      q_C = rearrange(
-        q_C,
-        "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
-        n_heads=self.n_heads,
-      )
-      q_R = rearrange(
-        q_R,
-        "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim",
-        n_heads=self.n_heads,
-      )
+      q_C = rearrange(q_C, "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
+      q_R = rearrange(q_R, "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
     else:
-      c_q = self.q_d_layernorm(self.q_d_proj(hidden_states))
-      q_C = rearrange(
-        self.q_u_proj(c_q),
-        "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
-        n_heads=self.n_heads,
-      )
-      q_R = rearrange(
-        self.q_r_proj(c_q),
-        "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim",
-        n_heads=self.n_heads,
-      )
+      q_C = rearrange(self.q_u_proj(c_q), "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
+      q_R = rearrange(self.q_r_proj(c_q), "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
 
     cos, sin = self.rope(q_C, positions=positions)
     k_R = apply_rotary(k_R, cos, sin, layout=self.rope.layout)
@@ -171,8 +219,8 @@ class DeepSeekMLA(nn.Module):
 
   def _project_o(
     self,
-    o: torch.Tensor,
-  ) -> torch.Tensor:
+    o: Float[Tensor, "... n_heads seq v_head_dim"],
+  ) -> Float[Tensor, "... seq d_model"]:
     o = rearrange(o, "... n_heads seq v_head_dim -> ... seq (n_heads v_head_dim)")
     return self.o_proj(o)
 
