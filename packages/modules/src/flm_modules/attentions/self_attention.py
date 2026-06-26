@@ -9,7 +9,7 @@ from flm_modules.attentions.backends import (
   AttentionBackend,
   scaled_dot_product_attention,
 )
-from flm_modules.rope import RotaryEmbedding
+from flm_modules.rope import RotaryEmbedding, apply_rotary
 
 
 class SelfAttention(nn.Module):
@@ -49,7 +49,9 @@ class SelfAttention(nn.Module):
     k = k.view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
     v = v.view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
 
-    q, k = self.rope(q, k)
+    cos, sin = self.rope(q)
+    q = apply_rotary(q, cos, sin, layout=self.rope.layout)
+    k = apply_rotary(k, cos, sin, layout=self.rope.layout)
     y = scaled_dot_product_attention(
       q,
       k,

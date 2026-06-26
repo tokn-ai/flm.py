@@ -11,69 +11,13 @@ from torch.nn import functional as F
 from flm_modules.hyper import UnweightedRMSNorm
 from flm_modules.linear import GroupedLinear
 from flm_modules.norm import RMSNorm
-from flm_modules.rope import RopeLayout, rotate_half
+from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
 
 
 class DeepSeekV4AttentionKind(StrEnum):
   SLIDING = "sliding_attention"
   COMPRESSED_SPARSE = "compressed_sparse_attention"
   HEAVILY_COMPRESSED = "heavily_compressed_attention"
-
-
-class DeepSeekV4RotaryEmbedding(nn.Module):
-  def __init__(
-    self,
-    head_dim: int,
-    rope_head_dim: int,
-    base: float = 10_000.0,
-  ) -> None:
-    super().__init__()
-    if head_dim <= 0:
-      raise ValueError("head_dim must be positive")
-    if rope_head_dim <= 0 or rope_head_dim % 2 != 0:
-      raise ValueError("rope_head_dim must be a positive even number")
-    if rope_head_dim > head_dim:
-      raise ValueError("rope_head_dim must not exceed head_dim")
-    self.head_dim = head_dim
-    self.rope_head_dim = rope_head_dim
-    inv_freq = 1.0 / (
-      base ** (torch.arange(0, rope_head_dim, 2, dtype=torch.float32) / rope_head_dim)
-    )
-    self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-  def forward(
-    self,
-    x: torch.Tensor,
-    positions: torch.Tensor | None = None,
-  ) -> tuple[torch.Tensor, torch.Tensor]:
-    batch_size, seq_len = x.shape[:2]
-    if positions is None:
-      positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
-    if positions.ndim == 1:
-      positions = positions.unsqueeze(0)
-    positions = positions.expand(batch_size, -1)
-
-    freqs = positions.to(self.inv_freq.dtype).unsqueeze(-1) * self.inv_freq
-    cos = freqs.cos().to(dtype=x.dtype)
-    sin = freqs.sin().to(dtype=x.dtype)
-    return cos, sin
-
-
-def apply_deepseek_v4_rotary(
-  x: torch.Tensor,
-  cos: torch.Tensor,
-  sin: torch.Tensor,
-  *,
-  unsqueeze_dim: int = 1,
-) -> torch.Tensor:
-  cos = cos.repeat_interleave(2, dim=-1).unsqueeze(unsqueeze_dim)
-  sin = sin.repeat_interleave(2, dim=-1).unsqueeze(unsqueeze_dim)
-  rope_dim = cos.shape[-1]
-  nope, rope = x[..., :-rope_dim], x[..., -rope_dim:]
-  rotated = (
-    rope.float() * cos + rotate_half(rope, layout=RopeLayout.INTERLEAVED).float() * sin
-  ).to(x.dtype)
-  return torch.cat((nope, rotated), dim=-1)
 
 
 class DeepSeekV4Attention(nn.Module):
@@ -113,6 +57,10 @@ class DeepSeekV4Attention(nn.Module):
       raise ValueError("o_groups must divide n_heads * head_dim")
 
     rope_head_dim = rope_head_dim if rope_head_dim is not None else head_dim
+    if rope_head_dim <= 0 or rope_head_dim % 2 != 0:
+      raise ValueError("rope_head_dim must be a positive even number")
+    if rope_head_dim > head_dim:
+      raise ValueError("rope_head_dim must not exceed head_dim")
     self.d_model = d_model
     self.n_heads = n_heads
     self.head_dim = head_dim
@@ -137,10 +85,10 @@ class DeepSeekV4Attention(nn.Module):
     )
     self.o_b_proj = nn.Linear(o_groups * o_lora_rank, d_model, bias=False)
     self.sinks = nn.Parameter(torch.zeros(n_heads))
-    self.rope = DeepSeekV4RotaryEmbedding(
-      head_dim=head_dim,
-      rope_head_dim=rope_head_dim,
+    self.rope = RotaryEmbedding(
+      dim=rope_head_dim,
       base=rope_base,
+      layout=RopeLayout.INTERLEAVED,
     )
     self.compressor: DeepSeekV4CSACompressor | DeepSeekV4HCACompressor | None
     if self.layer_type == DeepSeekV4AttentionKind.COMPRESSED_SPARSE:
@@ -181,11 +129,23 @@ class DeepSeekV4Attention(nn.Module):
     q_residual = self.q_a_norm(self.q_a_proj(hidden_states))
     query_states = self.q_b_proj(q_residual).view(*hidden_shape).transpose(1, 2)
     query_states = self.q_b_norm(query_states)
-    query_states = apply_deepseek_v4_rotary(query_states, cos, sin)
+    query_states = apply_rotary(
+      query_states,
+      cos,
+      sin,
+      layout=RopeLayout.INTERLEAVED,
+      rotary_dim=self.rope_head_dim,
+    )
 
     kv_states = self.kv_norm(self.kv_proj(hidden_states))
     kv_states = kv_states.view(*input_shape, 1, self.head_dim).transpose(1, 2)
-    kv_states = apply_deepseek_v4_rotary(kv_states, cos, sin)
+    kv_states = apply_rotary(
+      kv_states,
+      cos,
+      sin,
+      layout=RopeLayout.INTERLEAVED,
+      rotary_dim=self.rope_head_dim,
+    )
 
     if self.compressor is not None:
       if positions is None:
@@ -210,10 +170,12 @@ class DeepSeekV4Attention(nn.Module):
       kv_states,
       attention_mask=attention_mask,
     )
-    attn_output = apply_deepseek_v4_rotary(
+    attn_output = apply_rotary(
       attn_output.transpose(1, 2),
       cos,
       -sin,
+      layout=RopeLayout.INTERLEAVED,
+      rotary_dim=self.rope_head_dim,
     ).transpose(1, 2)
 
     grouped = attn_output.reshape(*input_shape, self.o_groups, -1)
@@ -309,10 +271,10 @@ class DeepSeekV4Indexer(nn.Module):
     self.position_bias = nn.Parameter(torch.zeros(compress_rate, 2 * index_head_dim))
     self.kv_norm = RMSNorm(index_head_dim, eps=norm_eps)
     self.q_b_proj = nn.Linear(q_lora_rank, index_n_heads * index_head_dim, bias=False)
-    self.rotary_emb = DeepSeekV4RotaryEmbedding(
-      head_dim=index_head_dim,
-      rope_head_dim=index_head_dim,
+    self.rotary_emb = RotaryEmbedding(
+      dim=index_head_dim,
       base=rope_base,
+      layout=RopeLayout.INTERLEAVED,
     )
     self.scorer = DeepSeekV4IndexerScorer(
       d_model=d_model,
@@ -332,7 +294,7 @@ class DeepSeekV4Indexer(nn.Module):
     cos_q, sin_q = self.rotary_emb(hidden_states, positions=positions)
     q = self.q_b_proj(q_residual)
     q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-    q = apply_deepseek_v4_rotary(q, cos_q, sin_q).transpose(1, 2)
+    q = apply_rotary(q, cos_q, sin_q, layout=RopeLayout.INTERLEAVED).transpose(1, 2)
 
     index_scores = self.scorer(q, compressed_kv, hidden_states)
     compressed_len = compressed_kv.shape[1]
@@ -387,7 +349,12 @@ class DeepSeekV4Indexer(nn.Module):
     positions = positions * self.compress_rate
     positions = positions.unsqueeze(0).expand(batch_size, -1)
     cos, sin = self.rotary_emb(compressed, positions=positions)
-    return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
+    return apply_rotary(
+      compressed.unsqueeze(1),
+      cos,
+      sin,
+      layout=RopeLayout.INTERLEAVED,
+    ).squeeze(1)
 
 
 class DeepSeekV4HCACompressor(nn.Module):
@@ -411,16 +378,20 @@ class DeepSeekV4HCACompressor(nn.Module):
       raise ValueError("compress_rate must be positive")
 
     rope_head_dim = rope_head_dim if rope_head_dim is not None else head_dim
+    if rope_head_dim <= 0 or rope_head_dim % 2 != 0:
+      raise ValueError("rope_head_dim must be a positive even number")
+    if rope_head_dim > head_dim:
+      raise ValueError("rope_head_dim must not exceed head_dim")
     self.compress_rate = compress_rate
     self.head_dim = head_dim
     self.kv_proj = nn.Linear(d_model, head_dim, bias=False)
     self.gate_proj = nn.Linear(d_model, head_dim, bias=False)
     self.position_bias = nn.Parameter(torch.zeros(compress_rate, head_dim))
     self.kv_norm = RMSNorm(head_dim, eps=norm_eps)
-    self.rotary_emb = DeepSeekV4RotaryEmbedding(
-      head_dim=head_dim,
-      rope_head_dim=rope_head_dim,
+    self.rotary_emb = RotaryEmbedding(
+      dim=rope_head_dim,
       base=rope_base,
+      layout=RopeLayout.INTERLEAVED,
     )
 
   def forward(
@@ -474,7 +445,13 @@ class DeepSeekV4HCACompressor(nn.Module):
     positions = positions * self.compress_rate
     positions = positions.unsqueeze(0).expand(batch_size, -1)
     cos, sin = self.rotary_emb(compressed, positions=positions)
-    return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
+    return apply_rotary(
+      compressed.unsqueeze(1),
+      cos,
+      sin,
+      layout=RopeLayout.INTERLEAVED,
+      rotary_dim=self.rotary_emb.dim,
+    ).squeeze(1)
 
 
 class DeepSeekV4CSACompressor(nn.Module):
@@ -502,16 +479,20 @@ class DeepSeekV4CSACompressor(nn.Module):
       raise ValueError("compress_rate must be positive")
 
     rope_head_dim = rope_head_dim if rope_head_dim is not None else head_dim
+    if rope_head_dim <= 0 or rope_head_dim % 2 != 0:
+      raise ValueError("rope_head_dim must be a positive even number")
+    if rope_head_dim > head_dim:
+      raise ValueError("rope_head_dim must not exceed head_dim")
     self.compress_rate = compress_rate
     self.head_dim = head_dim
     self.kv_proj = nn.Linear(d_model, 2 * head_dim, bias=False)
     self.gate_proj = nn.Linear(d_model, 2 * head_dim, bias=False)
     self.position_bias = nn.Parameter(torch.zeros(compress_rate, 2 * head_dim))
     self.kv_norm = RMSNorm(head_dim, eps=norm_eps)
-    self.rotary_emb = DeepSeekV4RotaryEmbedding(
-      head_dim=head_dim,
-      rope_head_dim=rope_head_dim,
+    self.rotary_emb = RotaryEmbedding(
+      dim=rope_head_dim,
       base=rope_base,
+      layout=RopeLayout.INTERLEAVED,
     )
     self.indexer = DeepSeekV4Indexer(
       d_model=d_model,
@@ -583,4 +564,10 @@ class DeepSeekV4CSACompressor(nn.Module):
     positions = positions * self.compress_rate
     positions = positions.unsqueeze(0).expand(batch_size, -1)
     cos, sin = self.rotary_emb(compressed, positions=positions)
-    return apply_deepseek_v4_rotary(compressed.unsqueeze(1), cos, sin).squeeze(1)
+    return apply_rotary(
+      compressed.unsqueeze(1),
+      cos,
+      sin,
+      layout=RopeLayout.INTERLEAVED,
+      rotary_dim=self.rotary_emb.dim,
+    ).squeeze(1)

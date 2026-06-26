@@ -1,6 +1,6 @@
 import pytest
 import torch
-from flm_modules import DeepSeekMLA
+from flm_modules import DeepSeekMLA, apply_rotary
 from torch.nn import functional as F
 from transformers import DeepseekV3Config
 from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
@@ -63,7 +63,9 @@ def test_deepseek_mla_matches_manual_computation(random_input) -> None:
   kv = kv.view(batch_size, seq_len, 2, 8).transpose(1, 2)
   k_pass, v = kv.split([4, 4], dim=-1)
   k_rot = k_rot.view(batch_size, 1, seq_len, 4)
-  q_rot, k_rot = layer.rope(q_rot, k_rot)
+  cos, sin = layer.rope(q_rot)
+  q_rot = apply_rotary(q_rot, cos, sin, layout=layer.rope.layout)
+  k_rot = apply_rotary(k_rot, cos, sin, layout=layer.rope.layout)
   q = torch.cat((q_pass, q_rot), dim=-1)
   k = torch.cat((k_pass, k_rot.expand(*k_pass.shape[:-1], -1)), dim=-1)
   expected = F.scaled_dot_product_attention(

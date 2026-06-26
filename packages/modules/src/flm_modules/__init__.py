@@ -9,9 +9,7 @@ from flm_modules.attentions import (
   DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
   DeepSeekV4IndexerScorer,
-  DeepSeekV4RotaryEmbedding,
   SelfAttention,
-  apply_deepseek_v4_rotary,
   scaled_dot_product_attention,
 )
 from flm_modules.feed_forward import SwiGLU
@@ -47,7 +45,6 @@ __all__ = [
   "DeepSeekV4HyperConnection",
   "DeepSeekV4HyperHead",
   "DeepSeekV4MLP",
-  "DeepSeekV4RotaryEmbedding",
   "ExpertKind",
   "GroupedLinear",
   "RMSNorm",
@@ -57,7 +54,6 @@ __all__ = [
   "SelfAttention",
   "SwiGLU",
   "UnweightedRMSNorm",
-  "apply_deepseek_v4_rotary",
   "apply_rotary",
   "configure_adamw",
   "scaled_dot_product_attention",

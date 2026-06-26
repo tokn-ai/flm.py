@@ -44,35 +44,33 @@ def test_apply_rotary_identity_supports_interleaved_layout(random_input) -> None
   torch.testing.assert_close(y, x)
 
 
-def test_rotary_embedding_preserves_query_and_key_shapes(random_input) -> None:
+def test_rotary_embedding_returns_cos_sin_shapes(random_input) -> None:
   rope = RotaryEmbedding(dim=6)
   q = random_input(2, 3, 4, 6)
-  k = random_input(2, 3, 4, 6)
 
-  q_out, k_out = rope(q, k)
+  cos, sin = rope(q)
 
-  assert q_out.shape == q.shape
-  assert k_out.shape == k.shape
+  assert cos.shape == (4, 6)
+  assert sin.shape == (4, 6)
 
 
 def test_rotary_embedding_supports_explicit_positions_variant(random_input) -> None:
   rope = RotaryEmbedding(dim=4)
   q = random_input(1, 2, 3, 4)
-  k = random_input(1, 2, 3, 4)
 
-  default_q, default_k = rope(q, k)
-  explicit_q, explicit_k = rope(q, k, positions=torch.arange(3))
+  default_cos, default_sin = rope(q)
+  explicit_cos, explicit_sin = rope(q, positions=torch.arange(3))
 
-  torch.testing.assert_close(default_q, explicit_q)
-  torch.testing.assert_close(default_k, explicit_k)
+  torch.testing.assert_close(default_cos, explicit_cos)
+  torch.testing.assert_close(default_sin, explicit_sin)
 
 
 def test_rotary_embedding_matches_saved_default_output(random_input) -> None:
   rope = RotaryEmbedding(dim=4)
   q = random_input(1, 2, 3, 4)
-  k = random_input(1, 2, 3, 4)
 
-  q_out, _ = rope(q, k)
+  cos, sin = rope(q)
+  q_out = apply_rotary(q, cos, sin, layout=rope.layout)
 
   torch.testing.assert_close(
     q_out[0, 0, 1],
@@ -92,9 +90,9 @@ def test_rotary_embedding_matches_saved_explicit_positions_output(
 ) -> None:
   rope = RotaryEmbedding(dim=4)
   q = random_input(1, 2, 3, 4)
-  k = random_input(1, 2, 3, 4)
 
-  q_out, _ = rope(q, k, positions=torch.tensor([2, 3, 4]))
+  cos, sin = rope(q, positions=torch.tensor([2, 3, 4]))
+  q_out = apply_rotary(q, cos, sin, layout=rope.layout)
 
   torch.testing.assert_close(
     q_out[0, 0, 1],
@@ -130,7 +128,9 @@ def test_rotary_embedding_matches_transformers_llama_rope(random_input) -> None:
 
   cos, sin = reference(q, position_ids)
   expected_q, expected_k = apply_rotary_pos_emb(q, k, cos, sin)
-  q_out, k_out = rope(q, k)
+  cos, sin = rope(q)
+  q_out = apply_rotary(q, cos, sin, layout=rope.layout)
+  k_out = apply_rotary(k, cos, sin, layout=rope.layout)
 
   torch.testing.assert_close(q_out, expected_q)
   torch.testing.assert_close(k_out, expected_k)
@@ -139,12 +139,11 @@ def test_rotary_embedding_matches_transformers_llama_rope(random_input) -> None:
 def test_rotary_embedding_supports_interleaved_layout(random_input) -> None:
   rope = RotaryEmbedding(dim=4, layout=RopeLayout.INTERLEAVED)
   q = random_input(1, 2, 3, 4)
-  k = random_input(1, 2, 3, 4)
 
-  q_out, k_out = rope(q, k)
+  cos, sin = rope(q)
+  q_out = apply_rotary(q, cos, sin, layout=rope.layout)
 
   assert q_out.shape == q.shape
-  assert k_out.shape == k.shape
   torch.testing.assert_close(
     q_out[0, 0, 1],
     torch.tensor(
@@ -156,3 +155,26 @@ def test_rotary_embedding_supports_interleaved_layout(random_input) -> None:
       ]
     ),
   )
+
+
+def test_rotary_embedding_supports_batched_positions(random_input) -> None:
+  rope = RotaryEmbedding(dim=4)
+  x = random_input(2, 3, 4)
+  positions = torch.tensor([[0, 1, 2], [2, 3, 4]])
+
+  cos, sin = rope(x, positions=positions)
+
+  assert cos.shape == (2, 3, 4)
+  assert sin.shape == (2, 3, 4)
+  torch.testing.assert_close(cos[0, 1], rope(x[:1], positions=torch.tensor([1]))[0][0])
+  torch.testing.assert_close(cos[1, 0], rope(x[:1], positions=torch.tensor([2]))[0][0])
+
+
+def test_apply_rotary_supports_partial_trailing_dimension(random_input) -> None:
+  x = random_input(1, 2, 3, 6)
+  cos = torch.ones(3, 4)
+  sin = torch.zeros(3, 4)
+
+  y = apply_rotary(x, cos, sin, rotary_dim=4)
+
+  torch.testing.assert_close(y, x)

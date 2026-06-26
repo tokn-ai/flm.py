@@ -6,8 +6,9 @@ from flm_modules import (
   DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
   DeepSeekV4IndexerScorer,
-  DeepSeekV4RotaryEmbedding,
-  apply_deepseek_v4_rotary,
+  RopeLayout,
+  RotaryEmbedding,
+  apply_rotary,
 )
 from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
 from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
@@ -24,19 +25,19 @@ from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
 def test_deepseek_v4_rotary_embedding_matches_transformers(random_input) -> None:
   config = _deepseek_v4_config()
   reference = DeepseekV4RotaryEmbedding(config)
-  layer = DeepSeekV4RotaryEmbedding(
-    head_dim=4,
-    rope_head_dim=4,
+  rope = RotaryEmbedding(
+    dim=4,
     base=10_000.0,
+    layout=RopeLayout.INTERLEAVED,
   )
   x = random_input(2, 5, 8)
   position_ids = torch.arange(5).unsqueeze(0).expand(2, -1)
 
-  actual_cos, actual_sin = layer(x, positions=position_ids)
+  actual_cos, actual_sin = rope(x, positions=position_ids)
   expected_cos, expected_sin = reference(x, position_ids, layer_type="main")
 
-  torch.testing.assert_close(actual_cos, expected_cos)
-  torch.testing.assert_close(actual_sin, expected_sin)
+  torch.testing.assert_close(actual_cos, expected_cos.repeat_interleave(2, dim=-1))
+  torch.testing.assert_close(actual_sin, expected_sin.repeat_interleave(2, dim=-1))
 
 
 def test_apply_deepseek_v4_rotary_matches_transformers(random_input) -> None:
@@ -45,7 +46,13 @@ def test_apply_deepseek_v4_rotary_matches_transformers(random_input) -> None:
   sin = random_input(2, 5, 2)
 
   torch.testing.assert_close(
-    apply_deepseek_v4_rotary(x, cos, sin),
+    apply_rotary(
+      x,
+      cos.repeat_interleave(2, dim=-1),
+      sin.repeat_interleave(2, dim=-1),
+      layout=RopeLayout.INTERLEAVED,
+      rotary_dim=4,
+    ),
     apply_rotary_pos_emb(x, cos, sin),
   )
 

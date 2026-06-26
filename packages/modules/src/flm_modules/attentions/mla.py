@@ -10,7 +10,7 @@ from flm_modules.attentions.backends import (
   scaled_dot_product_attention,
 )
 from flm_modules.norm import RMSNorm
-from flm_modules.rope import RotaryEmbedding
+from flm_modules.rope import RotaryEmbedding, apply_rotary
 
 
 class DeepSeekMLA(nn.Module):
@@ -146,7 +146,9 @@ class DeepSeekMLA(nn.Module):
     )
 
     k_rot = k_rot.view(batch_size, 1, seq_len, self.qk_rope_head_dim)
-    q_rot, k_rot = self.rope(q_rot, k_rot, positions=positions)
+    cos, sin = self.rope(q_rot, positions=positions)
+    q_rot = apply_rotary(q_rot, cos, sin, layout=self.rope.layout)
+    k_rot = apply_rotary(k_rot, cos, sin, layout=self.rope.layout)
     k_rot = k_rot.expand(*k_pass.shape[:-1], -1)
 
     query_states = torch.cat((q_pass, q_rot), dim=-1)

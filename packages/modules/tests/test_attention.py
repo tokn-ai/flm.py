@@ -2,7 +2,7 @@ import importlib.util
 
 import pytest
 import torch
-from flm_modules import AttentionBackend, SelfAttention
+from flm_modules import AttentionBackend, SelfAttention, apply_rotary
 from torch.nn import functional as F
 
 try:
@@ -69,7 +69,9 @@ def test_self_attention_matches_scaled_dot_product_attention(
   q = q.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
   k = k.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
   v = v.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
-  q, k = layer.rope(q, k)
+  cos, sin = layer.rope(q)
+  q = apply_rotary(q, cos, sin, layout=layer.rope.layout)
+  k = apply_rotary(k, cos, sin, layout=layer.rope.layout)
   expected = F.scaled_dot_product_attention(
     q,
     k,
@@ -101,7 +103,9 @@ def test_self_attention_supports_non_causal_attention(random_input) -> None:
   q = q.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
   k = k.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
   v = v.view(batch_size, seq_len, layer.n_heads, layer.head_dim).transpose(1, 2)
-  q, k = layer.rope(q, k)
+  cos, sin = layer.rope(q)
+  q = apply_rotary(q, cos, sin, layout=layer.rope.layout)
+  k = apply_rotary(k, cos, sin, layout=layer.rope.layout)
   expected = F.scaled_dot_product_attention(
     q,
     k,
