@@ -28,7 +28,7 @@ dev = [
   "flm-train",
   "flm-rl",
   "flm-inference",
-  "flash-attn>=2.8.0",
+  # "flash-attn>=2.8.0",
   "pytest>=8.0",
   "ruff>=0.13.0",
   "transformers>=4.50",
