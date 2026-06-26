@@ -38,6 +38,7 @@ dev = [
 line-length = 88
 indent-width = 2
 target-version = "py312"
+extend-exclude = ["huggingface_models"]
 
 [tool.ruff.lint]
 select = [

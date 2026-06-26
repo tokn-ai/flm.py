@@ -1,13 +1,13 @@
 import importlib.util
 import sys
 import types
+from pathlib import Path
 
 import torch
 from flm_modules import DeepSeekTopKRouter, DeepSeekV4MLP, RMSNorm, RouterScoring
-from huggingface_hub import hf_hub_download
 
-_HF_REPO_ID = "deepseek-ai/DeepSeek-V4-Flash"
-_HF_REVISION = "60d8d70770c6776ff598c94bb586a859a38244f1"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_HF_INFERENCE_PATH = _REPO_ROOT / "huggingface_models" / "deepseek_v4_inference.py"
 
 
 def test_rms_norm_matches_hf_inference_model_bfloat16(random_input) -> None:
@@ -81,13 +81,8 @@ def test_deepseek_v4_router_matches_hf_inference_gate(random_input) -> None:
 
 def _load_hf_inference_model():
   _install_kernel_stub()
-  path = hf_hub_download(
-    repo_id=_HF_REPO_ID,
-    filename="inference/model.py",
-    revision=_HF_REVISION,
-  )
   module_name = "hf_deepseek_v4_flash_inference_model"
-  spec = importlib.util.spec_from_file_location(module_name, path)
+  spec = importlib.util.spec_from_file_location(module_name, _HF_INFERENCE_PATH)
   module = importlib.util.module_from_spec(spec)
   if spec is None or spec.loader is None:
     raise RuntimeError("failed to load Hugging Face DeepSeek-V4 inference model")
