@@ -4,19 +4,20 @@
 
 from __future__ import annotations
 
-from einops import rearrange, repeat, einsum
-from jaxtyping import Float, Int
 import torch
-from torch import Tensor, nn
 import torch.nn.functional as F
+from einops import einsum, rearrange
+from jaxtyping import Float, Int
+from torch import Tensor, nn
 
-from .mla import DeepSeekMLA
 from flm_modules.attentions.backends import (
   AttentionBackend,
   scaled_dot_product_attention,
 )
-from flm_modules.norm import RMSNorm, LayerNorm
+from flm_modules.norm import LayerNorm
 from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
+
+from .mla import DeepSeekMLA
 
 
 class DeepSeekDSAIndexer(nn.Module):
@@ -36,6 +37,8 @@ class DeepSeekDSAIndexer(nn.Module):
     causal: bool = True,
   ) -> None:
     super().__init__()
+    if qk_rope_head_dim > index_head_dim:
+      raise ValueError("qk_rope_head_dim must not exceed index_head_dim")
     self.d_model = d_model
     self.q_lora_rank = q_lora_rank
     self.qk_rope_head_dim = qk_rope_head_dim
@@ -56,11 +59,11 @@ class DeepSeekDSAIndexer(nn.Module):
   def forward(
     self,
     hidden_states: Float[torch.Tensor, "... seq d_model"],
-    q_residual: Float[torch.Tensor, "... seq d_model"],
-    attention_mask: Float[torch.Tensor, "... seq"] | None = None,
+    q_residual: Float[torch.Tensor, "... seq q_lora_rank"],
+    attention_mask: Float[torch.Tensor, "... seq seq"] | None = None,
     positions: Float[torch.Tensor, "... seq seq"] | None = None,
   ) -> Int[torch.Tensor, "... seq topk"]:
-    q_base: Float[torch.Tensor, "... seq n_heads head_dim"] = rearrange(self.wq_u_proj(q_residual), "... seq (n_heads head_dim) -> ... n_heads seq head_dim", n_heads=self.n_heads)
+    q_base: Float[torch.Tensor, "... n_heads seq head_dim"] = rearrange(self.wq_u_proj(q_residual), "... seq (n_heads head_dim) -> ... n_heads seq head_dim", n_heads=self.n_heads)
     q_nope, q_rope = torch.split(q_base, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
     cos, sin = self.rope(q_rope, positions)
     q_rope: Float[torch.Tensor, "... n_heads seq qk_rope_head_dim"] = apply_rotary(q_rope, cos, sin)
@@ -86,14 +89,14 @@ class DeepSeekDSAIndexer(nn.Module):
   ) -> Float[torch.Tensor, "... n_heads seq seq"]:
     k = rearrange(k, "... 1 seq head_dim -> ... seq head_dim")
     qk = einsum(q, k, "... n_heads seq_q head_dim, ... seq_k head_dim -> ... seq_q seq_k n_heads")
+    qk = F.relu(qk) # relu before mask
+    scores = einsum(qk, weights, "... seq_q seq_k n_heads, ... seq_q n_heads -> ... seq_q seq_k")
     if attention_mask is not None:
-      qk = qk + rearrange(attention_mask, "... seq_q seq_k -> ... seq_q seq_k 1")
+      scores = scores + attention_mask
     elif causal:
       seq_len = q.size(-2)
       attention_mask = nn.Transformer.generate_square_subsequent_mask(seq_len)
-      qk = qk + rearrange(attention_mask, "... seq_q seq_k -> ... seq_q seq_k 1")
-    qk = F.relu(qk) # relu before mask
-    scores = einsum(qk, weights, "... seq_q seq_k n_heads, ... seq_q n_heads -> ... seq_q seq_k")
+      scores = scores + attention_mask
     return scores
 
   def set_weights_from_transformers(
@@ -104,11 +107,23 @@ class DeepSeekDSAIndexer(nn.Module):
     k_norm_bias: Tensor,
     weights_proj: Tensor,
   ) -> None:
-    self.wq_u_proj.weight.data.copy_(wq_b)
-    self.wk_u_proj.weight.data.copy_(wk)
+    self.wq_u_proj.weight.data.copy_(self._head_weight_from_transformers(wq_b))
+    self.wk_u_proj.weight.data.copy_(self._head_vector_from_transformers(wk))
     self.weights_proj.weight.data.copy_(weights_proj)
-    self.k_norm.weight.data.copy_(k_norm_weight)
-    self.k_norm.bias.data.copy_(k_norm_bias)
+    self.k_norm.weight.data.copy_(self._head_vector_from_transformers(k_norm_weight))
+    self.k_norm.bias.data.copy_(self._head_vector_from_transformers(k_norm_bias))
+
+  def _head_weight_from_transformers(self, weight: Tensor) -> Tensor:
+    weight = weight.view(self.n_heads, self.head_dim, self.q_lora_rank)
+    rope, nope = weight.split([self.qk_rope_head_dim, self.qk_nope_head_dim], dim=1)
+    return torch.cat((nope, rope), dim=1).reshape(
+      self.n_heads * self.head_dim,
+      self.q_lora_rank,
+    )
+
+  def _head_vector_from_transformers(self, tensor: Tensor) -> Tensor:
+    rope, nope = tensor.split([self.qk_rope_head_dim, self.qk_nope_head_dim], dim=0)
+    return torch.cat((nope, rope), dim=0)
 
 
 class DeepSeekDSA(nn.Module):
@@ -165,7 +180,7 @@ class DeepSeekDSA(nn.Module):
   def forward(
     self,
     hidden_states: Float[torch.Tensor, "... seq d_model"],
-    attention_mask: Float[torch.Tensor, "... seq"] | None = None,
+    attention_mask: Float[torch.Tensor, "... 1 seq seq"] | None = None,
     positions: Float[torch.Tensor, "... seq"] | None = None,
   ) -> Float[torch.Tensor, "... seq d_model"]:
     # although we should first select c_kv then do projection,
@@ -174,13 +189,19 @@ class DeepSeekDSA(nn.Module):
     c_kv, c_q = self.mla._compress(hidden_states)
     q, k, v = self.mla._project_qkv(hidden_states, c_kv, c_q, positions=positions)
 
-    indices: Int[torch.Tensor, "... seq topk"] = self.indexer.forward(hidden_states, c_q, attention_mask=attention_mask, positions=positions)
-    k = k[..., indices, :]
-    v = v[..., indices, :]
-    scaled_dot_product_attention(
+    indexer_mask = attention_mask[..., 0, :, :] if attention_mask is not None else None
+    indices: Int[torch.Tensor, "... seq topk"] = self.indexer.forward(hidden_states, c_q, attention_mask=indexer_mask, positions=positions)
+    # we should create a sparse_mask here, since k, v is [BHSD], after slicing, it has to be BHQKD (note Q and K here)
+    # since different query would have different keys set (according to indcies), it would not fit in scaled_dot_product_attention
+    # so the selecting isn't train low cost, it only saves cost when inference.
+    sparse_mask = indices.new_ones((*indices.shape[:-1], k.shape[-2]), dtype=torch.bool)
+    sparse_mask = sparse_mask.scatter(-1, indices.long(), False).unsqueeze(-3)
+    attention_mask = hidden_states.new_zeros((*sparse_mask.shape[:-3], 1, sparse_mask.shape[-2], sparse_mask.shape[-1])) if attention_mask is None else attention_mask
+    attention_mask = attention_mask.masked_fill(sparse_mask, torch.finfo(hidden_states.dtype).min)
+    o = scaled_dot_product_attention(
       q, k, v, backend=self.mla.backend, attn_mask=attention_mask, causal=self.mla.causal, scale=self.mla.scaling,
     )
-    return self.mla._project_o(v)
+    return self.mla._project_o(o)
 
   def set_weights_from_transformers(
     self,

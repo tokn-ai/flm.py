@@ -126,32 +126,22 @@ def test_deepseek_dsa_backpropagates(
   layer(x).square().mean().backward()
 
   assert x.grad is not None
-  assert layer.q_a_proj.weight.grad is not None
-  assert layer.kv_a_proj_with_mqa.weight.grad is not None
-  assert layer.o_proj.weight.grad is not None
+  if backend == "teaching":
+    assert layer.mla.q_d_proj.weight.grad is not None
+    assert layer.mla.kv_d_proj.weight.grad is not None
+    assert layer.mla.o_proj.weight.grad is not None
+  else:
+    assert layer.q_a_proj.weight.grad is not None
+    assert layer.kv_a_proj_with_mqa.weight.grad is not None
+    assert layer.o_proj.weight.grad is not None
 
 
 @pytest.mark.parametrize("backend", ["teaching", "torch"])
 def test_deepseek_dsa_rejects_invalid_index_rope_dimension(
   backend: DSABackend,
 ) -> None:
-  if backend == "teaching":
-    with pytest.raises(NotImplementedError, match="DeepSeekDSAIndexer"):
-      _dsa_indexer(backend, qk_rope_head_dim=8)
-    return
-
   with pytest.raises(ValueError, match="must not exceed index_head_dim"):
     _dsa_indexer(backend, qk_rope_head_dim=8)
-
-
-def test_teaching_deepseek_dsa_indexer_init_is_scaffold() -> None:
-  with pytest.raises(NotImplementedError, match="DeepSeekDSAIndexer"):
-    _dsa_indexer("teaching", skip_unimplemented=False)
-
-
-def test_teaching_deepseek_dsa_init_is_scaffold() -> None:
-  with pytest.raises(NotImplementedError, match="DeepSeekDSA"):
-    _dsa("teaching", skip_unimplemented=False)
 
 
 def _dsa_indexer(
