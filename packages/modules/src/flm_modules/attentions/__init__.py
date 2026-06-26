@@ -12,11 +12,14 @@ from flm_modules.attentions.deepseek_v4 import (
   DeepSeekV4Indexer,
   DeepSeekV4IndexerScorer,
 )
+from flm_modules.attentions.dsa import DeepSeekDSA, DeepSeekDSAIndexer
 from flm_modules.attentions.mla import DeepSeekMLA
 from flm_modules.attentions.self_attention import SelfAttention
 
 __all__ = [
   "AttentionBackend",
+  "DeepSeekDSA",
+  "DeepSeekDSAIndexer",
   "DeepSeekMLA",
   "DeepSeekV4Attention",
   "DeepSeekV4AttentionKind",

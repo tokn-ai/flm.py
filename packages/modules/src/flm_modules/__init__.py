@@ -2,6 +2,8 @@
 
 from flm_modules.attentions import (
   AttentionBackend,
+  DeepSeekDSA,
+  DeepSeekDSAIndexer,
   DeepSeekMLA,
   DeepSeekV4Attention,
   DeepSeekV4AttentionKind,
@@ -33,6 +35,8 @@ from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
 
 __all__ = [
   "AttentionBackend",
+  "DeepSeekDSA",
+  "DeepSeekDSAIndexer",
   "DeepSeekMLA",
   "DeepSeekMoE",
   "DeepSeekTopKRouter",
