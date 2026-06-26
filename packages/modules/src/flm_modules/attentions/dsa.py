@@ -189,7 +189,7 @@ class DeepSeekDSA(nn.Module):
     self.rope = RotaryEmbedding(
       qk_rope_head_dim,
       base=rope_base,
-      layout=RopeLayout.LLAMA,
+      layout=RopeLayout.DEEPSEEK_V32,
     )
     self.indexer = DeepSeekDSAIndexer(
       d_model=d_model,
@@ -297,26 +297,10 @@ class DeepSeekDSA(nn.Module):
 
     k_rot = k_rot.view(batch_size, 1, seq_len, self.qk_rope_head_dim)
     cos, sin = self.rope(q_rot, positions=positions)
-    q_rot, k_rot = _apply_interleave_rotary(q_rot, k_rot, cos, sin)
+    q_rot = apply_rotary(q_rot, cos, sin, layout=self.rope.layout)
+    k_rot = apply_rotary(k_rot, cos, sin, layout=self.rope.layout)
     k_rot = k_rot.expand(*k_pass.shape[:-1], -1)
 
     query_states = torch.cat((q_pass, q_rot), dim=-1)
     key_states = torch.cat((k_pass, k_rot), dim=-1)
     return query_states, key_states, value_states, q_residual
-
-
-def _apply_interleave_rotary(
-  q: torch.Tensor,
-  k: torch.Tensor,
-  cos: torch.Tensor,
-  sin: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-  cos = cos[..., : cos.shape[-1] // 2].unsqueeze(1)
-  sin = sin[..., : sin.shape[-1] // 2].unsqueeze(1)
-
-  q1, q2 = q[..., 0::2], q[..., 1::2]
-  k1, k2 = k[..., 0::2], k[..., 1::2]
-
-  q_embed = torch.cat((q1 * cos - q2 * sin, q2 * cos + q1 * sin), dim=-1)
-  k_embed = torch.cat((k1 * cos - k2 * sin, k2 * cos + k1 * sin), dim=-1)
-  return q_embed, k_embed

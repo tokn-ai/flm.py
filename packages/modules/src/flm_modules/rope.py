@@ -11,6 +11,7 @@ from torch import nn
 class RopeLayout(StrEnum):
   LLAMA = "llama"
   INTERLEAVED = "interleaved"
+  DEEPSEEK_V32 = "deepseek_v32"
 
 
 def rotate_half(
@@ -34,6 +35,7 @@ def apply_rotary(
   layout: RopeLayout | str = RopeLayout.LLAMA,
   rotary_dim: int | None = None,
 ) -> torch.Tensor:
+  layout = RopeLayout(layout)
   rotary_dim = rotary_dim if rotary_dim is not None else cos.shape[-1]
   if rotary_dim <= 0:
     raise ValueError("rotary_dim must be positive")
@@ -49,7 +51,13 @@ def apply_rotary(
       sin = sin.unsqueeze(0)
 
   nope, rope = x[..., :-rotary_dim], x[..., -rotary_dim:]
-  rotated = (rope * cos) + (rotate_half(rope, layout=layout) * sin)
+  if layout == RopeLayout.DEEPSEEK_V32:
+    cos = cos[..., : rotary_dim // 2]
+    sin = sin[..., : rotary_dim // 2]
+    x1, x2 = rope[..., 0::2], rope[..., 1::2]
+    rotated = torch.cat((x1 * cos - x2 * sin, x2 * cos + x1 * sin), dim=-1)
+  else:
+    rotated = (rope * cos) + (rotate_half(rope, layout=layout) * sin)
   if rotary_dim == x.shape[-1]:
     return rotated
   return torch.cat((nope, rotated), dim=-1)

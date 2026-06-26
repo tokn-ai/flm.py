@@ -44,6 +44,19 @@ def test_apply_rotary_identity_supports_interleaved_layout(random_input) -> None
   torch.testing.assert_close(y, x)
 
 
+def test_apply_rotary_supports_deepseek_v32_layout() -> None:
+  x = torch.tensor([[[[1.0, 2.0, 3.0, 4.0]]]])
+  cos = torch.tensor([[0.5, 0.25, 0.5, 0.25]])
+  sin = torch.tensor([[0.1, 0.2, 0.1, 0.2]])
+
+  y = apply_rotary(x, cos, sin, layout=RopeLayout.DEEPSEEK_V32)
+
+  torch.testing.assert_close(
+    y,
+    torch.tensor([[[[0.3, -0.05, 1.1, 1.6]]]]),
+  )
+
+
 def test_rotary_embedding_returns_cos_sin_shapes(random_input) -> None:
   rope = RotaryEmbedding(dim=6)
   q = random_input(2, 3, 4, 6)
