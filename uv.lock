@@ -367,14 +367,18 @@ source = { editable = "packages/rl" }
 dependencies = [
     { name = "flm-datasets" },
     { name = "flm-llm" },
+    { name = "flm-modules" },
     { name = "flm-train" },
+    { name = "torch" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "flm-datasets", editable = "packages/datasets" },
     { name = "flm-llm", editable = "packages/llm" },
+    { name = "flm-modules", editable = "packages/modules" },
     { name = "flm-train", editable = "packages/train" },
+    { name = "torch", specifier = ">=2.5" },
 ]
 
 [[package]]

@@ -59,5 +59,6 @@ testpaths = [
   "packages/datasets/tests",
   "packages/llm/tests",
   "packages/modules/tests",
+  "packages/rl/tests",
   "packages/train/tests",
 ]

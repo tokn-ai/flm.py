@@ -6,12 +6,15 @@ requires-python = ">=3.12"
 dependencies = [
   "flm-datasets",
   "flm-llm",
+  "flm-modules",
   "flm-train",
+  "torch>=2.5",
 ]
 
 [tool.uv.sources]
 flm-datasets = { workspace = true }
 flm-llm = { workspace = true }
+flm-modules = { workspace = true }
 flm-train = { workspace = true }
 
 [build-system]
