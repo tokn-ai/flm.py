@@ -16,7 +16,14 @@ from flm_datasets import (
   iter_source_files,
   read_source_corpus,
 )
-from flm_llm import DeepSeekV4, DeepSeekV4Config, ReferenceModel, ReferenceModelConfig
+from flm_llm import (
+  DeepSeekV4,
+  DeepSeekV4Config,
+  DSTiny,
+  DSTinyConfig,
+  ReferenceModel,
+  ReferenceModelConfig,
+)
 from flm_modules import configure_adamw
 from torch.utils.data import DataLoader
 
@@ -24,7 +31,7 @@ from torch.utils.data import DataLoader
 @dataclass(frozen=True)
 class TrainConfig:
   repo_root: Path = Path(".")
-  model_name: Literal["reference", "deepseek_v4"] = "reference"
+  model_name: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
   encoding_name: str = "cl100k_base"
   seq_len: int = 128
   batch_size: int = 8
@@ -164,6 +171,22 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         dense_layers=config.dense_layers,
       )
     )
+  if config.model_name == "ds_tiny":
+    return DSTiny(
+      DSTinyConfig(
+        vocab_size=vocab_size,
+        max_seq_len=config.seq_len,
+        d_model=config.d_model,
+        n_layers=config.n_layers,
+        n_heads=config.n_heads,
+        q_lora_rank=config.q_lora_rank,
+        kv_lora_rank=config.kv_lora_rank,
+        qk_nope_head_dim=config.qk_nope_head_dim,
+        qk_rope_head_dim=config.qk_rope_head_dim,
+        v_head_dim=config.v_head_dim,
+        d_ff=config.d_ff,
+      )
+    )
   raise ValueError(f"unknown model_name: {config.model_name}")
 
 
@@ -172,7 +195,7 @@ def parse_args() -> TrainConfig:
   parser.add_argument("--repo-root", type=Path, default=Path("."))
   parser.add_argument(
     "--model-name",
-    choices=["reference", "deepseek_v4"],
+    choices=["reference", "deepseek_v4", "ds_tiny"],
     default="reference",
   )
   parser.add_argument("--encoding-name", default="cl100k_base")

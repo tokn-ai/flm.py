@@ -28,6 +28,35 @@ class ReferenceModelConfig:
 
 
 @dataclass(frozen=True)
+class DSTinyConfig:
+  vocab_size: int
+  max_seq_len: int = 2048
+  d_model: int = 768
+  n_layers: int = 12
+  n_heads: int = 12
+  q_lora_rank: int | None = None
+  kv_lora_rank: int = 512
+  qk_nope_head_dim: int = 128
+  qk_rope_head_dim: int = 64
+  v_head_dim: int = 128
+  d_ff: int | None = None
+  bias: bool = False
+  rope_base: float = 10_000.0
+  norm_eps: float = 1e-6
+  attention_backend: AttentionBackend | str = AttentionBackend.TORCH
+
+  @property
+  def ffn_d_ff(self) -> int:
+    if self.d_ff is not None:
+      return self.d_ff
+    return int(8 * self.d_model / 3)
+
+  @property
+  def attention_q_lora_rank(self) -> int | None:
+    return self.q_lora_rank
+
+
+@dataclass(frozen=True)
 class DeepSeekV4Config:
   vocab_size: int
   max_seq_len: int = 2048
