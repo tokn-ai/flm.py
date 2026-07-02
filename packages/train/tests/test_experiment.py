@@ -5,13 +5,10 @@ from pathlib import Path
 import pytest
 from flm_train.cli import parse_args
 from flm_train.config import (
-  DataConfig,
   ExperimentConfig,
   ExperimentOverrides,
   FilesSinkConfig,
-  LoopConfig,
   MlflowSinkConfig,
-  ModelConfig,
   OutputConfig,
   TensorBoardSinkConfig,
   WandbSinkConfig,
@@ -29,7 +26,7 @@ from flm_train.sinks import (
   WandbRunSink,
   build_run_sink,
 )
-from flm_train.types import TrainingResult
+from flm_train.types import DataConfig, LoopConfig, ReferenceModelConfig, TrainingResult
 
 
 def test_parse_experiment_config_derives_train_config() -> None:
@@ -244,6 +241,30 @@ def test_config_plain_includes_secret_path_only() -> None:
   assert "WANDB_API_KEY" not in json.dumps(plain)
 
 
+def test_reference_model_config_excludes_other_model_fields() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "reference_only",
+      "model": {
+        "kind": "reference",
+        "d_model": 32,
+        "n_layers": 3,
+        "n_heads": 4,
+        "d_ff": 64,
+      },
+    }
+  )
+  plain = config_to_plain(config)
+
+  assert plain["model"] == {
+    "kind": "reference",
+    "d_model": 32,
+    "n_layers": 3,
+    "n_heads": 4,
+    "d_ff": 64,
+  }
+
+
 def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   repo_root = tmp_path / "repo"
   run_dir = tmp_path / "run"
@@ -257,7 +278,7 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
     ExperimentConfig(
       name="artifact_test",
       data=DataConfig(repo_root=repo_root, seq_len=8),
-      model=ModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
       output=OutputConfig(run_dir=run_dir),
     )
@@ -297,7 +318,7 @@ def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
     ExperimentConfig(
       name="custom_sink_test",
       data=DataConfig(repo_root=repo_root, seq_len=8),
-      model=ModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
       output=OutputConfig(run_dir=run_dir),
       sinks=(

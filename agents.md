@@ -29,13 +29,6 @@ uv run ruff check .
 uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
-If the sandbox cannot write to the default uv cache, use a writable cache dir
-for probing commands:
-
-```sh
-uv --cache-dir /tmp/uv-cache run --no-sync pytest -q
-```
-
 Prefer normal synced commands for final verification.
 
 ## Commits

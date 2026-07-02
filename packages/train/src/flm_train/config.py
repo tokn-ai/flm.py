@@ -9,65 +9,15 @@ from typing import Any, Literal
 import yaml
 
 from flm_train.types import (
-  DataTrainConfig,
-  LoopTrainConfig,
-  ModelTrainConfig,
-  OptimizerTrainConfig,
+  DataConfig,
+  DeepSeekV4ModelConfig,
+  DSTinyModelConfig,
+  LoopConfig,
+  ModelConfig,
+  OptimizerConfig,
+  ReferenceModelConfig,
   TrainConfig,
 )
-
-
-@dataclass(frozen=True)
-class DataConfig:
-  kind: Literal["repo_sources"] = "repo_sources"
-  repo_root: Path = Path(".")
-  encoding_name: str = "cl100k_base"
-  seq_len: int = 128
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-  kind: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
-  d_model: int = 128
-  n_layers: int = 2
-  n_heads: int = 4
-  head_dim: int | None = None
-  d_ff: int | None = None
-  q_lora_rank: int | None = None
-  kv_lora_rank: int = 64
-  qk_nope_head_dim: int = 16
-  qk_rope_head_dim: int = 16
-  v_head_dim: int = 32
-  rope_head_dim: int | None = None
-  o_lora_rank: int | None = None
-  o_groups: int = 1
-  attention_layer_types: tuple[str, ...] | None = None
-  compress_rate_csa: int = 4
-  compress_rate_hca: int = 128
-  index_n_heads: int = 64
-  index_head_dim: int = 128
-  index_topk: int = 512
-  n_routed_experts: int = 4
-  n_shared_experts: int = 1
-  n_experts_per_token: int = 2
-  n_group: int = 2
-  topk_group: int = 1
-  dense_layers: int = 1
-
-
-@dataclass(frozen=True)
-class OptimizerConfig:
-  kind: Literal["adamw"] = "adamw"
-  learning_rate: float = 3e-4
-  weight_decay: float = 0.1
-
-
-@dataclass(frozen=True)
-class LoopConfig:
-  seed: int = 42
-  device: str = "cpu"
-  batch_size: int = 8
-  steps: int = 10
 
 
 @dataclass(frozen=True)
@@ -129,7 +79,7 @@ SinkConfig = (
 class ExperimentConfig:
   name: str
   data: DataConfig = field(default_factory=DataConfig)
-  model: ModelConfig = field(default_factory=ModelConfig)
+  model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   loop: LoopConfig = field(default_factory=LoopConfig)
   secrets: SecretsConfig = field(default_factory=SecretsConfig)
@@ -148,51 +98,10 @@ class ExperimentConfig:
     if self.optimizer.kind != "adamw":
       raise ValueError(f"unsupported optimizer.kind: {self.optimizer.kind}")
     return TrainConfig(
-      data=DataTrainConfig(
-        kind=self.data.kind,
-        repo_root=self.data.repo_root,
-        encoding_name=self.data.encoding_name,
-        seq_len=self.data.seq_len,
-      ),
-      model=ModelTrainConfig(
-        kind=self.model.kind,
-        d_model=self.model.d_model,
-        n_layers=self.model.n_layers,
-        n_heads=self.model.n_heads,
-        head_dim=self.model.head_dim,
-        d_ff=self.model.d_ff,
-        q_lora_rank=self.model.q_lora_rank,
-        kv_lora_rank=self.model.kv_lora_rank,
-        qk_nope_head_dim=self.model.qk_nope_head_dim,
-        qk_rope_head_dim=self.model.qk_rope_head_dim,
-        v_head_dim=self.model.v_head_dim,
-        rope_head_dim=self.model.rope_head_dim,
-        o_lora_rank=self.model.o_lora_rank,
-        o_groups=self.model.o_groups,
-        attention_layer_types=self.model.attention_layer_types,
-        compress_rate_csa=self.model.compress_rate_csa,
-        compress_rate_hca=self.model.compress_rate_hca,
-        index_n_heads=self.model.index_n_heads,
-        index_head_dim=self.model.index_head_dim,
-        index_topk=self.model.index_topk,
-        n_routed_experts=self.model.n_routed_experts,
-        n_shared_experts=self.model.n_shared_experts,
-        n_experts_per_token=self.model.n_experts_per_token,
-        n_group=self.model.n_group,
-        topk_group=self.model.topk_group,
-        dense_layers=self.model.dense_layers,
-      ),
-      optimizer=OptimizerTrainConfig(
-        kind=self.optimizer.kind,
-        learning_rate=self.optimizer.learning_rate,
-        weight_decay=self.optimizer.weight_decay,
-      ),
-      loop=LoopTrainConfig(
-        seed=self.loop.seed,
-        device=self.loop.device,
-        batch_size=self.loop.batch_size,
-        steps=self.loop.steps,
-      ),
+      data=self.data,
+      model=self.model,
+      optimizer=self.optimizer,
+      loop=self.loop,
     )
 
 
@@ -243,34 +152,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       encoding_name=str(data.get("encoding_name", "cl100k_base")),
       seq_len=int(data.get("seq_len", 128)),
     ),
-    model=ModelConfig(
-      kind=model.get("kind", "reference"),
-      d_model=int(model.get("d_model", 128)),
-      n_layers=int(model.get("n_layers", 2)),
-      n_heads=int(model.get("n_heads", 4)),
-      head_dim=_optional_int(model.get("head_dim")),
-      d_ff=_optional_int(model.get("d_ff")),
-      q_lora_rank=_optional_int(model.get("q_lora_rank")),
-      kv_lora_rank=int(model.get("kv_lora_rank", 64)),
-      qk_nope_head_dim=int(model.get("qk_nope_head_dim", 16)),
-      qk_rope_head_dim=int(model.get("qk_rope_head_dim", 16)),
-      v_head_dim=int(model.get("v_head_dim", 32)),
-      rope_head_dim=_optional_int(model.get("rope_head_dim")),
-      o_lora_rank=_optional_int(model.get("o_lora_rank")),
-      o_groups=int(model.get("o_groups", 1)),
-      attention_layer_types=_optional_str_tuple(model.get("attention_layer_types")),
-      compress_rate_csa=int(model.get("compress_rate_csa", 4)),
-      compress_rate_hca=int(model.get("compress_rate_hca", 128)),
-      index_n_heads=int(model.get("index_n_heads", 64)),
-      index_head_dim=int(model.get("index_head_dim", 128)),
-      index_topk=int(model.get("index_topk", 512)),
-      n_routed_experts=int(model.get("n_routed_experts", 4)),
-      n_shared_experts=int(model.get("n_shared_experts", 1)),
-      n_experts_per_token=int(model.get("n_experts_per_token", 2)),
-      n_group=int(model.get("n_group", 2)),
-      topk_group=int(model.get("topk_group", 1)),
-      dense_layers=int(model.get("dense_layers", 1)),
-    ),
+    model=_parse_model(model),
     optimizer=OptimizerConfig(
       kind=optimizer.get("kind", "adamw"),
       learning_rate=float(optimizer.get("learning_rate", 3e-4)),
@@ -353,6 +235,58 @@ def _optional_path(value: Any) -> Path | None:
   if value is None:
     return None
   return Path(value)
+
+
+def _parse_model(value: dict[str, Any]) -> ModelConfig:
+  kind = value.get("kind", "reference")
+  if kind == "reference":
+    return ReferenceModelConfig(
+      d_model=int(value.get("d_model", 128)),
+      n_layers=int(value.get("n_layers", 2)),
+      n_heads=int(value.get("n_heads", 4)),
+      d_ff=_optional_int(value.get("d_ff")),
+    )
+  if kind == "ds_tiny":
+    return DSTinyModelConfig(
+      d_model=int(value.get("d_model", 128)),
+      n_layers=int(value.get("n_layers", 2)),
+      n_heads=int(value.get("n_heads", 4)),
+      d_ff=_optional_int(value.get("d_ff")),
+      q_lora_rank=_optional_int(value.get("q_lora_rank")),
+      kv_lora_rank=int(value.get("kv_lora_rank", 64)),
+      qk_nope_head_dim=int(value.get("qk_nope_head_dim", 16)),
+      qk_rope_head_dim=int(value.get("qk_rope_head_dim", 16)),
+      v_head_dim=int(value.get("v_head_dim", 32)),
+    )
+  if kind == "deepseek_v4":
+    return DeepSeekV4ModelConfig(
+      d_model=int(value.get("d_model", 128)),
+      n_layers=int(value.get("n_layers", 2)),
+      n_heads=int(value.get("n_heads", 4)),
+      head_dim=_optional_int(value.get("head_dim")),
+      d_ff=_optional_int(value.get("d_ff")),
+      q_lora_rank=_optional_int(value.get("q_lora_rank")),
+      kv_lora_rank=int(value.get("kv_lora_rank", 64)),
+      qk_nope_head_dim=int(value.get("qk_nope_head_dim", 16)),
+      qk_rope_head_dim=int(value.get("qk_rope_head_dim", 16)),
+      v_head_dim=int(value.get("v_head_dim", 32)),
+      rope_head_dim=_optional_int(value.get("rope_head_dim")),
+      o_lora_rank=_optional_int(value.get("o_lora_rank")),
+      o_groups=int(value.get("o_groups", 1)),
+      attention_layer_types=_optional_str_tuple(value.get("attention_layer_types")),
+      compress_rate_csa=int(value.get("compress_rate_csa", 4)),
+      compress_rate_hca=int(value.get("compress_rate_hca", 128)),
+      index_n_heads=int(value.get("index_n_heads", 64)),
+      index_head_dim=int(value.get("index_head_dim", 128)),
+      index_topk=int(value.get("index_topk", 512)),
+      n_routed_experts=int(value.get("n_routed_experts", 4)),
+      n_shared_experts=int(value.get("n_shared_experts", 1)),
+      n_experts_per_token=int(value.get("n_experts_per_token", 2)),
+      n_group=int(value.get("n_group", 2)),
+      topk_group=int(value.get("topk_group", 1)),
+      dense_layers=int(value.get("dense_layers", 1)),
+    )
+  raise ValueError(f"unsupported model.kind: {kind}")
 
 
 def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:

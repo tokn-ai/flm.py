@@ -8,7 +8,7 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
-class DataTrainConfig:
+class DataConfig:
   kind: Literal["repo_sources"] = "repo_sources"
   repo_root: Path = Path(".")
   encoding_name: str = "cl100k_base"
@@ -16,8 +16,31 @@ class DataTrainConfig:
 
 
 @dataclass(frozen=True)
-class ModelTrainConfig:
-  kind: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
+class ReferenceModelConfig:
+  kind: Literal["reference"] = "reference"
+  d_model: int = 128
+  n_layers: int = 2
+  n_heads: int = 4
+  d_ff: int | None = None
+
+
+@dataclass(frozen=True)
+class DSTinyModelConfig:
+  kind: Literal["ds_tiny"] = "ds_tiny"
+  d_model: int = 128
+  n_layers: int = 2
+  n_heads: int = 4
+  d_ff: int | None = None
+  q_lora_rank: int | None = None
+  kv_lora_rank: int = 64
+  qk_nope_head_dim: int = 16
+  qk_rope_head_dim: int = 16
+  v_head_dim: int = 32
+
+
+@dataclass(frozen=True)
+class DeepSeekV4ModelConfig:
+  kind: Literal["deepseek_v4"] = "deepseek_v4"
   d_model: int = 128
   n_layers: int = 2
   n_heads: int = 4
@@ -45,15 +68,18 @@ class ModelTrainConfig:
   dense_layers: int = 1
 
 
+ModelConfig = ReferenceModelConfig | DSTinyModelConfig | DeepSeekV4ModelConfig
+
+
 @dataclass(frozen=True)
-class OptimizerTrainConfig:
+class OptimizerConfig:
   kind: Literal["adamw"] = "adamw"
   learning_rate: float = 3e-4
   weight_decay: float = 0.1
 
 
 @dataclass(frozen=True)
-class LoopTrainConfig:
+class LoopConfig:
   batch_size: int = 8
   steps: int = 10
   device: str = "cpu"
@@ -62,10 +88,10 @@ class LoopTrainConfig:
 
 @dataclass(frozen=True)
 class TrainConfig:
-  data: DataTrainConfig = field(default_factory=DataTrainConfig)
-  model: ModelTrainConfig = field(default_factory=ModelTrainConfig)
-  optimizer: OptimizerTrainConfig = field(default_factory=OptimizerTrainConfig)
-  loop: LoopTrainConfig = field(default_factory=LoopTrainConfig)
+  data: DataConfig = field(default_factory=DataConfig)
+  model: ModelConfig = field(default_factory=ReferenceModelConfig)
+  optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+  loop: LoopConfig = field(default_factory=LoopConfig)
 
 
 @dataclass(frozen=True)

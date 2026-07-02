@@ -3,9 +3,12 @@ from pathlib import Path
 from flm_train.presets import train_on_repo_sources
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
-  DataTrainConfig,
-  LoopTrainConfig,
-  ModelTrainConfig,
+  DataConfig,
+  DeepSeekV4ModelConfig,
+  DSTinyModelConfig,
+  LoopConfig,
+  ModelConfig,
+  ReferenceModelConfig,
   TrainConfig,
 )
 
@@ -13,21 +16,21 @@ from flm_train.types import (
 def train_config(
   *,
   repo_root: Path,
-  model: ModelTrainConfig | None = None,
+  model: ModelConfig | None = None,
   steps: int = 1,
 ) -> TrainConfig:
   model_config = model
   if model_config is None:
-    model_config = ModelTrainConfig(
+    model_config = ReferenceModelConfig(
       d_model=8,
       n_layers=1,
       n_heads=2,
       d_ff=16,
     )
   return TrainConfig(
-    data=DataTrainConfig(repo_root=repo_root, seq_len=8),
+    data=DataConfig(repo_root=repo_root, seq_len=8),
     model=model_config,
-    loop=LoopTrainConfig(batch_size=2, steps=steps),
+    loop=LoopConfig(batch_size=2, steps=steps),
   )
 
 
@@ -85,8 +88,7 @@ def test_train_on_repo_sources_smoke_trains_deepseek_v4(tmp_path: Path) -> None:
   result = train_on_repo_sources(
     train_config(
       repo_root=tmp_path,
-      model=ModelTrainConfig(
-        kind="deepseek_v4",
+      model=DeepSeekV4ModelConfig(
         d_model=16,
         n_layers=2,
         n_heads=2,
@@ -121,8 +123,7 @@ def test_train_on_repo_sources_smoke_trains_ds_tiny(tmp_path: Path) -> None:
   result = train_on_repo_sources(
     train_config(
       repo_root=tmp_path,
-      model=ModelTrainConfig(
-        kind="ds_tiny",
+      model=DSTinyModelConfig(
         d_model=16,
         n_layers=2,
         n_heads=2,
@@ -153,8 +154,7 @@ def test_train_on_repo_sources_smoke_trains_compressed_deepseek_v4(
   result = train_on_repo_sources(
     train_config(
       repo_root=tmp_path,
-      model=ModelTrainConfig(
-        kind="deepseek_v4",
+      model=DeepSeekV4ModelConfig(
         d_model=16,
         n_layers=2,
         n_heads=2,

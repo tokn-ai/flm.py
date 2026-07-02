@@ -5,20 +5,26 @@ from flm_train.presets import train_on_repo_sources
 from flm_train.runner import run_experiment
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
-  DataTrainConfig,
-  LoopTrainConfig,
-  ModelTrainConfig,
-  OptimizerTrainConfig,
+  DataConfig,
+  DeepSeekV4ModelConfig,
+  DSTinyModelConfig,
+  LoopConfig,
+  ModelConfig,
+  OptimizerConfig,
+  ReferenceModelConfig,
   TrainConfig,
   TrainingResult,
 )
 
 __all__ = [
-  "DataTrainConfig",
+  "DataConfig",
+  "DeepSeekV4ModelConfig",
+  "DSTinyModelConfig",
   "ExperimentConfig",
-  "LoopTrainConfig",
-  "ModelTrainConfig",
-  "OptimizerTrainConfig",
+  "LoopConfig",
+  "ModelConfig",
+  "OptimizerConfig",
+  "ReferenceModelConfig",
   "SecretsConfig",
   "TrainConfig",
   "TrainStepMetrics",
