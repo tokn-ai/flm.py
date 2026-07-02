@@ -8,6 +8,7 @@ from pathlib import Path
 from flm_train.config import ExperimentConfig
 from flm_train.sinks import RunContext, build_run_sink
 from flm_train.train import TrainingResult, train_on_repo_sources
+from flm_train.trainer import TrainStepMetrics
 
 LogFn = Callable[[str], None]
 
@@ -24,8 +25,8 @@ class ExperimentRunner:
     self._log(f"run_dir={self.run_dir}")
     try:
       sink.start_run(context, self.config)
-      result = self.train()
-      self.report_result(result, sink=sink)
+      result = self.train(on_step=lambda metrics: self.report_step(metrics, sink=sink))
+      self.report_result(result)
       sink.finish_run(result)
       return result
     except Exception as exc:
@@ -34,13 +35,18 @@ class ExperimentRunner:
     finally:
       sink.close()
 
-  def train(self) -> TrainingResult:
-    return train_on_repo_sources(self.config.to_train_config())
+  def train(
+    self,
+    *,
+    on_step,
+  ) -> TrainingResult:
+    return train_on_repo_sources(self.config.to_train_config(), on_step=on_step)
 
-  def report_result(self, result: TrainingResult, sink) -> None:
-    for step, loss in enumerate(result.losses, start=1):
-      sink.log_metrics({"train/loss": loss}, step=step)
-      self._log(f"step={step} loss={loss:.4f}")
+  def report_step(self, metrics: TrainStepMetrics, sink) -> None:
+    sink.log_metrics(metrics.to_log_dict(), step=metrics.step)
+    self._log(f"step={metrics.step} loss={metrics.loss:.4f}")
+
+  def report_result(self, result: TrainingResult) -> None:
     self._log(f"tokens={result.token_count} files={result.file_count}")
 
   def _log(self, message: str) -> None:

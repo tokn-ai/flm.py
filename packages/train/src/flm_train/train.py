@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -26,6 +27,8 @@ from flm_llm import (
 )
 from flm_modules import configure_adamw
 from torch.utils.data import DataLoader
+
+from flm_train.trainer import LanguageModelTrainer, TrainStepMetrics
 
 
 @dataclass(frozen=True)
@@ -74,9 +77,49 @@ class TrainingResult:
   file_count: int
 
 
-def train_on_repo_sources(config: TrainConfig) -> TrainingResult:
+def train_on_repo_sources(
+  config: TrainConfig,
+  *,
+  on_step: Callable[[TrainStepMetrics], None] | None = None,
+) -> TrainingResult:
   torch.manual_seed(config.seed)
 
+  dataset_bundle = build_repo_source_dataset(config)
+  encoding = get_tokenizer(config.encoding_name)
+  model = build_model(
+    config,
+    vocab_size=encoding.n_vocab,
+  ).to(config.device)
+  optimizer = configure_adamw(
+    model,
+    learning_rate=config.learning_rate,
+    weight_decay=config.weight_decay,
+  )
+  trainer = LanguageModelTrainer(
+    model=model,
+    optimizer=optimizer,
+    dataloader=dataset_bundle.dataloader,
+    device=config.device,
+    steps=config.steps,
+    on_step=on_step,
+  )
+  step_metrics = trainer.train()
+
+  return TrainingResult(
+    losses=[metrics.loss for metrics in step_metrics],
+    token_count=dataset_bundle.token_count,
+    file_count=dataset_bundle.file_count,
+  )
+
+
+@dataclass(frozen=True)
+class RepoSourceDatasetBundle:
+  dataloader: DataLoader
+  token_count: int
+  file_count: int
+
+
+def build_repo_source_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   corpus_config = SourceCorpusConfig(root=config.repo_root)
   corpus = read_source_corpus(corpus_config)
   file_count = len(iter_source_files(corpus_config))
@@ -88,40 +131,8 @@ def train_on_repo_sources(config: TrainConfig) -> TrainingResult:
     shuffle=True,
     drop_last=False,
   )
-  encoding = get_tokenizer(config.encoding_name)
-  model = build_model(
-    config,
-    vocab_size=encoding.n_vocab,
-  ).to(config.device)
-  optimizer = configure_adamw(
-    model,
-    learning_rate=config.learning_rate,
-    weight_decay=config.weight_decay,
-  )
-
-  losses: list[float] = []
-  iterator = iter(dataloader)
-  model.train()
-
-  for _ in range(config.steps):
-    try:
-      input_ids, targets = next(iterator)
-    except StopIteration:
-      iterator = iter(dataloader)
-      input_ids, targets = next(iterator)
-
-    input_ids = input_ids.to(config.device)
-    targets = targets.to(config.device)
-    optimizer.zero_grad(set_to_none=True)
-    _, loss = model(input_ids, targets)
-    if loss is None:
-      raise RuntimeError("training loss was not produced")
-    loss.backward()
-    optimizer.step()
-    losses.append(float(loss.detach().cpu()))
-
-  return TrainingResult(
-    losses=losses,
+  return RepoSourceDatasetBundle(
+    dataloader=dataloader,
     token_count=len(tokens),
     file_count=file_count,
   )

@@ -225,6 +225,11 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   metrics_payload = json.loads(metrics_lines[0])
   assert metrics_payload["step"] == 1
   assert metrics_payload["train/loss"] > 0
+  assert metrics_payload["train/lr"] == 3e-4
+  assert metrics_payload["train/tokens"] == 16
+  assert metrics_payload["train/tokens_seen"] == 16
+  assert metrics_payload["train/tokens_per_sec"] > 0
+  assert metrics_payload["system/step_time_sec"] > 0
   result_payload = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
   assert result_payload["file_count"] == 1
   assert len(result_payload["losses"]) == 1

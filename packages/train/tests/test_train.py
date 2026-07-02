@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from flm_train import TrainConfig, train_on_repo_sources
+from flm_train import TrainConfig, TrainStepMetrics, train_on_repo_sources
 from flm_train.train import parse_args
 
 
@@ -27,6 +27,39 @@ def test_train_on_repo_sources_runs_one_step(tmp_path: Path) -> None:
   assert result.token_count > result.file_count
   assert len(result.losses) == 1
   assert result.losses[0] > 0
+
+
+def test_train_on_repo_sources_emits_step_metrics(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  result = train_on_repo_sources(
+    TrainConfig(
+      repo_root=tmp_path,
+      seq_len=8,
+      batch_size=2,
+      steps=2,
+      d_model=8,
+      n_layers=1,
+      n_heads=2,
+      d_ff=16,
+    ),
+    on_step=step_metrics.append,
+  )
+
+  assert len(step_metrics) == 2
+  assert [metrics.step for metrics in step_metrics] == [1, 2]
+  assert [metrics.loss for metrics in step_metrics] == result.losses
+  assert all(metrics.learning_rate == 3e-4 for metrics in step_metrics)
+  assert all(metrics.tokens == 16 for metrics in step_metrics)
+  assert [metrics.tokens_seen for metrics in step_metrics] == [16, 32]
+  assert all(metrics.step_time_sec > 0 for metrics in step_metrics)
+  assert all(metrics.tokens_per_sec > 0 for metrics in step_metrics)
+  assert "train/loss" in step_metrics[0].to_log_dict()
+  assert "train/tokens_seen" in step_metrics[0].to_log_dict()
 
 
 def test_train_on_repo_sources_smoke_trains_deepseek_v4(tmp_path: Path) -> None:

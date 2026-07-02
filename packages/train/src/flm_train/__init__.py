@@ -3,6 +3,7 @@
 __all__ = [
   "ExperimentConfig",
   "TrainConfig",
+  "TrainStepMetrics",
   "TrainingResult",
   "load_experiment_config",
   "run_experiment",
@@ -18,6 +19,13 @@ def __getattr__(name: str):
       "TrainConfig": TrainConfig,
       "TrainingResult": TrainingResult,
       "train_on_repo_sources": train_on_repo_sources,
+    }
+    return exports[name]
+  if name in {"TrainStepMetrics"}:
+    from flm_train.trainer import TrainStepMetrics
+
+    exports = {
+      "TrainStepMetrics": TrainStepMetrics,
     }
     return exports[name]
   if name in {"ExperimentConfig", "load_experiment_config", "run_experiment"}:
