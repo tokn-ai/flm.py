@@ -68,6 +68,20 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class FilesSinkConfig:
+  kind: Literal["files"] = "files"
+  run_dir: Path | None = None
+  config_json: str = "config.json"
+  resolved_config_yaml: str = "config.resolved.yaml"
+  status_json: str = "status.json"
+  metrics_jsonl: str = "metrics.jsonl"
+  result_json: str = "result.json"
+
+
+SinkConfig = FilesSinkConfig
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
   name: str
   seed: int = 42
@@ -77,6 +91,7 @@ class ExperimentConfig:
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   train: RunTrainConfig = field(default_factory=RunTrainConfig)
   output: OutputConfig = field(default_factory=OutputConfig)
+  sinks: tuple[SinkConfig, ...] = field(default_factory=tuple)
 
   @property
   def run_dir(self) -> Path:
@@ -144,7 +159,17 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
 
 
 def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
-  allowed = {"name", "seed", "device", "data", "model", "optimizer", "train", "output"}
+  allowed = {
+    "name",
+    "seed",
+    "device",
+    "data",
+    "model",
+    "optimizer",
+    "train",
+    "output",
+    "sinks",
+  }
   unknown = set(raw) - allowed
   if unknown:
     raise ValueError(f"unknown experiment config keys: {sorted(unknown)}")
@@ -207,6 +232,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     output=OutputConfig(
       run_dir=Path(output["run_dir"]) if "run_dir" in output else None,
     ),
+    sinks=_parse_sinks(raw.get("sinks")),
   )
 
 
@@ -227,6 +253,7 @@ def apply_overrides(
     output=config.output
     if overrides.run_dir is None
     else OutputConfig(run_dir=overrides.run_dir),
+    sinks=config.sinks,
   )
 
 
@@ -234,7 +261,7 @@ def config_to_plain(value: Any) -> Any:
   if isinstance(value, Path):
     return str(value)
   if isinstance(value, tuple):
-    return list(value)
+    return [config_to_plain(item) for item in value]
   if hasattr(value, "__dataclass_fields__"):
     return {key: config_to_plain(item) for key, item in asdict(value).items()}
   if isinstance(value, dict):
@@ -270,3 +297,29 @@ def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:
   if not isinstance(value, list | tuple):
     raise ValueError("attention_layer_types must be a list")
   return tuple(str(item) for item in value)
+
+
+def _parse_sinks(value: Any) -> tuple[SinkConfig, ...]:
+  if value is None:
+    return ()
+  if not isinstance(value, list | tuple):
+    raise ValueError("sinks must be a list")
+  return tuple(_parse_sink(item) for item in value)
+
+
+def _parse_sink(value: Any) -> SinkConfig:
+  if not isinstance(value, dict):
+    raise ValueError("sink config must be a mapping")
+  kind = value.get("kind")
+  if kind != "files":
+    raise ValueError(f"unsupported sink kind: {kind}")
+  return FilesSinkConfig(
+    run_dir=Path(value["run_dir"]) if "run_dir" in value else None,
+    config_json=str(value.get("config_json", "config.json")),
+    resolved_config_yaml=str(
+      value.get("resolved_config_yaml", "config.resolved.yaml")
+    ),
+    status_json=str(value.get("status_json", "status.json")),
+    metrics_jsonl=str(value.get("metrics_jsonl", "metrics.jsonl")),
+    result_json=str(value.get("result_json", "result.json")),
+  )

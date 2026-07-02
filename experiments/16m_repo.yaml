@@ -26,3 +26,6 @@ train:
 
 output:
   run_dir: runs/16m_repo_reference
+
+sinks:
+  - kind: files

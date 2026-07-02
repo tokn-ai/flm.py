@@ -1,13 +1,12 @@
-"""Experiment execution loop and run artifacts."""
+"""Experiment execution loop."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
-from dataclasses import asdict
 from pathlib import Path
 
-from flm_train.config import ExperimentConfig, config_to_plain, write_yaml
+from flm_train.config import ExperimentConfig
+from flm_train.sinks import RunContext, build_run_sink
 from flm_train.train import TrainingResult, train_on_repo_sources
 
 LogFn = Callable[[str], None]
@@ -20,35 +19,27 @@ class ExperimentRunner:
     self.run_dir = config.run_dir
 
   def run(self) -> TrainingResult:
-    self.prepare_run_dir()
-    self.write_resolved_config()
+    sink = build_run_sink(self.config)
+    context = RunContext(run_dir=self.run_dir)
     self._log(f"run_dir={self.run_dir}")
-
-    result = self.train()
-    self.write_result(result)
-    self.report_result(result)
-    return result
-
-  def prepare_run_dir(self) -> None:
-    self.run_dir.mkdir(parents=True, exist_ok=True)
-
-  def write_resolved_config(self) -> None:
-    write_yaml(
-      self.run_dir / "config.resolved.yaml",
-      config_to_plain(self.config),
-    )
+    try:
+      sink.start_run(context, self.config)
+      result = self.train()
+      self.report_result(result, sink=sink)
+      sink.finish_run(result)
+      return result
+    except Exception as exc:
+      sink.log_status("failed", message=str(exc))
+      raise
+    finally:
+      sink.close()
 
   def train(self) -> TrainingResult:
     return train_on_repo_sources(self.config.to_train_config())
 
-  def write_result(self, result: TrainingResult) -> None:
-    (self.run_dir / "result.json").write_text(
-      json.dumps(asdict(result), indent=2) + "\n",
-      encoding="utf-8",
-    )
-
-  def report_result(self, result: TrainingResult) -> None:
+  def report_result(self, result: TrainingResult, sink) -> None:
     for step, loss in enumerate(result.losses, start=1):
+      sink.log_metrics({"train/loss": loss}, step=step)
       self._log(f"step={step} loss={loss:.4f}")
     self._log(f"tokens={result.token_count} files={result.file_count}")
 

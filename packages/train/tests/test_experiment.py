@@ -7,6 +7,7 @@ from flm_train.experiment import (
   DataConfig,
   ExperimentConfig,
   ExperimentOverrides,
+  FilesSinkConfig,
   ModelConfig,
   OutputConfig,
   RunTrainConfig,
@@ -46,6 +47,12 @@ def test_parse_experiment_config_derives_train_config() -> None:
       "output": {
         "run_dir": "runs/tiny",
       },
+      "sinks": [
+        {
+          "kind": "files",
+          "metrics_jsonl": "train-metrics.jsonl",
+        }
+      ],
     }
   )
 
@@ -63,6 +70,9 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.weight_decay == 0.01
   assert train_config.seed == 7
   assert train_config.device == "cpu"
+  assert config.sinks == (
+    FilesSinkConfig(metrics_jsonl="train-metrics.jsonl"),
+  )
 
 
 def test_parse_experiment_config_rejects_unknown_keys() -> None:
@@ -155,7 +165,53 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   )
 
   assert result.file_count == 1
+  assert (run_dir / "config.json").is_file()
   assert (run_dir / "config.resolved.yaml").is_file()
+  status_payload = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+  assert status_payload["status"] == "success"
+  metrics_lines = (run_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+  assert len(metrics_lines) == 1
+  metrics_payload = json.loads(metrics_lines[0])
+  assert metrics_payload["step"] == 1
+  assert metrics_payload["train/loss"] > 0
   result_payload = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
   assert result_payload["file_count"] == 1
   assert len(result_payload["losses"]) == 1
+
+
+def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
+  repo_root = tmp_path / "repo"
+  run_dir = tmp_path / "run"
+  sink_dir = tmp_path / "sink"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"def custom_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+
+  run_experiment(
+    ExperimentConfig(
+      name="custom_sink_test",
+      data=DataConfig(repo_root=repo_root, seq_len=8),
+      model=ModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      train=RunTrainConfig(batch_size=2, steps=1),
+      output=OutputConfig(run_dir=run_dir),
+      sinks=(
+        FilesSinkConfig(
+          run_dir=sink_dir,
+          config_json="cfg.json",
+          resolved_config_yaml="cfg.yaml",
+          status_json="state.json",
+          metrics_jsonl="scalars.jsonl",
+          result_json="done.json",
+        ),
+      ),
+    )
+  )
+
+  assert not run_dir.exists()
+  assert (sink_dir / "cfg.json").is_file()
+  assert (sink_dir / "cfg.yaml").is_file()
+  assert (sink_dir / "state.json").is_file()
+  assert (sink_dir / "scalars.jsonl").is_file()
+  assert (sink_dir / "done.json").is_file()
