@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from flm_train.cli import parse_args
-from flm_train.experiment import (
+from flm_train.config import (
   DataConfig,
   ExperimentConfig,
   ExperimentOverrides,
@@ -17,8 +17,8 @@ from flm_train.experiment import (
   apply_overrides,
   load_experiment_config,
   parse_experiment_config,
-  run_experiment,
 )
+from flm_train.runner import run_experiment
 from flm_train.sinks import (
   MlflowRunSink,
   RunContext,
