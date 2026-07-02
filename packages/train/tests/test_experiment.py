@@ -2,12 +2,15 @@ import json
 from pathlib import Path
 
 import pytest
+from flm_train.cli import parse_args
 from flm_train.experiment import (
   DataConfig,
   ExperimentConfig,
+  ExperimentOverrides,
   ModelConfig,
   OutputConfig,
   RunTrainConfig,
+  apply_overrides,
   load_experiment_config,
   parse_experiment_config,
   run_experiment,
@@ -88,6 +91,48 @@ train:
   assert config.data.seq_len == 12
   assert config.model.d_model == 24
   assert config.train.steps == 2
+
+
+def test_parse_args_accepts_cli_overrides() -> None:
+  args = parse_args(
+    [
+      "experiments/16m_repo.yaml",
+      "--device",
+      "cpu",
+      "--steps",
+      "3",
+      "--run-dir",
+      "/tmp/run",
+      "--seed",
+      "99",
+    ]
+  )
+
+  assert args.config == Path("experiments/16m_repo.yaml")
+  assert args.device == "cpu"
+  assert args.steps == 3
+  assert args.run_dir == Path("/tmp/run")
+  assert args.seed == 99
+
+
+def test_apply_overrides_preserves_unspecified_config() -> None:
+  config = ExperimentConfig(
+    name="override_test",
+    seed=1,
+    device="cuda",
+    train=RunTrainConfig(batch_size=4, steps=10),
+  )
+
+  overridden = apply_overrides(
+    config,
+    ExperimentOverrides(device="cpu", steps=2, run_dir=Path("/tmp/run")),
+  )
+
+  assert overridden.seed == 1
+  assert overridden.device == "cpu"
+  assert overridden.train.batch_size == 4
+  assert overridden.train.steps == 2
+  assert overridden.run_dir == Path("/tmp/run")
 
 
 def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
