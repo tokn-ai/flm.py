@@ -19,25 +19,25 @@ def train_on_repo_sources(
   *,
   on_step: Callable[[TrainStepMetrics], None] | None = None,
 ) -> TrainingResult:
-  torch.manual_seed(config.seed)
+  torch.manual_seed(config.loop.seed)
 
   dataset_bundle = build_repo_source_dataset(config)
-  encoding = get_tokenizer(config.encoding_name)
+  encoding = get_tokenizer(config.data.encoding_name)
   model = build_model(
     config,
     vocab_size=encoding.n_vocab,
-  ).to(config.device)
+  ).to(config.loop.device)
   optimizer = configure_adamw(
     model,
-    learning_rate=config.learning_rate,
-    weight_decay=config.weight_decay,
+    learning_rate=config.optimizer.learning_rate,
+    weight_decay=config.optimizer.weight_decay,
   )
   trainer = LanguageModelTrainer(
     model=model,
     optimizer=optimizer,
     dataloader=dataset_bundle.dataloader,
-    device=config.device,
-    steps=config.steps,
+    device=config.loop.device,
+    steps=config.loop.steps,
     on_step=on_step,
   )
   step_metrics = trainer.train()

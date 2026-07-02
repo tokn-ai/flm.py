@@ -8,7 +8,13 @@ from typing import Any, Literal
 
 import yaml
 
-from flm_train.types import TrainConfig
+from flm_train.types import (
+  DataTrainConfig,
+  LoopTrainConfig,
+  ModelTrainConfig,
+  OptimizerTrainConfig,
+  TrainConfig,
+)
 
 
 @dataclass(frozen=True)
@@ -21,7 +27,7 @@ class DataConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-  name: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
+  kind: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
   d_model: int = 128
   n_layers: int = 2
   n_heads: int = 4
@@ -51,13 +57,15 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class OptimizerConfig:
-  name: Literal["adamw"] = "adamw"
+  kind: Literal["adamw"] = "adamw"
   learning_rate: float = 3e-4
   weight_decay: float = 0.1
 
 
 @dataclass(frozen=True)
-class RunTrainConfig:
+class LoopConfig:
+  seed: int = 42
+  device: str = "cpu"
   batch_size: int = 8
   steps: int = 10
 
@@ -115,12 +123,10 @@ SinkConfig = (
 @dataclass(frozen=True)
 class ExperimentConfig:
   name: str
-  seed: int = 42
-  device: str = "cpu"
   data: DataConfig = field(default_factory=DataConfig)
   model: ModelConfig = field(default_factory=ModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
-  train: RunTrainConfig = field(default_factory=RunTrainConfig)
+  loop: LoopConfig = field(default_factory=LoopConfig)
   output: OutputConfig = field(default_factory=OutputConfig)
   sinks: tuple[SinkConfig, ...] = field(default_factory=tuple)
 
@@ -133,44 +139,54 @@ class ExperimentConfig:
   def to_train_config(self) -> TrainConfig:
     if self.data.kind != "repo_sources":
       raise ValueError(f"unsupported data.kind: {self.data.kind}")
-    if self.optimizer.name != "adamw":
-      raise ValueError(f"unsupported optimizer.name: {self.optimizer.name}")
+    if self.optimizer.kind != "adamw":
+      raise ValueError(f"unsupported optimizer.kind: {self.optimizer.kind}")
     return TrainConfig(
-      repo_root=self.data.repo_root,
-      model_name=self.model.name,
-      encoding_name=self.data.encoding_name,
-      seq_len=self.data.seq_len,
-      batch_size=self.train.batch_size,
-      steps=self.train.steps,
-      learning_rate=self.optimizer.learning_rate,
-      weight_decay=self.optimizer.weight_decay,
-      d_model=self.model.d_model,
-      n_layers=self.model.n_layers,
-      n_heads=self.model.n_heads,
-      head_dim=self.model.head_dim,
-      d_ff=self.model.d_ff,
-      q_lora_rank=self.model.q_lora_rank,
-      kv_lora_rank=self.model.kv_lora_rank,
-      qk_nope_head_dim=self.model.qk_nope_head_dim,
-      qk_rope_head_dim=self.model.qk_rope_head_dim,
-      v_head_dim=self.model.v_head_dim,
-      rope_head_dim=self.model.rope_head_dim,
-      o_lora_rank=self.model.o_lora_rank,
-      o_groups=self.model.o_groups,
-      attention_layer_types=self.model.attention_layer_types,
-      compress_rate_csa=self.model.compress_rate_csa,
-      compress_rate_hca=self.model.compress_rate_hca,
-      index_n_heads=self.model.index_n_heads,
-      index_head_dim=self.model.index_head_dim,
-      index_topk=self.model.index_topk,
-      n_routed_experts=self.model.n_routed_experts,
-      n_shared_experts=self.model.n_shared_experts,
-      n_experts_per_token=self.model.n_experts_per_token,
-      n_group=self.model.n_group,
-      topk_group=self.model.topk_group,
-      dense_layers=self.model.dense_layers,
-      device=self.device,
-      seed=self.seed,
+      data=DataTrainConfig(
+        kind=self.data.kind,
+        repo_root=self.data.repo_root,
+        encoding_name=self.data.encoding_name,
+        seq_len=self.data.seq_len,
+      ),
+      model=ModelTrainConfig(
+        kind=self.model.kind,
+        d_model=self.model.d_model,
+        n_layers=self.model.n_layers,
+        n_heads=self.model.n_heads,
+        head_dim=self.model.head_dim,
+        d_ff=self.model.d_ff,
+        q_lora_rank=self.model.q_lora_rank,
+        kv_lora_rank=self.model.kv_lora_rank,
+        qk_nope_head_dim=self.model.qk_nope_head_dim,
+        qk_rope_head_dim=self.model.qk_rope_head_dim,
+        v_head_dim=self.model.v_head_dim,
+        rope_head_dim=self.model.rope_head_dim,
+        o_lora_rank=self.model.o_lora_rank,
+        o_groups=self.model.o_groups,
+        attention_layer_types=self.model.attention_layer_types,
+        compress_rate_csa=self.model.compress_rate_csa,
+        compress_rate_hca=self.model.compress_rate_hca,
+        index_n_heads=self.model.index_n_heads,
+        index_head_dim=self.model.index_head_dim,
+        index_topk=self.model.index_topk,
+        n_routed_experts=self.model.n_routed_experts,
+        n_shared_experts=self.model.n_shared_experts,
+        n_experts_per_token=self.model.n_experts_per_token,
+        n_group=self.model.n_group,
+        topk_group=self.model.topk_group,
+        dense_layers=self.model.dense_layers,
+      ),
+      optimizer=OptimizerTrainConfig(
+        kind=self.optimizer.kind,
+        learning_rate=self.optimizer.learning_rate,
+        weight_decay=self.optimizer.weight_decay,
+      ),
+      loop=LoopTrainConfig(
+        seed=self.loop.seed,
+        device=self.loop.device,
+        batch_size=self.loop.batch_size,
+        steps=self.loop.steps,
+      ),
     )
 
 
@@ -192,12 +208,10 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
 def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   allowed = {
     "name",
-    "seed",
-    "device",
     "data",
     "model",
     "optimizer",
-    "train",
+    "loop",
     "output",
     "sinks",
   }
@@ -210,13 +224,11 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   data = _section(raw, "data")
   model = _section(raw, "model")
   optimizer = _section(raw, "optimizer")
-  train = _section(raw, "train")
+  loop = _section(raw, "loop")
   output = _section(raw, "output")
 
   return ExperimentConfig(
     name=str(raw["name"]),
-    seed=int(raw.get("seed", 42)),
-    device=str(raw.get("device", "cpu")),
     data=DataConfig(
       kind=data.get("kind", "repo_sources"),
       repo_root=Path(data.get("repo_root", ".")),
@@ -224,7 +236,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       seq_len=int(data.get("seq_len", 128)),
     ),
     model=ModelConfig(
-      name=model.get("name", "reference"),
+      kind=model.get("kind", "reference"),
       d_model=int(model.get("d_model", 128)),
       n_layers=int(model.get("n_layers", 2)),
       n_heads=int(model.get("n_heads", 4)),
@@ -252,13 +264,15 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       dense_layers=int(model.get("dense_layers", 1)),
     ),
     optimizer=OptimizerConfig(
-      name=optimizer.get("name", "adamw"),
+      kind=optimizer.get("kind", "adamw"),
       learning_rate=float(optimizer.get("learning_rate", 3e-4)),
       weight_decay=float(optimizer.get("weight_decay", 0.1)),
     ),
-    train=RunTrainConfig(
-      batch_size=int(train.get("batch_size", 8)),
-      steps=int(train.get("steps", 10)),
+    loop=LoopConfig(
+      seed=int(loop.get("seed", 42)),
+      device=str(loop.get("device", "cpu")),
+      batch_size=int(loop.get("batch_size", 8)),
+      steps=int(loop.get("steps", 10)),
     ),
     output=OutputConfig(
       run_dir=Path(output["run_dir"]) if "run_dir" in output else None,
@@ -273,14 +287,15 @@ def apply_overrides(
 ) -> ExperimentConfig:
   return ExperimentConfig(
     name=config.name,
-    seed=config.seed if overrides.seed is None else overrides.seed,
-    device=config.device if overrides.device is None else overrides.device,
     data=config.data,
     model=config.model,
     optimizer=config.optimizer,
-    train=config.train
-    if overrides.steps is None
-    else RunTrainConfig(batch_size=config.train.batch_size, steps=overrides.steps),
+    loop=LoopConfig(
+      seed=config.loop.seed if overrides.seed is None else overrides.seed,
+      device=config.loop.device if overrides.device is None else overrides.device,
+      batch_size=config.loop.batch_size,
+      steps=config.loop.steps if overrides.steps is None else overrides.steps,
+    ),
     output=config.output
     if overrides.run_dir is None
     else OutputConfig(run_dir=overrides.run_dir),

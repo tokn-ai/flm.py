@@ -1,6 +1,10 @@
 """Training workflows."""
 
 __all__ = [
+  "DataTrainConfig",
+  "LoopTrainConfig",
+  "ModelTrainConfig",
+  "OptimizerTrainConfig",
   "ExperimentConfig",
   "TrainConfig",
   "TrainStepMetrics",
@@ -12,11 +16,30 @@ __all__ = [
 
 
 def __getattr__(name: str):
-  if name in {"TrainConfig", "TrainingResult", "train_on_repo_sources"}:
+  if name in {
+    "DataTrainConfig",
+    "LoopTrainConfig",
+    "ModelTrainConfig",
+    "OptimizerTrainConfig",
+    "TrainConfig",
+    "TrainingResult",
+    "train_on_repo_sources",
+  }:
     from flm_train.presets import train_on_repo_sources
-    from flm_train.types import TrainConfig, TrainingResult
+    from flm_train.types import (
+      DataTrainConfig,
+      LoopTrainConfig,
+      ModelTrainConfig,
+      OptimizerTrainConfig,
+      TrainConfig,
+      TrainingResult,
+    )
 
     exports = {
+      "DataTrainConfig": DataTrainConfig,
+      "LoopTrainConfig": LoopTrainConfig,
+      "ModelTrainConfig": ModelTrainConfig,
+      "OptimizerTrainConfig": OptimizerTrainConfig,
       "TrainConfig": TrainConfig,
       "TrainingResult": TrainingResult,
       "train_on_repo_sources": train_on_repo_sources,

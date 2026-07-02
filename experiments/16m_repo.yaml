@@ -1,6 +1,4 @@
 name: 16m_repo_reference
-seed: 42
-device: cuda
 
 data:
   kind: repo_sources
@@ -9,18 +7,20 @@ data:
   seq_len: 512
 
 model:
-  name: reference
+  kind: reference
   d_model: 128
   n_layers: 12
   n_heads: 2
   d_ff: 512
 
 optimizer:
-  name: adamw
+  kind: adamw
   learning_rate: 3.0e-4
   weight_decay: 0.1
 
-train:
+loop:
+  seed: 42
+  device: cuda
   batch_size: 8
   steps: 1000
 

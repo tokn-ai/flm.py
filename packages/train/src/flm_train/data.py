@@ -24,14 +24,14 @@ class RepoSourceDatasetBundle:
 
 
 def build_repo_source_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
-  corpus_config = SourceCorpusConfig(root=config.repo_root)
+  corpus_config = SourceCorpusConfig(root=config.data.repo_root)
   corpus = read_source_corpus(corpus_config)
   file_count = len(iter_source_files(corpus_config))
-  tokens = encode_text(corpus, encoding_name=config.encoding_name)
-  dataset = TokenDataset(tokens, seq_len=config.seq_len)
+  tokens = encode_text(corpus, encoding_name=config.data.encoding_name)
+  dataset = TokenDataset(tokens, seq_len=config.data.seq_len)
   dataloader = DataLoader(
     dataset,
-    batch_size=config.batch_size,
+    batch_size=config.loop.batch_size,
     shuffle=True,
     drop_last=False,
   )

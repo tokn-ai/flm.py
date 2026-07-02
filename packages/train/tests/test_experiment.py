@@ -8,10 +8,10 @@ from flm_train.experiment import (
   ExperimentConfig,
   ExperimentOverrides,
   FilesSinkConfig,
+  LoopConfig,
   MlflowSinkConfig,
   ModelConfig,
   OutputConfig,
-  RunTrainConfig,
   TensorBoardSinkConfig,
   WandbSinkConfig,
   apply_overrides,
@@ -33,25 +33,26 @@ def test_parse_experiment_config_derives_train_config() -> None:
   config = parse_experiment_config(
     {
       "name": "tiny",
-      "seed": 7,
-      "device": "cpu",
       "data": {
         "repo_root": "src",
         "encoding_name": "cl100k_base",
         "seq_len": 16,
       },
       "model": {
-        "name": "reference",
+        "kind": "reference",
         "d_model": 32,
         "n_layers": 3,
         "n_heads": 4,
         "d_ff": 64,
       },
       "optimizer": {
+        "kind": "adamw",
         "learning_rate": 1.0e-3,
         "weight_decay": 0.01,
       },
-      "train": {
+      "loop": {
+        "seed": 7,
+        "device": "cpu",
         "batch_size": 2,
         "steps": 5,
       },
@@ -92,18 +93,18 @@ def test_parse_experiment_config_derives_train_config() -> None:
 
   train_config = config.to_train_config()
 
-  assert train_config.repo_root == Path("src")
-  assert train_config.seq_len == 16
-  assert train_config.batch_size == 2
-  assert train_config.steps == 5
-  assert train_config.d_model == 32
-  assert train_config.n_layers == 3
-  assert train_config.n_heads == 4
-  assert train_config.d_ff == 64
-  assert train_config.learning_rate == 1.0e-3
-  assert train_config.weight_decay == 0.01
-  assert train_config.seed == 7
-  assert train_config.device == "cpu"
+  assert train_config.data.repo_root == Path("src")
+  assert train_config.data.seq_len == 16
+  assert train_config.loop.batch_size == 2
+  assert train_config.loop.steps == 5
+  assert train_config.model.d_model == 32
+  assert train_config.model.n_layers == 3
+  assert train_config.model.n_heads == 4
+  assert train_config.model.d_ff == 64
+  assert train_config.optimizer.learning_rate == 1.0e-3
+  assert train_config.optimizer.weight_decay == 0.01
+  assert train_config.loop.seed == 7
+  assert train_config.loop.device == "cpu"
   assert config.sinks == (
     FilesSinkConfig(metrics_jsonl="train-metrics.jsonl"),
     TensorBoardSinkConfig(log_dir=Path("tb"), flush_secs=3),
@@ -140,7 +141,7 @@ data:
   seq_len: 12
 model:
   d_model: 24
-train:
+loop:
   steps: 2
 """,
     encoding="utf-8",
@@ -151,7 +152,7 @@ train:
   assert config.name == "yaml_test"
   assert config.data.seq_len == 12
   assert config.model.d_model == 24
-  assert config.train.steps == 2
+  assert config.loop.steps == 2
 
 
 def test_parse_args_accepts_cli_overrides() -> None:
@@ -179,9 +180,7 @@ def test_parse_args_accepts_cli_overrides() -> None:
 def test_apply_overrides_preserves_unspecified_config() -> None:
   config = ExperimentConfig(
     name="override_test",
-    seed=1,
-    device="cuda",
-    train=RunTrainConfig(batch_size=4, steps=10),
+    loop=LoopConfig(seed=1, device="cuda", batch_size=4, steps=10),
   )
 
   overridden = apply_overrides(
@@ -189,10 +188,10 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
     ExperimentOverrides(device="cpu", steps=2, run_dir=Path("/tmp/run")),
   )
 
-  assert overridden.seed == 1
-  assert overridden.device == "cpu"
-  assert overridden.train.batch_size == 4
-  assert overridden.train.steps == 2
+  assert overridden.loop.seed == 1
+  assert overridden.loop.device == "cpu"
+  assert overridden.loop.batch_size == 4
+  assert overridden.loop.steps == 2
   assert overridden.run_dir == Path("/tmp/run")
 
 
@@ -210,7 +209,7 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
       name="artifact_test",
       data=DataConfig(repo_root=repo_root, seq_len=8),
       model=ModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
-      train=RunTrainConfig(batch_size=2, steps=1),
+      loop=LoopConfig(batch_size=2, steps=1),
       output=OutputConfig(run_dir=run_dir),
     )
   )
@@ -250,7 +249,7 @@ def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
       name="custom_sink_test",
       data=DataConfig(repo_root=repo_root, seq_len=8),
       model=ModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
-      train=RunTrainConfig(batch_size=2, steps=1),
+      loop=LoopConfig(batch_size=2, steps=1),
       output=OutputConfig(run_dir=run_dir),
       sinks=(
         FilesSinkConfig(

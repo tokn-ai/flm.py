@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 
 @dataclass(frozen=True)
-class TrainConfig:
+class DataTrainConfig:
+  kind: Literal["repo_sources"] = "repo_sources"
   repo_root: Path = Path(".")
-  model_name: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
   encoding_name: str = "cl100k_base"
   seq_len: int = 128
-  batch_size: int = 8
-  steps: int = 10
-  learning_rate: float = 3e-4
-  weight_decay: float = 0.1
+
+
+@dataclass(frozen=True)
+class ModelTrainConfig:
+  kind: Literal["reference", "deepseek_v4", "ds_tiny"] = "reference"
   d_model: int = 128
   n_layers: int = 2
   n_heads: int = 4
@@ -42,8 +43,29 @@ class TrainConfig:
   n_group: int = 2
   topk_group: int = 1
   dense_layers: int = 1
+
+
+@dataclass(frozen=True)
+class OptimizerTrainConfig:
+  kind: Literal["adamw"] = "adamw"
+  learning_rate: float = 3e-4
+  weight_decay: float = 0.1
+
+
+@dataclass(frozen=True)
+class LoopTrainConfig:
+  batch_size: int = 8
+  steps: int = 10
   device: str = "cpu"
   seed: int = 42
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+  data: DataTrainConfig = field(default_factory=DataTrainConfig)
+  model: ModelTrainConfig = field(default_factory=ModelTrainConfig)
+  optimizer: OptimizerTrainConfig = field(default_factory=OptimizerTrainConfig)
+  loop: LoopTrainConfig = field(default_factory=LoopTrainConfig)
 
 
 @dataclass(frozen=True)
