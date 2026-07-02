@@ -33,6 +33,7 @@ from flm_train.sinks import (
   WandbRunSink,
   build_run_sink,
 )
+from flm_train.types import TrainConfig, TrainingResult
 
 __all__ = [
   "DataConfig",
@@ -51,6 +52,8 @@ __all__ = [
   "RunSink",
   "RunTrainConfig",
   "SinkConfig",
+  "TrainConfig",
+  "TrainingResult",
   "TensorBoardRunSink",
   "TensorBoardSinkConfig",
   "WandbRunSink",

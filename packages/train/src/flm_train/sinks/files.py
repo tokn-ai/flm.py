@@ -13,7 +13,7 @@ from flm_train.config import (
   write_yaml,
 )
 from flm_train.sinks.base import RunContext, RunStatus, Scalar, utc_now
-from flm_train.train import TrainingResult
+from flm_train.types import TrainingResult
 
 
 class FilesRunSink:

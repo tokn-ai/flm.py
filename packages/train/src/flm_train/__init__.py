@@ -13,7 +13,8 @@ __all__ = [
 
 def __getattr__(name: str):
   if name in {"TrainConfig", "TrainingResult", "train_on_repo_sources"}:
-    from flm_train.train import TrainConfig, TrainingResult, train_on_repo_sources
+    from flm_train.presets import train_on_repo_sources
+    from flm_train.types import TrainConfig, TrainingResult
 
     exports = {
       "TrainConfig": TrainConfig,

@@ -6,9 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from flm_train.config import ExperimentConfig
+from flm_train.presets import train_on_repo_sources
 from flm_train.sinks import RunContext, build_run_sink
-from flm_train.train import TrainingResult, train_on_repo_sources
 from flm_train.trainer import TrainStepMetrics
+from flm_train.types import TrainingResult
 
 LogFn = Callable[[str], None]
 

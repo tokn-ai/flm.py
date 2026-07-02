@@ -13,7 +13,7 @@ from flm_train.config import (
   config_to_plain,
 )
 from flm_train.sinks.base import RunContext, RunStatus, Scalar
-from flm_train.train import TrainingResult
+from flm_train.types import TrainingResult
 
 
 class TensorBoardRunSink:

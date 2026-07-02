@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import yaml
 
-from flm_train.train import TrainConfig
+from flm_train.types import TrainConfig
 
 
 @dataclass(frozen=True)

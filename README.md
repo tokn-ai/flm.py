@@ -20,10 +20,10 @@ building blocks and an AdamW optimizer helper.
 
 ## Training
 
-Train a small reference model on source files in this repository:
+Run an experiment from a YAML config:
 
 ```sh
-uv run flm-train-repo --repo-root . --steps 10
+uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
 ## Setup

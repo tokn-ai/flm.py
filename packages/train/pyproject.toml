@@ -22,7 +22,6 @@ flm-llm = { workspace = true }
 flm-modules = { workspace = true }
 
 [project.scripts]
-flm-train-repo = "flm_train.train:main"
 flm-train-experiment = "flm_train.cli:main"
 
 [build-system]

@@ -26,7 +26,7 @@ from flm_train.sinks import (
   WandbRunSink,
   build_run_sink,
 )
-from flm_train.train import TrainingResult
+from flm_train.types import TrainingResult
 
 
 def test_parse_experiment_config_derives_train_config() -> None:

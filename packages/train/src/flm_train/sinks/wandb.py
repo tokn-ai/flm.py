@@ -8,7 +8,7 @@ from typing import Any
 
 from flm_train.config import ExperimentConfig, WandbSinkConfig, config_to_plain
 from flm_train.sinks.base import RunContext, RunStatus, Scalar
-from flm_train.train import TrainingResult
+from flm_train.types import TrainingResult
 
 
 class WandbRunSink:

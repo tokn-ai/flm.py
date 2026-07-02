@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from flm_train.config import ExperimentConfig
-from flm_train.train import TrainingResult
+from flm_train.types import TrainingResult
 
 Scalar = float | int | bool | str
 RunStatus = Literal["running", "success", "failed"]
