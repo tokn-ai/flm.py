@@ -389,6 +389,7 @@ dependencies = [
     { name = "flm-datasets" },
     { name = "flm-llm" },
     { name = "flm-modules" },
+    { name = "pyyaml" },
     { name = "torch" },
 ]
 
@@ -397,6 +398,7 @@ requires-dist = [
     { name = "flm-datasets", editable = "packages/datasets" },
     { name = "flm-llm", editable = "packages/llm" },
     { name = "flm-modules", editable = "packages/modules" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "torch", specifier = ">=2.5" },
 ]
 
