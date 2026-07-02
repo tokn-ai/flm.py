@@ -1,7 +1,13 @@
 from pathlib import Path
 
-from flm_train import TrainConfig, TrainStepMetrics, train_on_repo_sources
-from flm_train.types import DataTrainConfig, LoopTrainConfig, ModelTrainConfig
+from flm_train.presets import train_on_repo_sources
+from flm_train.trainer import TrainStepMetrics
+from flm_train.types import (
+  DataTrainConfig,
+  LoopTrainConfig,
+  ModelTrainConfig,
+  TrainConfig,
+)
 
 
 def train_config(
@@ -10,15 +16,17 @@ def train_config(
   model: ModelTrainConfig | None = None,
   steps: int = 1,
 ) -> TrainConfig:
-  return TrainConfig(
-    data=DataTrainConfig(repo_root=repo_root, seq_len=8),
-    model=model
-    or ModelTrainConfig(
+  model_config = model
+  if model_config is None:
+    model_config = ModelTrainConfig(
       d_model=8,
       n_layers=1,
       n_heads=2,
       d_ff=16,
-    ),
+    )
+  return TrainConfig(
+    data=DataTrainConfig(repo_root=repo_root, seq_len=8),
+    model=model_config,
     loop=LoopTrainConfig(batch_size=2, steps=steps),
   )
 
