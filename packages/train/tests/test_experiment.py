@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -15,10 +16,12 @@ from flm_train.config import (
   TensorBoardSinkConfig,
   WandbSinkConfig,
   apply_overrides,
+  config_to_plain,
   load_experiment_config,
   parse_experiment_config,
 )
 from flm_train.runner import run_experiment
+from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import (
   MlflowRunSink,
   RunContext,
@@ -55,6 +58,9 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "device": "cpu",
         "batch_size": 2,
         "steps": 5,
+      },
+      "secrets": {
+        "env_file": ".secret",
       },
       "output": {
         "run_dir": "runs/tiny",
@@ -105,6 +111,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.optimizer.weight_decay == 0.01
   assert train_config.loop.seed == 7
   assert train_config.loop.device == "cpu"
+  assert config.secrets.env_file == Path(".secret")
   assert config.sinks == (
     FilesSinkConfig(metrics_jsonl="train-metrics.jsonl"),
     TensorBoardSinkConfig(log_dir=Path("tb"), flush_secs=3),
@@ -192,7 +199,49 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
   assert overridden.loop.device == "cpu"
   assert overridden.loop.batch_size == 4
   assert overridden.loop.steps == 2
+  assert overridden.secrets == config.secrets
   assert overridden.run_dir == Path("/tmp/run")
+
+
+def test_secret_env_file_loads_dotenv_values(tmp_path: Path) -> None:
+  secret_path = tmp_path / ".secret"
+  secret_path.write_text(
+    """
+# local secrets
+WANDB_API_KEY=abc123
+MLFLOW_TRACKING_TOKEN="token value"
+EMPTY=
+""",
+    encoding="utf-8",
+  )
+
+  assert load_secret_env(secret_path) == {
+    "WANDB_API_KEY": "abc123",
+    "MLFLOW_TRACKING_TOKEN": "token value",
+    "EMPTY": "",
+  }
+
+
+def test_apply_secret_env_does_not_overwrite_existing_env(monkeypatch) -> None:
+  monkeypatch.setenv("WANDB_API_KEY", "from-env")
+
+  apply_secret_env({"WANDB_API_KEY": "from-file", "MLFLOW_TRACKING_TOKEN": "token"})
+
+  assert os.environ["WANDB_API_KEY"] == "from-env"
+  assert os.environ["MLFLOW_TRACKING_TOKEN"] == "token"
+
+
+def test_config_plain_includes_secret_path_only() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "secret_path_test",
+      "secrets": {"env_file": ".secret"},
+    }
+  )
+  plain = config_to_plain(config)
+
+  assert plain["secrets"] == {"env_file": ".secret"}
+  assert "WANDB_API_KEY" not in json.dumps(plain)
 
 
 def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from flm_train.config import ExperimentConfig
 from flm_train.presets import train_on_repo_sources
+from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import RunContext, build_run_sink
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import TrainingResult
@@ -21,6 +22,7 @@ class ExperimentRunner:
     self.run_dir = config.run_dir
 
   def run(self) -> TrainingResult:
+    apply_secret_env(load_secret_env(self.config.secrets.env_file))
     sink = build_run_sink(self.config)
     context = RunContext(run_dir=self.run_dir)
     self._log(f"run_dir={self.run_dir}")

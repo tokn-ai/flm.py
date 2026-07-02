@@ -71,6 +71,11 @@ class LoopConfig:
 
 
 @dataclass(frozen=True)
+class SecretsConfig:
+  env_file: Path | None = Path(".secret")
+
+
+@dataclass(frozen=True)
 class OutputConfig:
   run_dir: Path | None = None
 
@@ -127,6 +132,7 @@ class ExperimentConfig:
   model: ModelConfig = field(default_factory=ModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   loop: LoopConfig = field(default_factory=LoopConfig)
+  secrets: SecretsConfig = field(default_factory=SecretsConfig)
   output: OutputConfig = field(default_factory=OutputConfig)
   sinks: tuple[SinkConfig, ...] = field(default_factory=tuple)
 
@@ -212,6 +218,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "model",
     "optimizer",
     "loop",
+    "secrets",
     "output",
     "sinks",
   }
@@ -225,6 +232,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   model = _section(raw, "model")
   optimizer = _section(raw, "optimizer")
   loop = _section(raw, "loop")
+  secrets = _section(raw, "secrets")
   output = _section(raw, "output")
 
   return ExperimentConfig(
@@ -274,6 +282,9 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       batch_size=int(loop.get("batch_size", 8)),
       steps=int(loop.get("steps", 10)),
     ),
+    secrets=SecretsConfig(
+      env_file=_optional_path(secrets.get("env_file", ".secret")),
+    ),
     output=OutputConfig(
       run_dir=Path(output["run_dir"]) if "run_dir" in output else None,
     ),
@@ -296,6 +307,7 @@ def apply_overrides(
       batch_size=config.loop.batch_size,
       steps=config.loop.steps if overrides.steps is None else overrides.steps,
     ),
+    secrets=config.secrets,
     output=config.output
     if overrides.run_dir is None
     else OutputConfig(run_dir=overrides.run_dir),
@@ -335,6 +347,12 @@ def _optional_int(value: Any) -> int | None:
   if value is None:
     return None
   return int(value)
+
+
+def _optional_path(value: Any) -> Path | None:
+  if value is None:
+    return None
+  return Path(value)
 
 
 def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:

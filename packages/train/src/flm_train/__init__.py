@@ -1,6 +1,6 @@
 """Training workflows."""
 
-from flm_train.config import ExperimentConfig, load_experiment_config
+from flm_train.config import ExperimentConfig, SecretsConfig, load_experiment_config
 from flm_train.presets import train_on_repo_sources
 from flm_train.runner import run_experiment
 from flm_train.trainer import TrainStepMetrics
@@ -19,6 +19,7 @@ __all__ = [
   "LoopTrainConfig",
   "ModelTrainConfig",
   "OptimizerTrainConfig",
+  "SecretsConfig",
   "TrainConfig",
   "TrainStepMetrics",
   "TrainingResult",

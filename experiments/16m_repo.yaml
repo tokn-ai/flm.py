@@ -24,6 +24,9 @@ loop:
   batch_size: 8
   steps: 1000
 
+secrets:
+  env_file: .secret
+
 output:
   run_dir: runs/16m_repo_reference
 
