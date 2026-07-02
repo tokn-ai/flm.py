@@ -8,14 +8,25 @@ from flm_train.experiment import (
   ExperimentConfig,
   ExperimentOverrides,
   FilesSinkConfig,
+  MlflowSinkConfig,
   ModelConfig,
   OutputConfig,
   RunTrainConfig,
+  TensorBoardSinkConfig,
+  WandbSinkConfig,
   apply_overrides,
   load_experiment_config,
   parse_experiment_config,
   run_experiment,
 )
+from flm_train.sinks import (
+  MlflowRunSink,
+  RunContext,
+  TensorBoardRunSink,
+  WandbRunSink,
+  build_run_sink,
+)
+from flm_train.train import TrainingResult
 
 
 def test_parse_experiment_config_derives_train_config() -> None:
@@ -51,6 +62,29 @@ def test_parse_experiment_config_derives_train_config() -> None:
         {
           "kind": "files",
           "metrics_jsonl": "train-metrics.jsonl",
+        },
+        {
+          "kind": "tensorboard",
+          "log_dir": "tb",
+          "flush_secs": 3,
+        },
+        {
+          "kind": "mlflow",
+          "tracking_uri": "file:mlruns",
+          "experiment_name": "flm-test",
+          "run_name": "run-a",
+          "nested": True,
+        },
+        {
+          "kind": "wandb",
+          "project": "flm",
+          "entity": "team",
+          "name": "wandb-run",
+          "mode": "offline",
+          "dir": "wandb",
+          "tags": ["smoke", "train"],
+          "group": "group-a",
+          "job_type": "pretrain",
         }
       ],
     }
@@ -72,6 +106,23 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.device == "cpu"
   assert config.sinks == (
     FilesSinkConfig(metrics_jsonl="train-metrics.jsonl"),
+    TensorBoardSinkConfig(log_dir=Path("tb"), flush_secs=3),
+    MlflowSinkConfig(
+      tracking_uri="file:mlruns",
+      experiment_name="flm-test",
+      run_name="run-a",
+      nested=True,
+    ),
+    WandbSinkConfig(
+      project="flm",
+      entity="team",
+      name="wandb-run",
+      mode="offline",
+      dir=Path("wandb"),
+      tags=("smoke", "train"),
+      group="group-a",
+      job_type="pretrain",
+    ),
   )
 
 
@@ -215,3 +266,189 @@ def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
   assert (sink_dir / "state.json").is_file()
   assert (sink_dir / "scalars.jsonl").is_file()
   assert (sink_dir / "done.json").is_file()
+
+
+def test_build_run_sink_builds_all_sink_kinds() -> None:
+  sink = build_run_sink(
+    ExperimentConfig(
+      name="all_sinks",
+      sinks=(
+        FilesSinkConfig(),
+        TensorBoardSinkConfig(),
+        MlflowSinkConfig(),
+        WandbSinkConfig(),
+      ),
+    )
+  )
+
+  assert len(sink.sinks) == 4
+
+
+def test_tensorboard_sink_logs_scalars_and_text(tmp_path: Path) -> None:
+  writer = FakeSummaryWriter()
+  sink = TensorBoardRunSink(TensorBoardSinkConfig(), writer=writer)
+
+  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="tb"))
+  sink.log_metrics({"train/loss": 1.5, "phase": "train"}, step=2)
+  sink.log_artifact(tmp_path / "checkpoint.pt")
+  sink.finish_run(TrainingResult(losses=[1.5], token_count=10, file_count=1))
+  sink.close()
+
+  assert ("train/loss", 1.5, 2) in writer.scalars
+  assert ("phase", "train", 2) in writer.texts
+  assert writer.closed
+
+
+def test_mlflow_sink_logs_run_data(tmp_path: Path) -> None:
+  client = FakeMlflow()
+  sink = MlflowRunSink(
+    MlflowSinkConfig(
+      tracking_uri="file:mlruns",
+      experiment_name="exp",
+      run_name="run",
+      nested=True,
+    ),
+    client=client,
+  )
+
+  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="mlflow"))
+  sink.log_metrics({"train/loss": 1.25, "phase": "train"}, step=3)
+  sink.log_artifact(tmp_path / "artifact.txt", name="artifacts")
+  sink.finish_run(TrainingResult(losses=[1.25], token_count=10, file_count=1))
+
+  assert client.tracking_uri == "file:mlruns"
+  assert client.experiment_name == "exp"
+  assert client.started == {"run_name": "run", "nested": True}
+  assert client.metrics == [({"train/loss": 1.25}, 3)]
+  assert client.artifacts == [(str(tmp_path / "artifact.txt"), "artifacts")]
+  assert client.ended == ["FINISHED"]
+
+
+def test_wandb_sink_logs_run_data(tmp_path: Path) -> None:
+  module = FakeWandb()
+  sink = WandbRunSink(
+    WandbSinkConfig(
+      project="project",
+      entity="entity",
+      name="run",
+      mode="offline",
+      tags=("tag-a",),
+      group="group",
+      job_type="job",
+    ),
+    module=module,
+  )
+
+  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="wandb"))
+  sink.log_metrics({"train/loss": 2.0}, step=4)
+  sink.log_artifact(tmp_path / "artifact.txt")
+  sink.finish_run(TrainingResult(losses=[2.0], token_count=10, file_count=1))
+
+  assert module.init_kwargs["project"] == "project"
+  assert module.init_kwargs["entity"] == "entity"
+  assert module.init_kwargs["name"] == "run"
+  assert module.logs[-2] == ({"train/loss": 2.0}, 4)
+  assert module.artifacts[0].files == [str(tmp_path / "artifact.txt")]
+  assert module.run.finished
+
+
+class FakeSummaryWriter:
+  def __init__(self) -> None:
+    self.scalars = []
+    self.texts = []
+    self.closed = False
+
+  def add_scalar(self, name, value, step) -> None:
+    self.scalars.append((name, value, step))
+
+  def add_text(self, name, value, step) -> None:
+    self.texts.append((name, value, step))
+
+  def close(self) -> None:
+    self.closed = True
+
+
+class FakeMlflow:
+  def __init__(self) -> None:
+    self.tracking_uri = None
+    self.experiment_name = None
+    self.started = None
+    self.params = []
+    self.tags = []
+    self.metrics = []
+    self.artifacts = []
+    self.dicts = []
+    self.ended = []
+
+  def set_tracking_uri(self, uri) -> None:
+    self.tracking_uri = uri
+
+  def set_experiment(self, name) -> None:
+    self.experiment_name = name
+
+  def start_run(self, *, run_name, nested) -> None:
+    self.started = {"run_name": run_name, "nested": nested}
+
+  def log_param(self, name, value) -> None:
+    self.params.append((name, value))
+
+  def set_tags(self, tags) -> None:
+    self.tags.append(tags)
+
+  def log_metrics(self, metrics, *, step) -> None:
+    self.metrics.append((metrics, step))
+
+  def log_artifact(self, path, artifact_path=None) -> None:
+    self.artifacts.append((path, artifact_path))
+
+  def log_dict(self, payload, path) -> None:
+    self.dicts.append((payload, path))
+
+  def end_run(self, status=None) -> None:
+    self.ended.append(status)
+
+
+class FakeWandbRun:
+  def __init__(self) -> None:
+    self.config = FakeWandbConfig()
+    self.summary = {}
+    self.finished = False
+
+  def finish(self) -> None:
+    self.finished = True
+
+
+class FakeWandbConfig(dict):
+  def update(self, values, allow_val_change=False) -> None:
+    del allow_val_change
+    super().update(values)
+
+
+class FakeWandbArtifact:
+  def __init__(self, name, type) -> None:
+    self.name = name
+    self.type = type
+    self.files = []
+
+  def add_file(self, path) -> None:
+    self.files.append(path)
+
+
+class FakeWandb:
+  Artifact = FakeWandbArtifact
+
+  def __init__(self) -> None:
+    self.run = FakeWandbRun()
+    self.init_kwargs = None
+    self.logs = []
+    self.artifacts = []
+
+  def init(self, **kwargs):
+    self.init_kwargs = kwargs
+    return self.run
+
+  def log(self, payload, step=None) -> None:
+    self.logs.append((payload, step))
+
+  def log_artifact(self, artifact) -> None:
+    self.artifacts.append(artifact)

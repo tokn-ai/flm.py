@@ -78,7 +78,38 @@ class FilesSinkConfig:
   result_json: str = "result.json"
 
 
-SinkConfig = FilesSinkConfig
+@dataclass(frozen=True)
+class TensorBoardSinkConfig:
+  kind: Literal["tensorboard"] = "tensorboard"
+  log_dir: Path | None = None
+  flush_secs: int = 10
+
+
+@dataclass(frozen=True)
+class MlflowSinkConfig:
+  kind: Literal["mlflow"] = "mlflow"
+  tracking_uri: str | None = None
+  experiment_name: str = "flm"
+  run_name: str | None = None
+  nested: bool = False
+
+
+@dataclass(frozen=True)
+class WandbSinkConfig:
+  kind: Literal["wandb"] = "wandb"
+  project: str = "flm"
+  entity: str | None = None
+  name: str | None = None
+  mode: str | None = None
+  dir: Path | None = None
+  tags: tuple[str, ...] = ()
+  group: str | None = None
+  job_type: str | None = None
+
+
+SinkConfig = (
+  FilesSinkConfig | TensorBoardSinkConfig | MlflowSinkConfig | WandbSinkConfig
+)
 
 
 @dataclass(frozen=True)
@@ -311,15 +342,46 @@ def _parse_sink(value: Any) -> SinkConfig:
   if not isinstance(value, dict):
     raise ValueError("sink config must be a mapping")
   kind = value.get("kind")
-  if kind != "files":
-    raise ValueError(f"unsupported sink kind: {kind}")
-  return FilesSinkConfig(
-    run_dir=Path(value["run_dir"]) if "run_dir" in value else None,
-    config_json=str(value.get("config_json", "config.json")),
-    resolved_config_yaml=str(
-      value.get("resolved_config_yaml", "config.resolved.yaml")
-    ),
-    status_json=str(value.get("status_json", "status.json")),
-    metrics_jsonl=str(value.get("metrics_jsonl", "metrics.jsonl")),
-    result_json=str(value.get("result_json", "result.json")),
-  )
+  if kind == "files":
+    return FilesSinkConfig(
+      run_dir=Path(value["run_dir"]) if "run_dir" in value else None,
+      config_json=str(value.get("config_json", "config.json")),
+      resolved_config_yaml=str(
+        value.get("resolved_config_yaml", "config.resolved.yaml")
+      ),
+      status_json=str(value.get("status_json", "status.json")),
+      metrics_jsonl=str(value.get("metrics_jsonl", "metrics.jsonl")),
+      result_json=str(value.get("result_json", "result.json")),
+    )
+  if kind == "tensorboard":
+    return TensorBoardSinkConfig(
+      log_dir=Path(value["log_dir"]) if "log_dir" in value else None,
+      flush_secs=int(value.get("flush_secs", 10)),
+    )
+  if kind == "mlflow":
+    return MlflowSinkConfig(
+      tracking_uri=value.get("tracking_uri"),
+      experiment_name=str(value.get("experiment_name", "flm")),
+      run_name=value.get("run_name"),
+      nested=bool(value.get("nested", False)),
+    )
+  if kind == "wandb":
+    return WandbSinkConfig(
+      project=str(value.get("project", "flm")),
+      entity=value.get("entity"),
+      name=value.get("name"),
+      mode=value.get("mode"),
+      dir=Path(value["dir"]) if "dir" in value else None,
+      tags=_str_tuple(value.get("tags")),
+      group=value.get("group"),
+      job_type=value.get("job_type"),
+    )
+  raise ValueError(f"unsupported sink kind: {kind}")
+
+
+def _str_tuple(value: Any) -> tuple[str, ...]:
+  if value is None:
+    return ()
+  if not isinstance(value, list | tuple):
+    raise ValueError("tags must be a list")
+  return tuple(str(item) for item in value)

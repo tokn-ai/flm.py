@@ -11,6 +11,11 @@ dependencies = [
   "torch>=2.5",
 ]
 
+[project.optional-dependencies]
+mlflow = ["mlflow>=2.0"]
+tensorboard = ["tensorboard>=2.0"]
+wandb = ["wandb>=0.17"]
+
 [tool.uv.sources]
 flm-datasets = { workspace = true }
 flm-llm = { workspace = true }
