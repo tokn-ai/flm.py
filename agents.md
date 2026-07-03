@@ -58,6 +58,13 @@ Translations live under `blog/cn/` with the same filename, e.g.
 `blog/20260703-01-from-script-to-system.md` and
 `blog/cn/20260703-01-from-script-to-system.md`.
 
+Chinese translations keep recurring technical entity names in English
+(Model, Dataset, Optimizer, Protocol, Registry, Config, loss, sink, run,
+trainer) so prose maps back to the code; code identifiers are never
+translated. The full term list lives in `blog/cn/glossary.md` — keep it
+in sync when new terms enter use. Use the compact form **16M** for
+parameter counts (not 万).
+
 Structure (top to bottom):
 
 1. `# Title` — framed around the day's *theme*, not just "day N".

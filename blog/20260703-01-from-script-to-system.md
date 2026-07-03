@@ -26,6 +26,27 @@ Today's commits were not about model quality at all. They were about turning
 a one-off training *script* into a *system* — config-driven, pluggable, and
 decoupled. The rest of this post is a high-level tour of what changed and why.
 
+## How to use
+
+A run is just a config file plus one command. The repo ships
+`experiments/16m_repo.yaml` as the starting point:
+
+```sh
+uv run flm-train-experiment experiments/16m_repo.yaml
+```
+
+For a quick CPU smoke test that exits after one step:
+
+```sh
+uv run flm-train-experiment experiments/16m_repo.yaml \
+  --device cpu \
+  --steps 1 \
+  --run-dir /tmp/flm-experiment-smoke
+```
+
+Everything else — model, data, optimizer, loop, sinks — is declared in the
+YAML, not on the command line.
+
 ## The starting point
 
 Before today, training lived in two big files: a repo-specific `train.py`
@@ -69,11 +90,27 @@ helpers. The training loop now has exactly one implementation.
 ### 3. Pluggable metric sinks
 
 Observability went from one `sinks.py` file to a `sinks/` package built on a
-`Sink` protocol and a registry. Four real backends ship today — `files`
-(JSON/JSONL artifacts on disk), `TensorBoard`, `MLflow`, and `Weights &
-Biases` — and a YAML config simply selects which ones a run uses. Adding a
-new backend means adding one module and registering it; nothing else
-changes. This is the open/closed principle, earned the small way.
+`RunSink` protocol and a registry. The protocol is deliberately small — a
+backend only has to implement these hooks:
+
+```python
+class RunSink(Protocol):
+  def start_run(self, context: RunContext, config: ExperimentConfig) -> None: ...
+  def write_config(self, config: ExperimentConfig) -> None: ...
+  def log_status(self, status: RunStatus, message: str | None = None) -> None: ...
+  def log_metrics(self, metrics: dict[str, Scalar], step: int) -> None: ...
+  def log_artifact(self, path: Path, name: str | None = None) -> None: ...
+  def finish_run(self, result: TrainingResult) -> None: ...
+  def close(self) -> None: ...
+```
+
+Four real backends ship today — `files` (JSON/JSONL artifacts on disk),
+`TensorBoard`, `MLflow`, and `Weights & Biases` — and a YAML config simply
+lists which ones a run uses. Adding a new backend means implementing the
+protocol and registering it; nothing else changes. There's even a
+`CompositeRunSink` that fans every call out to a tuple of sinks, so a single
+run can write to disk *and* stream to W&B at once. This is the open/closed
+principle, earned the small way.
 
 ### 4. Config that scales with the project
 
