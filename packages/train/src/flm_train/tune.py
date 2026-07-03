@@ -37,9 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument("--seed", type=int, default=None)
   parser.add_argument(
     "--profiler",
-    default="torch",
-    help="Profiler to run: torch, nsys, all, or a comma-separated list.",
+    default="memory",
+    help="Profiler to run: memory, torch, nsys, all, or a comma-separated list.",
   )
+  parser.add_argument("--torch-trace", action="store_true")
   parser.add_argument(
     "--nsys-trace",
     default="cuda,nvtx,osrt,cudnn,cublas",
@@ -72,8 +73,10 @@ def run_from_args(args: argparse.Namespace) -> None:
     include_checkpoint=args.include_checkpoint,
   )
   profilers = parse_profilers(args.profiler)
+  if "memory" in profilers:
+    run_torch_memory_profile(config, log=print)
   if "torch" in profilers:
-    run_torch_profile(config, log=print)
+    run_torch_profile(config, export_trace=args.torch_trace, log=print)
   if "nsys" in profilers:
     run_nsys_profile(config, trace=args.nsys_trace, log=print)
     return
@@ -82,8 +85,8 @@ def run_from_args(args: argparse.Namespace) -> None:
 def parse_profilers(value: str) -> tuple[str, ...]:
   profilers = tuple(item.strip() for item in value.split(",") if item.strip())
   if profilers == ("all",):
-    return ("torch", "nsys")
-  supported = {"torch", "nsys"}
+    return ("memory", "torch", "nsys")
+  supported = {"memory", "torch", "nsys"}
   unknown = sorted(set(profilers) - supported)
   if unknown:
     raise ValueError(f"unsupported profiler: {unknown}")
@@ -151,6 +154,7 @@ def _with_tune_run_id(config: ExperimentConfig) -> ExperimentConfig:
 def run_torch_profile(
   config: ExperimentConfig,
   *,
+  export_trace: bool = False,
   log,
 ) -> Path:
   tune_dir = config.run_dir / "tune" / "torch"
@@ -168,10 +172,11 @@ def run_torch_profile(
   ) as profiler:
     run_experiment(config, log=log)
 
-  trace_path = tune_dir / "trace.json"
   table_path = tune_dir / "memory_table.txt"
   summary_path = tune_dir / "summary.json"
-  profiler.export_chrome_trace(str(trace_path))
+  trace_path = tune_dir / "trace.json"
+  if export_trace:
+    profiler.export_chrome_trace(str(trace_path))
   table_path.write_text(
     profiler.key_averages().table(
       sort_by=_profiler_sort_key(activities),
@@ -185,7 +190,7 @@ def run_torch_profile(
       {
         "profiler": "torch",
         "run_dir": str(config.run_dir),
-        "trace": str(trace_path),
+        "trace": str(trace_path) if export_trace else None,
         "memory_table": str(table_path),
       },
       indent=2,
@@ -195,6 +200,57 @@ def run_torch_profile(
     encoding="utf-8",
   )
   log(f"tune=torch dir={tune_dir}")
+  return tune_dir
+
+
+def run_torch_memory_profile(
+  config: ExperimentConfig,
+  *,
+  log,
+) -> Path:
+  tune_dir = config.run_dir / "tune" / "memory"
+  tune_dir.mkdir(parents=True, exist_ok=True)
+  cuda_enabled = config.loop.device.startswith("cuda") and torch.cuda.is_available()
+
+  if cuda_enabled:
+    torch.cuda.memory.reset_peak_memory_stats()
+    torch.cuda.memory.reset_accumulated_memory_stats()
+    before_stats = torch.cuda.memory.memory_stats_as_nested_dict()
+  else:
+    before_stats = {}
+
+  run_experiment(config, log=log)
+
+  if cuda_enabled:
+    torch.cuda.synchronize()
+    after_stats = torch.cuda.memory.memory_stats_as_nested_dict()
+    (tune_dir / "memory_summary.txt").write_text(
+      torch.cuda.memory_summary(device=config.loop.device),
+      encoding="utf-8",
+    )
+    _write_json(
+      tune_dir / "memory_snapshot.json",
+      torch.cuda.memory.memory_snapshot(include_traces=False),
+    )
+  else:
+    after_stats = {}
+
+  _write_json(tune_dir / "memory_stats_before.json", before_stats)
+  _write_json(tune_dir / "memory_stats_after.json", after_stats)
+  _write_json(
+    tune_dir / "summary.json",
+    {
+      "cuda_available": cuda_enabled,
+      "device": config.loop.device,
+      "memory_stats_after": str(tune_dir / "memory_stats_after.json"),
+      "memory_stats_before": str(tune_dir / "memory_stats_before.json"),
+      "memory_summary": str(tune_dir / "memory_summary.txt") if cuda_enabled else None,
+      "profiler": "memory",
+      "run_dir": str(config.run_dir),
+      "snapshot": str(tune_dir / "memory_snapshot.json") if cuda_enabled else None,
+    },
+  )
+  log(f"tune=memory dir={tune_dir}")
   return tune_dir
 
 
@@ -259,6 +315,13 @@ def build_nsys_command(
     "flm_train.cli",
     str(config_path.resolve()),
   ]
+
+
+def _write_json(path: Path, payload: object) -> None:
+  path.write_text(
+    json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+  )
 
 
 def _profiler_sort_key(activities: list[ProfilerActivity]) -> str:

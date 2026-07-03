@@ -13,6 +13,7 @@ from flm_train.tune import (
   parse_args,
   parse_profilers,
   prepare_tune_config,
+  run_torch_memory_profile,
   run_torch_profile,
 )
 from flm_train.types import (
@@ -53,8 +54,9 @@ def test_parse_args_accepts_tune_options() -> None:
 
 
 def test_parse_profilers_accepts_all_and_lists() -> None:
-  assert parse_profilers("all") == ("torch", "nsys")
+  assert parse_profilers("all") == ("memory", "torch", "nsys")
   assert parse_profilers("nsys,torch") == ("nsys", "torch")
+  assert parse_profilers("memory") == ("memory",)
   assert parse_profilers("torch") == ("torch",)
 
 
@@ -183,9 +185,80 @@ def test_run_torch_profile_writes_artifacts(tmp_path: Path, monkeypatch) -> None
   )
 
   tune_dir = tmp_path / "tune" / "run-123" / "tune" / "torch"
-  assert (tune_dir / "trace.json").is_file()
+  assert not (tune_dir / "trace.json").exists()
   assert (tune_dir / "memory_table.txt").read_text(encoding="utf-8") == (
     "memory table\n"
   )
   assert (tune_dir / "summary.json").is_file()
+  assert ("run", tmp_path / "tune" / "run-123") in calls
+
+
+def test_run_torch_profile_writes_trace_when_requested(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  class FakeKeyAverages:
+    def table(self, *, sort_by, row_limit):
+      del sort_by, row_limit
+      return "memory table"
+
+  class FakeProfiler:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+      del exc_type, exc, traceback
+
+    def export_chrome_trace(self, path: str) -> None:
+      Path(path).write_text("{}", encoding="utf-8")
+
+    def key_averages(self):
+      return FakeKeyAverages()
+
+  monkeypatch.setattr("flm_train.tune.profile", lambda **kwargs: FakeProfiler())
+  monkeypatch.setattr("flm_train.tune.run_experiment", lambda config, *, log: None)
+  monkeypatch.setattr("flm_train.tune.torch.cuda.is_available", lambda: False)
+
+  run_torch_profile(
+    ExperimentConfig(
+      name="tune",
+      run=RunConfig(id="run-123"),
+      loop=LoopConfig(device="cpu"),
+      output=OutputConfig(root_dir=tmp_path),
+    ),
+    export_trace=True,
+    log=lambda message: None,
+  )
+
+  assert (tmp_path / "tune" / "run-123" / "tune" / "torch" / "trace.json").is_file()
+
+
+def test_run_torch_memory_profile_writes_cpu_artifacts(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  calls = []
+
+  def fake_run_experiment(config, *, log):
+    calls.append(("run", config.run_dir))
+    log("trained")
+
+  monkeypatch.setattr("flm_train.tune.run_experiment", fake_run_experiment)
+  monkeypatch.setattr("flm_train.tune.torch.cuda.is_available", lambda: False)
+
+  run_torch_memory_profile(
+    ExperimentConfig(
+      name="tune",
+      run=RunConfig(id="run-123"),
+      loop=LoopConfig(device="cpu"),
+      output=OutputConfig(root_dir=tmp_path),
+    ),
+    log=lambda message: calls.append(("log", message)),
+  )
+
+  tune_dir = tmp_path / "tune" / "run-123" / "tune" / "memory"
+  assert (tune_dir / "memory_stats_before.json").is_file()
+  assert (tune_dir / "memory_stats_after.json").is_file()
+  assert not (tune_dir / "memory_snapshot.json").exists()
+  assert not (tune_dir / "memory_summary.txt").exists()
   assert ("run", tmp_path / "tune" / "run-123") in calls
