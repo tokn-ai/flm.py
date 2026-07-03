@@ -18,7 +18,6 @@ from flm_train.trainer import (
   RolloutBatch,
   RolloutSample,
   TrainStepMetrics,
-  perplexity,
 )
 from flm_train.types import RolloutPromptConfig, TrainConfig, TrainingResult
 
@@ -129,7 +128,6 @@ def evaluate_language_model(
     step=step,
     split=split,
     loss=loss,
-    perplexity=perplexity(loss),
     tokens=total_tokens,
   )
 

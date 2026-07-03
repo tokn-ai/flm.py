@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from math import exp
 from typing import Protocol
 
 import torch
@@ -48,13 +47,11 @@ class EvalMetrics:
   step: int
   split: str
   loss: float
-  perplexity: float
   tokens: int
 
   def to_log_dict(self) -> dict[str, float | int]:
     return {
       f"eval/{self.split}_loss": self.loss,
-      f"eval/{self.split}_perplexity": self.perplexity,
       f"eval/{self.split}_tokens": self.tokens,
     }
 
@@ -189,10 +186,3 @@ def _learning_rate(optimizer: torch.optim.Optimizer) -> float:
   if not optimizer.param_groups:
     return 0.0
   return float(optimizer.param_groups[0].get("lr", 0.0))
-
-
-def perplexity(loss: float) -> float:
-  try:
-    return exp(loss)
-  except OverflowError:
-    return float("inf")

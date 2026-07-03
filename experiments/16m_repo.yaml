@@ -28,11 +28,11 @@ loop:
 
 eval:
   split: test
-  every_steps: 100
+  every_steps: 10
   max_batches: 8
 
 rollout:
-  every_steps: 100
+  every_steps: 50
   max_new_tokens: 64
   prompts:
     - name: fib

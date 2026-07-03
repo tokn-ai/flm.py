@@ -80,9 +80,7 @@ class ExperimentRunner:
 
   def report_eval(self, metrics: EvalMetrics, sink) -> None:
     sink.log_metrics(metrics.to_log_dict(), step=metrics.step)
-    self._log(
-      f"step={metrics.step} {metrics.split}_perplexity={metrics.perplexity:.4f}"
-    )
+    self._log(f"step={metrics.step} {metrics.split}_loss={metrics.loss:.4f}")
 
   def report_rollout(self, batch: RolloutBatch, sink) -> None:
     rollout_dir = self.run_dir / "rollouts"

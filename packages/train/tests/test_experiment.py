@@ -450,10 +450,11 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
 
   metrics_lines = (run_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
   eval_metrics = [
-    json.loads(line) for line in metrics_lines if "eval/test_perplexity" in line
+    json.loads(line) for line in metrics_lines if "eval/test_loss" in line
   ]
   assert [metrics["step"] for metrics in eval_metrics] == [1, 2]
-  assert all(metrics["eval/test_perplexity"] > 0 for metrics in eval_metrics)
+  assert all(metrics["eval/test_loss"] > 0 for metrics in eval_metrics)
+  assert all("eval/test_perplexity" not in metrics for metrics in eval_metrics)
 
   rollout_path = run_dir / "rollouts" / "step-00000002.json"
   rollout = json.loads(rollout_path.read_text(encoding="utf-8"))
