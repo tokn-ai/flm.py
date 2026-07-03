@@ -49,6 +49,8 @@ def test_cut_cross_entropy_matches_cross_entropy_when_available() -> None:
   cut_cross_entropy = _cut_cross_entropy()
   if cut_cross_entropy is None:
     pytest.skip("cut_cross_entropy is not installed")
+  if not torch.cuda.is_available():
+    pytest.skip("cut_cross_entropy default kernel requires CUDA")
   _assert_matches_cross_entropy(
     LossCase(
       name="cut_cross_entropy",
@@ -57,15 +59,26 @@ def test_cut_cross_entropy_matches_cross_entropy_when_available() -> None:
         weight,
         targets,
       ),
-    )
+    ),
+    device=torch.device("cuda"),
+    dtype=torch.float16,
+    atol=2e-2,
+    rtol=2e-2,
   )
 
 
-def _assert_matches_cross_entropy(case: LossCase) -> None:
+def _assert_matches_cross_entropy(
+  case: LossCase,
+  *,
+  device: torch.device | str = "cpu",
+  dtype: torch.dtype = torch.float32,
+  atol: float | None = None,
+  rtol: float | None = None,
+) -> None:
   torch.manual_seed(0)
-  hidden = torch.randn(3, 5, 7, requires_grad=True)
-  weight = torch.randn(11, 7, requires_grad=True)
-  targets = torch.randint(0, 11, (3, 5))
+  hidden = torch.randn(3, 5, 7, device=device, dtype=dtype, requires_grad=True)
+  weight = torch.randn(11, 7, device=device, dtype=dtype, requires_grad=True)
+  targets = torch.randint(0, 11, (3, 5), device=device)
 
   expected_hidden = hidden.detach().clone().requires_grad_(True)
   expected_weight = weight.detach().clone().requires_grad_(True)
@@ -80,9 +93,25 @@ def _assert_matches_cross_entropy(case: LossCase) -> None:
   actual_loss = case.loss_fn(actual_hidden, actual_weight, targets)
   actual_loss.backward()
 
-  torch.testing.assert_close(actual_loss, expected_loss)
-  torch.testing.assert_close(actual_hidden.grad, expected_hidden.grad)
-  torch.testing.assert_close(actual_weight.grad, expected_weight.grad)
+  torch.testing.assert_close(
+    actual_loss,
+    expected_loss,
+    atol=atol,
+    rtol=rtol,
+    check_dtype=False,
+  )
+  torch.testing.assert_close(
+    actual_hidden.grad,
+    expected_hidden.grad,
+    atol=atol,
+    rtol=rtol,
+  )
+  torch.testing.assert_close(
+    actual_weight.grad,
+    expected_weight.grad,
+    atol=atol,
+    rtol=rtol,
+  )
 
 
 def test_language_model_loss_dispatches_linear_cross_entropy() -> None:

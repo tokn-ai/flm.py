@@ -15,10 +15,10 @@ quality:
 
 Use `uv` for all Python environment, test, lint, and package operations.
 
-Sync the workspace with NVIDIA/kernel extras when preparing the repo:
+Sync the workspace with NVIDIA/kernel and TensorBoard extras when preparing the repo:
 
 ```sh
-uv sync --all-packages --extra nvidia
+uv sync --all-packages --extra nvidia --extra tensorboard
 ```
 
 Use `uv run` for commands inside the environment:
