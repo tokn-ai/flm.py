@@ -463,16 +463,19 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   assert rollout["samples"][0]["prompt"] == "def fib(n):"
   assert rollout["samples"][0]["prompt_tokens"]
   assert len(rollout["samples"][0]["tokens"]) == 2
-  for token in rollout["samples"][0]["tokens"]:
-    assert isinstance(token["token"], int)
-    assert isinstance(token["text"], str)
-    assert isinstance(token["log_prob"], float)
-    assert isinstance(token["entropy"], float)
-    assert len(token["top_log_probs"]) == 10
-    assert all(
-      {"token", "text", "log_prob"} <= set(top_log_prob)
-      for top_log_prob in token["top_log_probs"]
-    )
+  assert "completion" not in rollout["samples"][0]
+  assert len(rollout["samples"][0]["token_texts"]) == 2
+  assert len(rollout["samples"][0]["log_probs"]) == 2
+  assert len(rollout["samples"][0]["entropy"]) == 2
+  assert len(rollout["samples"][0]["top_tokens"]) == 2
+  assert len(rollout["samples"][0]["top_token_texts"]) == 2
+  assert len(rollout["samples"][0]["top_log_probs"]) == 2
+  assert all(isinstance(token, int) for token in rollout["samples"][0]["tokens"])
+  assert all(len(tokens) == 10 for tokens in rollout["samples"][0]["top_tokens"])
+  assert all(len(texts) == 10 for texts in rollout["samples"][0]["top_token_texts"])
+  assert all(
+    len(log_probs) == 10 for log_probs in rollout["samples"][0]["top_log_probs"]
+  )
   artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
   assert "rollouts/step-00000002.json" in artifacts
 

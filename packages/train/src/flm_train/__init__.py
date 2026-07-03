@@ -7,8 +7,6 @@ from flm_train.trainer import (
   EvalMetrics,
   RolloutBatch,
   RolloutSample,
-  RolloutToken,
-  RolloutTopLogProb,
   TrainStepMetrics,
 )
 from flm_train.types import (
@@ -41,8 +39,6 @@ __all__ = [
   "RolloutConfig",
   "RolloutPromptConfig",
   "RolloutSample",
-  "RolloutToken",
-  "RolloutTopLogProb",
   "SecretsConfig",
   "TrainConfig",
   "TrainStepMetrics",

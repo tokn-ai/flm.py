@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import torch
 from flm_datasets import get_tokenizer
@@ -17,8 +17,6 @@ from flm_train.trainer import (
   LanguageModelTrainer,
   RolloutBatch,
   RolloutSample,
-  RolloutToken,
-  RolloutTopLogProb,
   TrainStepMetrics,
 )
 from flm_train.types import RolloutPromptConfig, TrainConfig, TrainingResult
@@ -157,15 +155,24 @@ def generate_rollouts(
         max_seq_len=max_seq_len,
         max_new_tokens=max_new_tokens,
       )
-      output_tokens = prompt_tokens + [token.token for token in generated_tokens]
+      output_tokens = prompt_tokens + generated_tokens.tokens
       text = encoding.decode(output_tokens)
       samples.append(
         RolloutSample(
           name=prompt.name,
           prompt=prompt.prompt,
           prompt_tokens=tuple(prompt_tokens),
-          tokens=tuple(generated_tokens),
-          completion=encoding.decode([token.token for token in generated_tokens]),
+          tokens=tuple(generated_tokens.tokens),
+          token_texts=tuple(generated_tokens.token_texts),
+          log_probs=tuple(generated_tokens.log_probs),
+          entropy=tuple(generated_tokens.entropy),
+          top_tokens=tuple(tuple(tokens) for tokens in generated_tokens.top_tokens),
+          top_token_texts=tuple(
+            tuple(texts) for texts in generated_tokens.top_token_texts
+          ),
+          top_log_probs=tuple(
+            tuple(log_probs) for log_probs in generated_tokens.top_log_probs
+          ),
           text=text,
         )
       )
@@ -180,36 +187,54 @@ def greedy_decode(
   device: str,
   max_seq_len: int,
   max_new_tokens: int,
-) -> list[RolloutToken]:
+) -> RolloutGeneration:
   if not prompt_tokens:
     raise ValueError("rollout prompt must not be empty")
   tokens = list(prompt_tokens)
-  generated_tokens: list[RolloutToken] = []
+  generated_tokens: list[int] = []
+  token_texts: list[str] = []
+  log_prob_values: list[float] = []
+  entropy_values: list[float] = []
+  top_token_values: list[list[int]] = []
+  top_token_texts: list[list[str]] = []
+  top_log_prob_values: list[list[float]] = []
   for _ in range(max_new_tokens):
     window = tokens[-max_seq_len:]
     input_ids = torch.tensor([window], dtype=torch.long, device=device)
     logits, _ = model(input_ids)
     log_probs = torch.log_softmax(logits[0, -1], dim=-1)
     probs = torch.exp(log_probs)
-    entropy = float(-(probs * log_probs).sum().detach().cpu())
     top_log_probs, top_tokens = torch.topk(log_probs, k=min(10, log_probs.numel()))
     next_token = int(top_tokens[0].detach().cpu())
-    next_log_prob = float(top_log_probs[0].detach().cpu())
-    generated_tokens.append(
-      RolloutToken(
-        token=next_token,
-        text=encoding.decode([next_token]),
-        log_prob=next_log_prob,
-        top_log_probs=tuple(
-          RolloutTopLogProb(
-            token=int(token.detach().cpu()),
-            text=encoding.decode([int(token.detach().cpu())]),
-            log_prob=float(log_prob.detach().cpu()),
-          )
-          for token, log_prob in zip(top_tokens, top_log_probs, strict=True)
-        ),
-        entropy=entropy,
-      )
+    generated_tokens.append(next_token)
+    token_texts.append(encoding.decode([next_token]))
+    log_prob_values.append(float(top_log_probs[0].detach().cpu()))
+    entropy_values.append(float(-(probs * log_probs).sum().detach().cpu()))
+    top_token_values.append([int(token.detach().cpu()) for token in top_tokens])
+    top_token_texts.append(
+      [encoding.decode([int(token.detach().cpu())]) for token in top_tokens]
+    )
+    top_log_prob_values.append(
+      [float(log_prob.detach().cpu()) for log_prob in top_log_probs]
     )
     tokens.append(next_token)
-  return generated_tokens
+  return RolloutGeneration(
+    tokens=generated_tokens,
+    token_texts=token_texts,
+    log_probs=log_prob_values,
+    entropy=entropy_values,
+    top_tokens=top_token_values,
+    top_token_texts=top_token_texts,
+    top_log_probs=top_log_prob_values,
+  )
+
+
+@dataclass(frozen=True)
+class RolloutGeneration:
+  tokens: list[int]
+  token_texts: list[str]
+  log_probs: list[float]
+  entropy: list[float]
+  top_tokens: list[list[int]]
+  top_token_texts: list[list[str]]
+  top_log_probs: list[list[float]]

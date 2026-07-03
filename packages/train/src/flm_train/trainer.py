@@ -61,25 +61,14 @@ class RolloutSample:
   name: str
   prompt: str
   prompt_tokens: tuple[int, ...]
-  tokens: tuple[RolloutToken, ...]
-  completion: str
+  tokens: tuple[int, ...]
+  token_texts: tuple[str, ...]
+  log_probs: tuple[float, ...]
+  entropy: tuple[float, ...]
+  top_tokens: tuple[tuple[int, ...], ...]
+  top_token_texts: tuple[tuple[str, ...], ...]
+  top_log_probs: tuple[tuple[float, ...], ...]
   text: str
-
-
-@dataclass(frozen=True)
-class RolloutTopLogProb:
-  token: int
-  text: str
-  log_prob: float
-
-
-@dataclass(frozen=True)
-class RolloutToken:
-  token: int
-  text: str
-  log_prob: float
-  top_log_probs: tuple[RolloutTopLogProb, ...]
-  entropy: float
 
 
 @dataclass(frozen=True)
