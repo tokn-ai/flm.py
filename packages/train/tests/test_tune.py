@@ -48,9 +48,16 @@ def test_parse_args_accepts_tune_options() -> None:
   assert args.device == "cuda"
   assert args.root_dir == Path("/tmp/runs")
   assert args.profiler == "nsys,torch"
+  assert args.memory_trace is True
   assert args.nsys_trace == "cuda,nvtx"
   assert args.include_eval is True
   assert args.include_rollout is False
+
+
+def test_parse_args_can_disable_memory_trace() -> None:
+  args = parse_args(["experiments/16m_repo.yaml", "--no-memory-trace"])
+
+  assert args.memory_trace is False
 
 
 def test_parse_profilers_accepts_all_and_lists() -> None:
@@ -262,3 +269,70 @@ def test_run_torch_memory_profile_writes_cpu_artifacts(
   assert not (tune_dir / "memory_snapshot.json").exists()
   assert not (tune_dir / "memory_summary.txt").exists()
   assert ("run", tmp_path / "tune" / "run-123") in calls
+
+
+def test_run_torch_memory_profile_records_cuda_trace_by_default(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  calls = []
+
+  def fake_record_memory_history(**kwargs):
+    calls.append(("record", kwargs))
+
+  def fake_run_experiment(config, *, log):
+    calls.append(("run", config.run_dir))
+    log("trained")
+
+  monkeypatch.setattr("flm_train.tune.run_experiment", fake_run_experiment)
+  monkeypatch.setattr("flm_train.tune.torch.cuda.is_available", lambda: True)
+  monkeypatch.setattr("flm_train.tune.torch.cuda.synchronize", lambda: None)
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory.reset_peak_memory_stats", lambda: None
+  )
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory.reset_accumulated_memory_stats",
+    lambda: None,
+  )
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory._record_memory_history",
+    fake_record_memory_history,
+  )
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory.memory_stats_as_nested_dict",
+    lambda: {"allocated_bytes": {"all": {"peak": 12}}},
+  )
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory_summary",
+    lambda *, device: f"summary for {device}",
+  )
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory.memory_snapshot",
+    lambda *, include_traces: {"segments": [], "include_traces": include_traces},
+  )
+
+  run_torch_memory_profile(
+    ExperimentConfig(
+      name="tune",
+      run=RunConfig(id="run-123"),
+      loop=LoopConfig(device="cuda"),
+      output=OutputConfig(root_dir=tmp_path),
+    ),
+    log=lambda message: calls.append(("log", message)),
+  )
+
+  tune_dir = tmp_path / "tune" / "run-123" / "tune" / "memory"
+  assert (tune_dir / "memory_snapshot.json").is_file()
+  assert (tune_dir / "memory_summary.txt").read_text(encoding="utf-8") == (
+    "summary for cuda"
+  )
+  assert calls[0] == (
+    "record",
+    {
+      "clear_history": True,
+      "context": "all",
+      "enabled": "all",
+      "stacks": "all",
+    },
+  )
+  assert ("record", {"enabled": None}) in calls

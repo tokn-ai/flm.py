@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     default="memory",
     help="Profiler to run: memory, torch, nsys, all, or a comma-separated list.",
   )
+  parser.add_argument(
+    "--memory-trace",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Record detailed torch.cuda.memory allocation history.",
+  )
   parser.add_argument("--torch-trace", action="store_true")
   parser.add_argument(
     "--nsys-trace",
@@ -74,7 +80,7 @@ def run_from_args(args: argparse.Namespace) -> None:
   )
   profilers = parse_profilers(args.profiler)
   if "memory" in profilers:
-    run_torch_memory_profile(config, log=print)
+    run_torch_memory_profile(config, trace=args.memory_trace, log=print)
   if "torch" in profilers:
     run_torch_profile(config, export_trace=args.torch_trace, log=print)
   if "nsys" in profilers:
@@ -206,6 +212,7 @@ def run_torch_profile(
 def run_torch_memory_profile(
   config: ExperimentConfig,
   *,
+  trace: bool = True,
   log,
 ) -> Path:
   tune_dir = config.run_dir / "tune" / "memory"
@@ -215,11 +222,22 @@ def run_torch_memory_profile(
   if cuda_enabled:
     torch.cuda.memory.reset_peak_memory_stats()
     torch.cuda.memory.reset_accumulated_memory_stats()
+    if trace:
+      torch.cuda.memory._record_memory_history(
+        enabled="all",
+        context="all",
+        stacks="all",
+        clear_history=True,
+      )
     before_stats = torch.cuda.memory.memory_stats_as_nested_dict()
   else:
     before_stats = {}
 
-  run_experiment(config, log=log)
+  try:
+    run_experiment(config, log=log)
+  finally:
+    if cuda_enabled and trace:
+      torch.cuda.memory._record_memory_history(enabled=None)
 
   if cuda_enabled:
     torch.cuda.synchronize()
@@ -230,7 +248,7 @@ def run_torch_memory_profile(
     )
     _write_json(
       tune_dir / "memory_snapshot.json",
-      torch.cuda.memory.memory_snapshot(include_traces=False),
+      torch.cuda.memory.memory_snapshot(include_traces=trace),
     )
   else:
     after_stats = {}
@@ -248,6 +266,7 @@ def run_torch_memory_profile(
       "profiler": "memory",
       "run_dir": str(config.run_dir),
       "snapshot": str(tune_dir / "memory_snapshot.json") if cuda_enabled else None,
+      "trace": trace if cuda_enabled else False,
     },
   )
   log(f"tune=memory dir={tune_dir}")
