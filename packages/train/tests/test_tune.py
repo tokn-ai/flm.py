@@ -313,7 +313,9 @@ def test_run_torch_memory_profile_records_cuda_trace_by_default(
   )
   monkeypatch.setattr(
     "flm_train.tune.torch.cuda.memory._dump_snapshot",
-    lambda path: Path(path).write_bytes(b"memory-viz"),
+    lambda path: (
+      calls.append(("dump_snapshot", path)) or Path(path).write_bytes(b"memory-viz")
+    ),
   )
 
   run_torch_memory_profile(
@@ -336,6 +338,9 @@ def test_run_torch_memory_profile_records_cuda_trace_by_default(
   assert summary["memory_viz"] == "https://pytorch.org/memory_viz"
   assert summary["memory_viz_snapshot"] == str(tune_dir / "memory_snapshot.pickle")
   assert summary["memory_viz_snapshot_format"] == "pytorch_cuda_memory_viz_pickle"
+  assert calls.index(("dump_snapshot", str(tune_dir / "memory_snapshot.pickle"))) < (
+    calls.index(("record", {"enabled": None}))
+  )
   assert calls[0] == (
     "record",
     {
