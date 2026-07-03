@@ -113,8 +113,10 @@ def _validate_inputs(
     raise ValueError("targets must match hidden_states leading dimensions")
   if not hidden_states.is_cuda or not classifier_weight.is_cuda or not targets.is_cuda:
     raise RuntimeError("TileLang linear cross entropy requires CUDA tensors")
-  if hidden_states.dtype not in (torch.float16, torch.bfloat16):
-    raise TypeError("TileLang linear cross entropy supports float16 and bfloat16")
+  if hidden_states.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+    raise TypeError(
+      "TileLang linear cross entropy supports float16, bfloat16, and float32"
+    )
   if classifier_weight.dtype != hidden_states.dtype:
     raise TypeError("classifier_weight dtype must match hidden_states dtype")
   if targets.dtype != torch.long:

@@ -22,14 +22,15 @@ def test_tilelang_flash_attention_rejects_mismatched_shapes() -> None:
     tilelang_flash_attention(q, k, v)
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
-def test_tilelang_flash_attention_matches_torch_gradients() -> None:
+def test_tilelang_flash_attention_matches_torch_gradients(dtype: torch.dtype) -> None:
   pytest.importorskip("tilelang", reason="TileLang unavailable")
   torch.manual_seed(42)
-  q = torch.randn(1, 2, 4, 4, device="cuda", dtype=torch.float16)
-  k = torch.randn(1, 2, 4, 4, device="cuda", dtype=torch.float16)
-  v = torch.randn(1, 2, 4, 4, device="cuda", dtype=torch.float16)
-  grad = torch.randn(1, 4, 2, 4, device="cuda", dtype=torch.float16)
+  q = torch.randn(1, 2, 4, 4, device="cuda", dtype=dtype)
+  k = torch.randn(1, 2, 4, 4, device="cuda", dtype=dtype)
+  v = torch.randn(1, 2, 4, 4, device="cuda", dtype=dtype)
+  grad = torch.randn(1, 4, 2, 4, device="cuda", dtype=dtype)
 
   expected_q = q.detach().clone().requires_grad_()
   expected_k = k.detach().clone().requires_grad_()

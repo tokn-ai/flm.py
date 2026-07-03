@@ -98,8 +98,10 @@ def _validate_inputs(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> None:
     raise ValueError("q, k, and v must have shape (batch, heads, seq, head_dim)")
   if not q.is_cuda:
     raise RuntimeError("TileLang attention backend requires NVIDIA CUDA tensors")
-  if q.dtype not in (torch.float16, torch.bfloat16):
-    raise TypeError("TileLang attention backend supports float16 and bfloat16")
+  if q.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+    raise TypeError(
+      "TileLang attention backend supports float16, bfloat16, and float32"
+    )
   if q.shape[-1] > 256:
     raise ValueError("TileLang attention backend currently supports head_dim <= 256")
   if q.shape[-1] % 2 != 0:

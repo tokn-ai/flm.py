@@ -67,7 +67,10 @@ def test_cut_cross_entropy_matches_cross_entropy_when_available() -> None:
   )
 
 
-def test_tilelang_linear_cross_entropy_matches_cross_entropy_when_available() -> None:
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_tilelang_linear_cross_entropy_matches_cross_entropy_when_available(
+  dtype: torch.dtype,
+) -> None:
   pytest.importorskip("tilelang", reason="TileLang unavailable")
   if not torch.cuda.is_available():
     pytest.skip("TileLang CCE requires CUDA")
@@ -83,7 +86,7 @@ def test_tilelang_linear_cross_entropy_matches_cross_entropy_when_available() ->
       ),
     ),
     device=torch.device("cuda"),
-    dtype=torch.float16,
+    dtype=dtype,
     atol=3e-2,
     rtol=3e-2,
   )
