@@ -20,7 +20,10 @@ from flm_modules.hyper import (
   DeepSeekV4HyperHead,
   UnweightedRMSNorm,
 )
-from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attention
+from flm_modules.kernels.tilelang import (
+  tilelang_flash_attention,
+  tilelang_linear_cross_entropy,
+)
 from flm_modules.linear import GroupedLinear
 from flm_modules.losses import LossBackend, language_model_loss, linear_cross_entropy
 from flm_modules.moe import (
@@ -66,4 +69,5 @@ __all__ = [
   "configure_adamw",
   "scaled_dot_product_attention",
   "tilelang_flash_attention",
+  "tilelang_linear_cross_entropy",
 ]

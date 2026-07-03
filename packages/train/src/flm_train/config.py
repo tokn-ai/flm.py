@@ -421,7 +421,11 @@ def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
 def _parse_model(value: dict[str, Any]) -> ModelConfig:
   kind = value.get("kind", "reference")
   loss_backend = str(value.get("loss_backend", "cross_entropy"))
-  if loss_backend not in {"cross_entropy", "linear_cross_entropy"}:
+  if loss_backend not in {
+    "cross_entropy",
+    "linear_cross_entropy",
+    "tilelang_linear_cross_entropy",
+  }:
     raise ValueError(f"unsupported model.loss_backend: {loss_backend}")
   loss_chunk_size = int(value.get("loss_chunk_size", 512))
   if loss_chunk_size <= 0:

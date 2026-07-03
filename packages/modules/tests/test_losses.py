@@ -67,6 +67,28 @@ def test_cut_cross_entropy_matches_cross_entropy_when_available() -> None:
   )
 
 
+def test_tilelang_linear_cross_entropy_matches_cross_entropy_when_available() -> None:
+  pytest.importorskip("tilelang", reason="TileLang unavailable")
+  if not torch.cuda.is_available():
+    pytest.skip("TileLang CCE requires CUDA")
+  from flm_modules.kernels.tilelang import tilelang_linear_cross_entropy
+
+  _assert_matches_cross_entropy(
+    LossCase(
+      name="tilelang_linear_cross_entropy",
+      loss_fn=lambda hidden, weight, targets: tilelang_linear_cross_entropy(
+        hidden,
+        weight,
+        targets,
+      ),
+    ),
+    device=torch.device("cuda"),
+    dtype=torch.float16,
+    atol=3e-2,
+    rtol=3e-2,
+  )
+
+
 def _assert_matches_cross_entropy(
   case: LossCase,
   *,

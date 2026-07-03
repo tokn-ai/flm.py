@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+LossBackend = Literal[
+  "cross_entropy",
+  "linear_cross_entropy",
+  "tilelang_linear_cross_entropy",
+]
+
 
 @dataclass(frozen=True)
 class DataConfig:
@@ -25,7 +31,7 @@ class ReferenceModelConfig:
   n_layers: int = 2
   n_heads: int = 4
   d_ff: int | None = None
-  loss_backend: Literal["cross_entropy", "linear_cross_entropy"] = "cross_entropy"
+  loss_backend: LossBackend = "cross_entropy"
   loss_chunk_size: int = 512
 
 
@@ -41,7 +47,7 @@ class DSTinyModelConfig:
   qk_nope_head_dim: int = 16
   qk_rope_head_dim: int = 16
   v_head_dim: int = 32
-  loss_backend: Literal["cross_entropy", "linear_cross_entropy"] = "cross_entropy"
+  loss_backend: LossBackend = "cross_entropy"
   loss_chunk_size: int = 512
 
 
@@ -73,7 +79,7 @@ class DeepSeekV4ModelConfig:
   n_group: int = 2
   topk_group: int = 1
   dense_layers: int = 1
-  loss_backend: Literal["cross_entropy", "linear_cross_entropy"] = "cross_entropy"
+  loss_backend: LossBackend = "cross_entropy"
   loss_chunk_size: int = 512
 
 

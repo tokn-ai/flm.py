@@ -7,7 +7,11 @@ from typing import Literal
 import torch
 from torch.nn import functional as F
 
-LossBackend = Literal["cross_entropy", "linear_cross_entropy"]
+LossBackend = Literal[
+  "cross_entropy",
+  "linear_cross_entropy",
+  "tilelang_linear_cross_entropy",
+]
 
 
 def language_model_loss(
@@ -30,6 +34,14 @@ def language_model_loss(
       classifier_weight=classifier_weight,
       targets=targets,
       chunk_size=chunk_size,
+    )
+  if backend == "tilelang_linear_cross_entropy":
+    from flm_modules.kernels.tilelang import tilelang_linear_cross_entropy
+
+    return tilelang_linear_cross_entropy(
+      hidden_states,
+      classifier_weight,
+      targets,
     )
   raise ValueError(f"unknown loss backend: {backend}")
 
