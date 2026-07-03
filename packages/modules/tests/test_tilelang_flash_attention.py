@@ -1,3 +1,6 @@
+import inspect
+
+import flm_modules.kernels.tilelang.flash_attention as tilelang_attention
 import pytest
 import torch
 from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attention
@@ -20,6 +23,18 @@ def test_tilelang_flash_attention_rejects_mismatched_shapes() -> None:
 
   with pytest.raises(ValueError, match="identical shapes"):
     tilelang_flash_attention(q, k, v)
+
+
+def test_tilelang_flash_attention_backward_uses_tilelang_kernels() -> None:
+  assert hasattr(tilelang_attention, "_get_tilelang_dq_kernel")
+  assert hasattr(tilelang_attention, "_get_tilelang_dkv_kernel")
+
+
+def test_tilelang_flash_attention_backward_uses_saved_lse() -> None:
+  source = inspect.getsource(tilelang_attention._get_tilelang_dkv_kernel)
+
+  assert "lse[batch, head, row]" in source
+  assert "inner_col" not in source
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
