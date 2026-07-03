@@ -31,6 +31,7 @@ DEFAULT_EXCLUDED_DIRS = frozenset(
     "__pycache__",
     "build",
     "dist",
+    "runs",
   }
 )
 

@@ -17,6 +17,7 @@ from flm_train.config import (
   load_experiment_config,
   parse_experiment_config,
 )
+from flm_train.data import publish_repo_source_dataset
 from flm_train.runner import run_experiment
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import (
@@ -34,7 +35,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
     {
       "name": "tiny",
       "data": {
-        "repo_root": "src",
+        "dataset_root": "datasets/src",
         "encoding_name": "cl100k_base",
         "seq_len": 16,
       },
@@ -89,14 +90,15 @@ def test_parse_experiment_config_derives_train_config() -> None:
           "tags": ["smoke", "train"],
           "group": "group-a",
           "job_type": "pretrain",
-        }
+        },
       ],
     }
   )
 
   train_config = config.to_train_config()
 
-  assert train_config.data.repo_root == Path("src")
+  assert train_config.data.kind == "token_dataset"
+  assert train_config.data.dataset_root == Path("datasets/src")
   assert train_config.data.seq_len == 16
   assert train_config.loop.batch_size == 2
   assert train_config.loop.steps == 5
@@ -136,6 +138,30 @@ def test_parse_experiment_config_rejects_unknown_keys() -> None:
     parse_experiment_config({"name": "bad", "typo": True})
 
 
+def test_parse_experiment_config_rejects_live_repo_data() -> None:
+  with pytest.raises(ValueError, match="unsupported data.kind: repo_sources"):
+    parse_experiment_config(
+      {
+        "name": "bad",
+        "data": {
+          "kind": "repo_sources",
+        },
+      }
+    )
+
+
+def test_parse_experiment_config_rejects_unknown_data_keys() -> None:
+  with pytest.raises(ValueError, match="unknown data config keys"):
+    parse_experiment_config(
+      {
+        "name": "bad",
+        "data": {
+          "repo_root": ".",
+        },
+      }
+    )
+
+
 def test_load_experiment_config_reads_yaml(tmp_path: Path) -> None:
   config_path = tmp_path / "experiment.yaml"
   config_path.write_text(
@@ -157,6 +183,26 @@ loop:
   assert config.data.seq_len == 12
   assert config.model.d_model == 24
   assert config.loop.steps == 2
+
+
+def test_parse_experiment_config_reads_token_dataset_config() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "prepared",
+      "data": {
+        "kind": "token_dataset",
+        "dataset_root": ".cache/data/repo_sources",
+        "version": "latest",
+        "encoding_name": "cl100k_base",
+        "seq_len": 512,
+      },
+    }
+  )
+
+  assert config.data.kind == "token_dataset"
+  assert config.data.dataset_root == Path(".cache/data/repo_sources")
+  assert config.data.version == "latest"
+  assert config.data.seq_len == 512
 
 
 def test_parse_args_accepts_cli_overrides() -> None:
@@ -266,18 +312,13 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
 
 
 def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
-  repo_root = tmp_path / "repo"
+  dataset_root = publish_fixture_dataset(tmp_path)
   run_dir = tmp_path / "run"
-  repo_root.mkdir()
-  (repo_root / "model.py").write_text(
-    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
-    encoding="utf-8",
-  )
 
   result = run_experiment(
     ExperimentConfig(
       name="artifact_test",
-      data=DataConfig(repo_root=repo_root, seq_len=8),
+      data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
       output=OutputConfig(run_dir=run_dir),
@@ -304,20 +345,49 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   assert len(result_payload["losses"]) == 1
 
 
-def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
+def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
   repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
   run_dir = tmp_path / "run"
-  sink_dir = tmp_path / "sink"
   repo_root.mkdir()
   (repo_root / "model.py").write_text(
-    "\n".join(f"def custom_{i}(): return {i}" for i in range(80)),
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
+  )
+  published = publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
   )
 
   run_experiment(
     ExperimentConfig(
+      name="resolved_dataset_test",
+      data=DataConfig(
+        kind="token_dataset",
+        dataset_root=dataset_root,
+        version="latest",
+        seq_len=8,
+      ),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=1),
+      output=OutputConfig(run_dir=run_dir),
+    )
+  )
+
+  resolved = (run_dir / "config.resolved.yaml").read_text(encoding="utf-8")
+  assert "version: latest" in resolved
+  assert f"resolved_version: {published.version}" in resolved
+
+
+def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
+  dataset_root = publish_fixture_dataset(tmp_path)
+  run_dir = tmp_path / "run"
+  sink_dir = tmp_path / "sink"
+
+  run_experiment(
+    ExperimentConfig(
       name="custom_sink_test",
-      data=DataConfig(repo_root=repo_root, seq_len=8),
+      data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
       output=OutputConfig(run_dir=run_dir),
@@ -424,6 +494,18 @@ def test_wandb_sink_logs_run_data(tmp_path: Path) -> None:
   assert module.logs[-2] == ({"train/loss": 2.0}, 4)
   assert module.artifacts[0].files == [str(tmp_path / "artifact.txt")]
   assert module.run.finished
+
+
+def publish_fixture_dataset(tmp_path: Path) -> Path:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  publish_repo_source_dataset(repo_root=repo_root, dataset_root=dataset_root)
+  return dataset_root
 
 
 class FakeSummaryWriter:

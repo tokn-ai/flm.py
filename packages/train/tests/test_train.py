@@ -1,8 +1,8 @@
-import json
 from pathlib import Path
 
-from flm_train.data import build_repo_source_dataset
-from flm_train.presets import train_on_repo_sources
+from flm_train.data import publish_repo_source_dataset
+from flm_train.data_cli import parse_args, run_from_args
+from flm_train.presets import train_language_model
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
   DataConfig,
@@ -21,6 +21,8 @@ def train_config(
   model: ModelConfig | None = None,
   steps: int = 1,
 ) -> TrainConfig:
+  dataset_root = repo_root / ".cache" / "data" / "repo_sources"
+  publish_repo_source_dataset(repo_root=repo_root, dataset_root=dataset_root)
   model_config = model
   if model_config is None:
     model_config = ReferenceModelConfig(
@@ -30,19 +32,19 @@ def train_config(
       d_ff=16,
     )
   return TrainConfig(
-    data=DataConfig(repo_root=repo_root, seq_len=8),
+    data=DataConfig(dataset_root=dataset_root, seq_len=8),
     model=model_config,
     loop=LoopConfig(batch_size=2, steps=steps),
   )
 
 
-def test_train_on_repo_sources_runs_one_step(tmp_path: Path) -> None:
+def test_train_language_model_runs_one_step(tmp_path: Path) -> None:
   (tmp_path / "model.py").write_text(
     "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
   )
 
-  result = train_on_repo_sources(
+  result = train_language_model(
     train_config(
       repo_root=tmp_path,
     )
@@ -54,36 +56,93 @@ def test_train_on_repo_sources_runs_one_step(tmp_path: Path) -> None:
   assert result.losses[0] > 0
 
 
-def test_repo_source_dataset_caches_tokens(tmp_path: Path) -> None:
-  (tmp_path / "model.py").write_text(
+def test_publish_repo_source_dataset_writes_versioned_artifacts(tmp_path: Path) -> None:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
     "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
   )
 
-  bundle = build_repo_source_dataset(train_config(repo_root=tmp_path))
+  published = publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+  )
 
-  cache_dir = tmp_path / ".cache" / "data"
-  token_cache_files = list(cache_dir.glob("repo_sources-*.npy"))
-  metadata_cache_files = list(cache_dir.glob("repo_sources-*.json"))
-  assert len(token_cache_files) == 1
-  assert len(metadata_cache_files) == 1
-  metadata = json.loads(metadata_cache_files[0].read_text(encoding="utf-8"))
-  assert metadata["tokens_file"] == token_cache_files[0].name
-  assert metadata["dtype"] == "int32"
-  assert metadata["token_count"] == bundle.token_count
-  assert metadata["file_count"] == bundle.file_count
-  assert bundle.file_count == 1
-  assert bundle.token_count > 0
+  assert (dataset_root / "latest.json").is_file()
+  assert published.manifest_path.is_file()
+  assert published.tokens_path.is_file()
+  assert (published.manifest_path.parent / "files.jsonl").is_file()
+  assert published.file_count == 1
+  assert published.token_count > 0
 
 
-def test_train_on_repo_sources_emits_step_metrics(tmp_path: Path) -> None:
+def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) -> None:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"def published_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  published = publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+  )
+
+  result = train_language_model(
+    TrainConfig(
+      data=DataConfig(
+        kind="token_dataset",
+        dataset_root=dataset_root,
+        version="latest",
+        encoding_name="cl100k_base",
+        seq_len=8,
+      ),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=1),
+    )
+  )
+
+  assert published.version
+  assert result.file_count == 1
+  assert result.token_count == published.token_count
+  assert len(result.losses) == 1
+
+
+def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text("x = 1\n", encoding="utf-8")
+
+  args = parse_args(
+    [
+      "repo-sources",
+      "publish",
+      "--repo-root",
+      str(repo_root),
+      "--dataset-root",
+      str(dataset_root),
+    ]
+  )
+  run_from_args(args)
+
+  output = capsys.readouterr().out
+  assert "version=" in output
+  assert "tokens=" in output
+  assert (dataset_root / "latest.json").is_file()
+
+
+def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   (tmp_path / "model.py").write_text(
     "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
   )
   step_metrics: list[TrainStepMetrics] = []
 
-  result = train_on_repo_sources(
+  result = train_language_model(
     train_config(
       repo_root=tmp_path,
       steps=2,
@@ -103,13 +162,13 @@ def test_train_on_repo_sources_emits_step_metrics(tmp_path: Path) -> None:
   assert "train/tokens_seen" in step_metrics[0].to_log_dict()
 
 
-def test_train_on_repo_sources_smoke_trains_deepseek_v4(tmp_path: Path) -> None:
+def test_train_language_model_smoke_trains_deepseek_v4(tmp_path: Path) -> None:
   (tmp_path / "model.py").write_text(
     "\n".join(f"def g_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
   )
 
-  result = train_on_repo_sources(
+  result = train_language_model(
     train_config(
       repo_root=tmp_path,
       model=DeepSeekV4ModelConfig(
@@ -138,13 +197,13 @@ def test_train_on_repo_sources_smoke_trains_deepseek_v4(tmp_path: Path) -> None:
   assert result.losses[0] > 0
 
 
-def test_train_on_repo_sources_smoke_trains_ds_tiny(tmp_path: Path) -> None:
+def test_train_language_model_smoke_trains_ds_tiny(tmp_path: Path) -> None:
   (tmp_path / "model.py").write_text(
     "\n".join(f"def tiny_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
   )
 
-  result = train_on_repo_sources(
+  result = train_language_model(
     train_config(
       repo_root=tmp_path,
       model=DSTinyModelConfig(
@@ -167,7 +226,7 @@ def test_train_on_repo_sources_smoke_trains_ds_tiny(tmp_path: Path) -> None:
   assert result.losses[0] > 0
 
 
-def test_train_on_repo_sources_smoke_trains_compressed_deepseek_v4(
+def test_train_language_model_smoke_trains_compressed_deepseek_v4(
   tmp_path: Path,
 ) -> None:
   (tmp_path / "model.py").write_text(
@@ -175,7 +234,7 @@ def test_train_on_repo_sources_smoke_trains_compressed_deepseek_v4(
     encoding="utf-8",
   )
 
-  result = train_on_repo_sources(
+  result = train_language_model(
     train_config(
       repo_root=tmp_path,
       model=DeepSeekV4ModelConfig(

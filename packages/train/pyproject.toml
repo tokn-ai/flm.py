@@ -23,6 +23,7 @@ flm-llm = { workspace = true }
 flm-modules = { workspace = true }
 
 [project.scripts]
+flm-data = "flm_train.data_cli:main"
 flm-train-experiment = "flm_train.cli:main"
 
 [build-system]

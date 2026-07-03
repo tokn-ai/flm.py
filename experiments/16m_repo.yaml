@@ -1,8 +1,9 @@
 name: 16m_repo_reference
 
 data:
-  kind: repo_sources
-  repo_root: .
+  kind: token_dataset
+  dataset_root: .cache/data/repo_sources
+  version: latest
   encoding_name: cl100k_base
   seq_len: 512
 

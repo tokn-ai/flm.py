@@ -93,7 +93,7 @@ class ExperimentConfig:
     return Path("runs") / self.name
 
   def to_train_config(self) -> TrainConfig:
-    if self.data.kind != "repo_sources":
+    if self.data.kind != "token_dataset":
       raise ValueError(f"unsupported data.kind: {self.data.kind}")
     if self.optimizer.kind != "adamw":
       raise ValueError(f"unsupported optimizer.kind: {self.optimizer.kind}")
@@ -146,13 +146,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
 
   return ExperimentConfig(
     name=str(raw["name"]),
-    data=DataConfig(
-      kind=data.get("kind", "repo_sources"),
-      repo_root=Path(data.get("repo_root", ".")),
-      encoding_name=str(data.get("encoding_name", "cl100k_base")),
-      seq_len=int(data.get("seq_len", 128)),
-      cache_dir=_optional_path(data.get("cache_dir", ".cache/data")),
-    ),
+    data=_parse_data(data),
     model=_parse_model(model),
     optimizer=OptimizerConfig(
       kind=optimizer.get("kind", "adamw"),
@@ -236,6 +230,31 @@ def _optional_path(value: Any) -> Path | None:
   if value is None:
     return None
   return Path(value)
+
+
+def _parse_data(value: dict[str, Any]) -> DataConfig:
+  allowed = {
+    "kind",
+    "encoding_name",
+    "seq_len",
+    "dataset_root",
+    "version",
+    "resolved_version",
+  }
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown data config keys: {sorted(unknown)}")
+  kind = value.get("kind", "token_dataset")
+  if kind != "token_dataset":
+    raise ValueError(f"unsupported data.kind: {kind}")
+  return DataConfig(
+    kind=kind,
+    encoding_name=str(value.get("encoding_name", "cl100k_base")),
+    seq_len=int(value.get("seq_len", 128)),
+    dataset_root=Path(value.get("dataset_root", ".cache/data/repo_sources")),
+    version=str(value.get("version", "latest")),
+    resolved_version=value.get("resolved_version"),
+  )
 
 
 def _parse_model(value: dict[str, Any]) -> ModelConfig:

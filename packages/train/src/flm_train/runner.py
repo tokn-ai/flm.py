@@ -6,7 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from flm_train.config import ExperimentConfig
-from flm_train.presets import train_on_repo_sources
+from flm_train.data import resolve_data_config
+from flm_train.presets import train_language_model
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import RunContext, build_run_sink
 from flm_train.trainer import TrainStepMetrics
@@ -23,6 +24,7 @@ class ExperimentRunner:
 
   def run(self) -> TrainingResult:
     apply_secret_env(load_secret_env(self.config.secrets.env_file))
+    self.config = self.resolved_config()
     sink = build_run_sink(self.config)
     context = RunContext(run_dir=self.run_dir)
     self._log(f"run_dir={self.run_dir}")
@@ -43,7 +45,19 @@ class ExperimentRunner:
     *,
     on_step,
   ) -> TrainingResult:
-    return train_on_repo_sources(self.config.to_train_config(), on_step=on_step)
+    return train_language_model(self.config.to_train_config(), on_step=on_step)
+
+  def resolved_config(self) -> ExperimentConfig:
+    return ExperimentConfig(
+      name=self.config.name,
+      data=resolve_data_config(self.config.data),
+      model=self.config.model,
+      optimizer=self.config.optimizer,
+      loop=self.config.loop,
+      secrets=self.config.secrets,
+      output=self.config.output,
+      sinks=self.config.sinks,
+    )
 
   def report_step(self, metrics: TrainStepMetrics, sink) -> None:
     sink.log_metrics(metrics.to_log_dict(), step=metrics.step)

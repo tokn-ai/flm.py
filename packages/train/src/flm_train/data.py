@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from flm_datasets import (
@@ -17,9 +19,9 @@ from flm_datasets import (
 )
 from torch.utils.data import DataLoader
 
-from flm_train.types import TrainConfig
+from flm_train.types import DataConfig, TrainConfig
 
-_REPO_SOURCE_CACHE_VERSION = 1
+_PUBLISHED_DATASET_VERSION = 1
 _TOKEN_CACHE_DTYPE = "int32"
 
 
@@ -31,32 +33,27 @@ class RepoSourceDatasetBundle:
 
 
 @dataclass(frozen=True)
-class RepoSourceCachePaths:
-  tokens: Path
-  metadata: Path
+class PublishedDatasetInfo:
+  dataset_root: Path
+  version: str
+  manifest_path: Path
+  tokens_path: Path
+  token_count: int
+  file_count: int
 
 
-def build_repo_source_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
-  corpus_config = SourceCorpusConfig(root=config.data.repo_root)
-  source_files = iter_source_files(corpus_config)
-  file_count = len(source_files)
-  cache_paths = _repo_source_cache_paths(
-    root=config.data.repo_root,
-    cache_dir=config.data.cache_dir,
-    encoding_name=config.data.encoding_name,
-    source_files=source_files,
-  )
-  tokens = _read_token_cache(cache_paths)
-  if tokens is None:
-    corpus = read_source_corpus(corpus_config, paths=source_files)
-    tokens = encode_text(corpus, encoding_name=config.data.encoding_name)
-    _write_token_cache(
-      cache_paths,
-      tokens=tokens,
-      encoding_name=config.data.encoding_name,
-      file_count=file_count,
-    )
-  dataset = TokenDataset(tokens, seq_len=config.data.seq_len)
+def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
+  if config.data.kind == "token_dataset":
+    return build_token_dataset(config)
+  raise ValueError(f"unsupported data.kind: {config.data.kind}")
+
+
+def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
+  resolved_data = resolve_data_config(config.data)
+  metadata = _load_dataset_manifest(resolved_data)
+  token_array = _load_dataset_tokens(resolved_data, metadata)
+  tokens = token_array.astype(np.int64).tolist()
+  dataset = TokenDataset(tokens, seq_len=resolved_data.seq_len)
   dataloader = DataLoader(
     dataset,
     batch_size=config.loop.batch_size,
@@ -65,117 +62,178 @@ def build_repo_source_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   )
   return RepoSourceDatasetBundle(
     dataloader=dataloader,
-    token_count=len(tokens),
-    file_count=file_count,
+    token_count=int(metadata["token_count"]),
+    file_count=int(metadata["file_count"]),
   )
 
 
-def _repo_source_cache_paths(
+def resolve_data_config(config: DataConfig) -> DataConfig:
+  if config.kind != "token_dataset":
+    return config
+  version = _resolve_dataset_version(config.dataset_root, config.version)
+  return DataConfig(
+    kind=config.kind,
+    encoding_name=config.encoding_name,
+    seq_len=config.seq_len,
+    dataset_root=config.dataset_root,
+    version=config.version,
+    resolved_version=version,
+  )
+
+
+def publish_repo_source_dataset(
   *,
-  root: Path,
-  cache_dir: Path | None,
-  encoding_name: str,
-  source_files: list[Path],
-) -> RepoSourceCachePaths | None:
-  if cache_dir is None:
-    return None
-  root = root.resolve()
-  resolved_cache_dir = cache_dir if cache_dir.is_absolute() else root / cache_dir
-  digest = _repo_source_cache_digest(
-    root=root,
+  repo_root: Path,
+  dataset_root: Path,
+  encoding_name: str = "cl100k_base",
+) -> PublishedDatasetInfo:
+  corpus_config = SourceCorpusConfig(root=repo_root)
+  source_files = iter_source_files(corpus_config)
+  root = repo_root.resolve()
+  file_records = _source_file_records(root=root, source_files=source_files)
+  version = _published_dataset_digest(
     encoding_name=encoding_name,
-    source_files=source_files,
+    file_records=file_records,
   )
-  stem = f"repo_sources-{digest}"
-  return RepoSourceCachePaths(
-    tokens=resolved_cache_dir / f"{stem}.npy",
-    metadata=resolved_cache_dir / f"{stem}.json",
+  version_dir = dataset_root / "versions" / version
+  tokens_path = version_dir / "tokens.npy"
+  manifest_path = version_dir / "manifest.json"
+  files_path = version_dir / "files.jsonl"
+
+  if not manifest_path.exists() or not tokens_path.exists() or not files_path.exists():
+    corpus = read_source_corpus(corpus_config, paths=source_files)
+    tokens = encode_text(corpus, encoding_name=encoding_name)
+    version_dir.mkdir(parents=True, exist_ok=True)
+    np.save(tokens_path, np.asarray(tokens, dtype=np.int32))
+    files_path.write_text(
+      "\n".join(json.dumps(record, sort_keys=True) for record in file_records) + "\n",
+      encoding="utf-8",
+    )
+    _write_json(
+      manifest_path,
+      {
+        "version": version,
+        "format_version": _PUBLISHED_DATASET_VERSION,
+        "kind": "repo_sources",
+        "repo_root": str(root),
+        "encoding_name": encoding_name,
+        "dtype": _TOKEN_CACHE_DTYPE,
+        "token_count": len(tokens),
+        "file_count": len(source_files),
+        "tokens_file": tokens_path.name,
+        "files_file": files_path.name,
+        "created_at": datetime.now(UTC).isoformat(),
+      },
+    )
+  manifest = _read_json(manifest_path)
+  _write_json(
+    dataset_root / "latest.json",
+    {
+      "version": version,
+      "manifest": f"versions/{version}/manifest.json",
+      "updated_at": datetime.now(UTC).isoformat(),
+    },
+  )
+  return PublishedDatasetInfo(
+    dataset_root=dataset_root,
+    version=version,
+    manifest_path=manifest_path,
+    tokens_path=tokens_path,
+    token_count=int(manifest["token_count"]),
+    file_count=int(manifest["file_count"]),
   )
 
 
-def _repo_source_cache_digest(
+def _source_file_records(
   *,
   root: Path,
-  encoding_name: str,
   source_files: list[Path],
+) -> list[dict[str, int | str]]:
+  return [
+    {
+      "path": path.relative_to(root).as_posix(),
+      "size": stat.st_size,
+      "mtime_ns": stat.st_mtime_ns,
+    }
+    for path in source_files
+    for stat in [path.stat()]
+  ]
+
+
+def _published_dataset_digest(
+  *,
+  encoding_name: str,
+  file_records: list[dict[str, int | str]],
 ) -> str:
   manifest = {
-    "version": _REPO_SOURCE_CACHE_VERSION,
+    "format_version": _PUBLISHED_DATASET_VERSION,
     "encoding_name": encoding_name,
-    "files": [
-      {
-        "path": path.relative_to(root).as_posix(),
-        "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-      }
-      for path in source_files
-      for stat in [path.stat()]
-    ],
+    "files": file_records,
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _read_token_cache(paths: RepoSourceCachePaths | None) -> list[int] | None:
-  if paths is None or not paths.tokens.exists() or not paths.metadata.exists():
-    return None
-  try:
-    metadata = json.loads(paths.metadata.read_text(encoding="utf-8"))
-  except json.JSONDecodeError:
-    return None
-  if not _is_token_cache_metadata(metadata):
-    return None
-  if metadata["tokens_file"] != paths.tokens.name:
-    return None
-  try:
-    token_array = np.load(paths.tokens, allow_pickle=False)
-  except ValueError:
-    return None
-  if token_array.dtype != np.dtype(_TOKEN_CACHE_DTYPE):
-    return None
-  if token_array.ndim != 1:
-    return None
-  if int(metadata["token_count"]) != int(token_array.shape[0]):
-    return None
-  return token_array.astype(np.int64).tolist()
+def _resolve_dataset_version(dataset_root: Path, version: str) -> str:
+  if version != "latest":
+    return version
+  latest_path = dataset_root / "latest.json"
+  latest = _read_json(latest_path)
+  resolved_version = latest.get("version")
+  if not isinstance(resolved_version, str) or not resolved_version:
+    raise ValueError(f"invalid dataset latest pointer: {latest_path}")
+  return resolved_version
 
 
-def _write_token_cache(
-  paths: RepoSourceCachePaths | None,
-  *,
-  tokens: list[int],
-  encoding_name: str,
-  file_count: int,
-) -> None:
-  if paths is None:
-    return
-  paths.tokens.parent.mkdir(parents=True, exist_ok=True)
-  token_array = np.asarray(tokens, dtype=np.int32)
-  np.save(paths.tokens, token_array)
-  paths.metadata.write_text(
-    json.dumps(
-      {
-        "version": _REPO_SOURCE_CACHE_VERSION,
-        "encoding_name": encoding_name,
-        "dtype": _TOKEN_CACHE_DTYPE,
-        "token_count": int(token_array.shape[0]),
-        "file_count": file_count,
-        "tokens_file": paths.tokens.name,
-      },
-      indent=2,
-      sort_keys=True,
-    )
-    + "\n",
-    encoding="utf-8",
+def _load_dataset_manifest(config: DataConfig) -> dict[str, Any]:
+  resolved_version = config.resolved_version or _resolve_dataset_version(
+    config.dataset_root,
+    config.version,
   )
+  manifest_path = config.dataset_root / "versions" / resolved_version / "manifest.json"
+  manifest = _read_json(manifest_path)
+  if manifest.get("format_version") != _PUBLISHED_DATASET_VERSION:
+    raise ValueError(f"unsupported dataset format: {manifest_path}")
+  if manifest.get("dtype") != _TOKEN_CACHE_DTYPE:
+    raise ValueError(f"unsupported dataset dtype: {manifest_path}")
+  if manifest.get("encoding_name") != config.encoding_name:
+    raise ValueError(
+      f"dataset encoding {manifest.get('encoding_name')} does not match "
+      f"config encoding {config.encoding_name}"
+    )
+  if not isinstance(manifest.get("tokens_file"), str):
+    raise ValueError(f"invalid dataset manifest: {manifest_path}")
+  return manifest
 
 
-def _is_token_cache_metadata(metadata: object) -> bool:
-  return (
-    isinstance(metadata, dict)
-    and metadata.get("version") == _REPO_SOURCE_CACHE_VERSION
-    and metadata.get("dtype") == _TOKEN_CACHE_DTYPE
-    and isinstance(metadata.get("token_count"), int)
-    and isinstance(metadata.get("file_count"), int)
-    and isinstance(metadata.get("tokens_file"), str)
+def _load_dataset_tokens(config: DataConfig, manifest: dict[str, Any]) -> np.ndarray:
+  resolved_version = config.resolved_version or _resolve_dataset_version(
+    config.dataset_root,
+    config.version,
+  )
+  tokens_path = (
+    config.dataset_root / "versions" / resolved_version / str(manifest["tokens_file"])
+  )
+  token_array = np.load(tokens_path, allow_pickle=False)
+  if token_array.dtype != np.dtype(_TOKEN_CACHE_DTYPE):
+    raise ValueError(f"unsupported token dtype: {tokens_path}")
+  if token_array.ndim != 1:
+    raise ValueError(f"token dataset must be a 1D array: {tokens_path}")
+  if int(manifest["token_count"]) != int(token_array.shape[0]):
+    raise ValueError(f"token count mismatch: {tokens_path}")
+  return token_array
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+  payload = json.loads(path.read_text(encoding="utf-8"))
+  if not isinstance(payload, dict):
+    raise ValueError(f"expected JSON object: {path}")
+  return payload
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
   )

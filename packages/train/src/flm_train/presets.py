@@ -8,20 +8,20 @@ import torch
 from flm_datasets import get_tokenizer
 from flm_modules import configure_adamw
 
-from flm_train.data import build_repo_source_dataset
+from flm_train.data import build_training_dataset
 from flm_train.models import build_model
 from flm_train.trainer import LanguageModelTrainer, TrainStepMetrics
 from flm_train.types import TrainConfig, TrainingResult
 
 
-def train_on_repo_sources(
+def train_language_model(
   config: TrainConfig,
   *,
   on_step: Callable[[TrainStepMetrics], None] | None = None,
 ) -> TrainingResult:
   torch.manual_seed(config.loop.seed)
 
-  dataset_bundle = build_repo_source_dataset(config)
+  dataset_bundle = build_training_dataset(config)
   encoding = get_tokenizer(config.data.encoding_name)
   model = build_model(
     config,

@@ -63,6 +63,18 @@ For token and array caches:
 - only use `.pt` for model checkpoints when the checkpoint format is
   intentionally part of the training/checkpointing design.
 
+Repo source data is a publishing input, not a training-time `DataConfig` kind.
+Publish a versioned token dataset first:
+
+```sh
+uv run flm-data repo-sources publish \
+  --repo-root . \
+  --dataset-root .cache/data/repo_sources
+```
+
+Experiments train from `kind: token_dataset` with `version: latest` or a pinned
+version. Resolved run configs must record the concrete `resolved_version`.
+
 ## Blog
 
 Day-log posts live under `blog/`, named `YYYYMMDD-NN-slug.md` where
