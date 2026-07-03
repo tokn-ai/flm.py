@@ -136,7 +136,7 @@ def result_path(run_dir: Path) -> Path:
 def resolve_run_config(experiment_name: str, run: RunConfig) -> RunConfig:
   run_id = run.id or generate_run_id()
   run_name = run.name or generate_run_name(experiment_name)
-  return RunConfig(id=run_id, name=run_name, group=run.group)
+  return RunConfig(id=run_id, name=run_name, group=run.group or experiment_name)
 
 
 def generate_run_id() -> str:

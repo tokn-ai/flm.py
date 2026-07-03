@@ -30,7 +30,7 @@ class SecretsConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-  run_dir: Path | None = None
+  root_dir: Path = Path("runs")
 
 
 @dataclass(frozen=True)
@@ -109,11 +109,9 @@ class ExperimentConfig:
 
   @property
   def run_dir(self) -> Path:
-    if self.output.run_dir is not None:
-      return self.output.run_dir
     if self.run.id is None:
-      return Path("runs") / self.name
-    return Path("runs") / self.name / self.run.id
+      return self.output.root_dir / self.name
+    return self.output.root_dir / self.name / self.run.id
 
   def to_train_config(self) -> TrainConfig:
     if self.data.kind != "token_dataset":
@@ -134,7 +132,7 @@ class ExperimentConfig:
 class ExperimentOverrides:
   device: str | None = None
   steps: int | None = None
-  run_dir: Path | None = None
+  root_dir: Path | None = None
   seed: int | None = None
 
 
@@ -199,9 +197,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     secrets=SecretsConfig(
       env_file=_optional_path(secrets.get("env_file", ".secret")),
     ),
-    output=OutputConfig(
-      run_dir=Path(output["run_dir"]) if "run_dir" in output else None,
-    ),
+    output=_parse_output(output),
     sinks=_parse_sinks(raw.get("sinks")),
   )
 
@@ -227,8 +223,8 @@ def apply_overrides(
     run=config.run,
     secrets=config.secrets,
     output=config.output
-    if overrides.run_dir is None
-    else OutputConfig(run_dir=overrides.run_dir),
+    if overrides.root_dir is None
+    else OutputConfig(root_dir=overrides.root_dir),
     sinks=config.sinks,
   )
 
@@ -363,6 +359,16 @@ def _parse_run(value: dict[str, Any]) -> RunConfig:
     id=_optional_str(value.get("id")),
     name=_optional_str(value.get("name")),
     group=_optional_str(value.get("group")),
+  )
+
+
+def _parse_output(value: dict[str, Any]) -> OutputConfig:
+  allowed = {"root_dir"}
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown output config keys: {sorted(unknown)}")
+  return OutputConfig(
+    root_dir=Path(value.get("root_dir", "runs")),
   )
 
 

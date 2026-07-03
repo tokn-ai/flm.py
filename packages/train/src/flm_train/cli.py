@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument("config", type=Path)
   parser.add_argument("--device", default=None)
   parser.add_argument("--steps", type=int, default=None)
-  parser.add_argument("--run-dir", type=Path, default=None)
+  parser.add_argument("--root-dir", type=Path, default=None)
   parser.add_argument("--seed", type=int, default=None)
   return parser
 
@@ -35,7 +35,7 @@ def run_from_args(args: argparse.Namespace) -> None:
     ExperimentOverrides(
       device=args.device,
       steps=args.steps,
-      run_dir=args.run_dir,
+      root_dir=args.root_dir,
       seed=args.seed,
     ),
   )

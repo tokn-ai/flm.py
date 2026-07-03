@@ -98,7 +98,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "env_file": ".secret",
       },
       "output": {
-        "run_dir": "runs/tiny",
+        "root_dir": "runs",
       },
       "sinks": [
         {
@@ -196,6 +196,18 @@ def test_parse_experiment_config_derives_train_config() -> None:
 def test_parse_experiment_config_rejects_unknown_keys() -> None:
   with pytest.raises(ValueError, match="unknown experiment config keys"):
     parse_experiment_config({"name": "bad", "typo": True})
+
+
+def test_parse_experiment_config_rejects_output_run_dir() -> None:
+  with pytest.raises(ValueError, match="unknown output config keys"):
+    parse_experiment_config(
+      {
+        "name": "bad",
+        "output": {
+          "run_dir": "runs/bad",
+        },
+      }
+    )
 
 
 def test_resolved_config_generates_run_identity() -> None:
@@ -304,8 +316,8 @@ def test_parse_args_accepts_cli_overrides() -> None:
       "cpu",
       "--steps",
       "3",
-      "--run-dir",
-      "/tmp/run",
+      "--root-dir",
+      "/tmp/runs",
       "--seed",
       "99",
     ]
@@ -314,7 +326,7 @@ def test_parse_args_accepts_cli_overrides() -> None:
   assert args.config == Path("experiments/16m_repo.yaml")
   assert args.device == "cpu"
   assert args.steps == 3
-  assert args.run_dir == Path("/tmp/run")
+  assert args.root_dir == Path("/tmp/runs")
   assert args.seed == 99
 
 
@@ -326,7 +338,7 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
 
   overridden = apply_overrides(
     config,
-    ExperimentOverrides(device="cpu", steps=2, run_dir=Path("/tmp/run")),
+    ExperimentOverrides(device="cpu", steps=2, root_dir=Path("/tmp/runs")),
   )
 
   assert overridden.loop.seed == 1
@@ -334,7 +346,7 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
   assert overridden.loop.batch_size == 4
   assert overridden.loop.steps == 2
   assert overridden.secrets == config.secrets
-  assert overridden.run_dir == Path("/tmp/run")
+  assert overridden.run_dir == Path("/tmp/runs") / "override_test"
 
 
 def test_secret_env_file_loads_dotenv_values(tmp_path: Path) -> None:
@@ -404,15 +416,16 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
 
 def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   dataset_root = publish_fixture_dataset(tmp_path)
-  run_dir = tmp_path / "run"
+  run_dir = tmp_path / "runs" / "artifact_test" / "run-123"
 
   result = run_experiment(
     ExperimentConfig(
       name="artifact_test",
+      run=RunConfig(id="run-123"),
       data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
-      output=OutputConfig(run_dir=run_dir),
+      output=OutputConfig(root_dir=tmp_path / "runs"),
     )
   )
 
@@ -450,7 +463,7 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
 def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
   repo_root = tmp_path / "repo"
   dataset_root = tmp_path / "datasets" / "repo_sources"
-  run_dir = tmp_path / "run"
+  run_dir = tmp_path / "runs" / "resolved_dataset_test" / "run-123"
   repo_root.mkdir()
   (repo_root / "model.py").write_text(
     "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
@@ -464,6 +477,7 @@ def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
   run_experiment(
     ExperimentConfig(
       name="resolved_dataset_test",
+      run=RunConfig(id="run-123"),
       data=DataConfig(
         kind="token_dataset",
         dataset_root=dataset_root,
@@ -473,7 +487,7 @@ def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
       ),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
-      output=OutputConfig(run_dir=run_dir),
+      output=OutputConfig(root_dir=tmp_path / "runs"),
     )
   )
 
@@ -485,11 +499,12 @@ def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
 
 def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   dataset_root = publish_split_fixture_dataset(tmp_path)
-  run_dir = tmp_path / "run"
+  run_dir = tmp_path / "runs" / "eval_rollout_test" / "run-123"
 
   run_experiment(
     ExperimentConfig(
       name="eval_rollout_test",
+      run=RunConfig(id="run-123"),
       data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=2),
@@ -499,7 +514,7 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
         max_new_tokens=2,
         prompts=(RolloutPromptConfig(name="fib", prompt="def fib(n):"),),
       ),
-      output=OutputConfig(run_dir=run_dir),
+      output=OutputConfig(root_dir=tmp_path / "runs"),
     )
   )
 
@@ -537,16 +552,17 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
 
 def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
   dataset_root = publish_fixture_dataset(tmp_path)
-  run_dir = tmp_path / "run"
+  root_dir = tmp_path / "runs"
   sink_dir = tmp_path / "sink"
 
   run_experiment(
     ExperimentConfig(
       name="custom_sink_test",
+      run=RunConfig(id="run-123"),
       data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
-      output=OutputConfig(run_dir=run_dir),
+      output=OutputConfig(root_dir=root_dir),
       sinks=(
         FilesSinkConfig(
           run_dir=sink_dir,
@@ -561,7 +577,7 @@ def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
     )
   )
 
-  assert not run_dir.exists()
+  assert not root_dir.exists()
   assert (sink_dir / "cfg.json").is_file()
   assert (sink_dir / "cfg.yaml").is_file()
   assert (sink_dir / "state.json").is_file()
