@@ -588,8 +588,20 @@ def test_run_experiment_writes_checkpoints(tmp_path: Path) -> None:
   assert (checkpoint / "optimizer.npz").is_file()
   assert (checkpoint / "trainer_state.json").is_file()
   manifest = json.loads((checkpoint / "manifest.json").read_text(encoding="utf-8"))
-  assert manifest["format"] == "flm-checkpoint-v1"
+  assert manifest["format"] == "flm-checkpoint-v2"
   assert manifest["step"] == 2
+  model_state = json.loads(
+    (checkpoint / "model_state.json").read_text(encoding="utf-8")
+  )
+  first_tensor = next(
+    value["__tensor__"]
+    for value in model_state.values()
+    if isinstance(value, dict) and "__tensor__" in value
+  )
+  assert first_tensor["name"]
+  assert first_tensor["shape"]
+  assert first_tensor["dtype"].startswith("torch.")
+  assert first_tensor["device"] == "cpu"
   artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
   assert "checkpoints/step-00000002" in artifacts
 

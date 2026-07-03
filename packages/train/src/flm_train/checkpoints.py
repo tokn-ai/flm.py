@@ -38,7 +38,7 @@ def save_checkpoint(
   _write_json(
     path / "manifest.json",
     {
-      "format": "flm-checkpoint-v1",
+      "format": "flm-checkpoint-v2",
       "step": state.step,
       "tokens_seen": state.tokens_seen,
       "model": "model.npz",
@@ -121,20 +121,37 @@ class _EncodedState:
 def _encode_state(value: Any) -> _EncodedState:
   arrays: dict[str, np.ndarray] = {}
 
-  def encode(item: Any) -> Any:
+  def encode(item: Any, path: str) -> Any:
     if isinstance(item, torch.Tensor):
-      name = f"tensor_{len(arrays)}"
+      name = path
       arrays[name] = item.detach().cpu().numpy()
-      return {"__tensor__": name}
+      return {
+        "__tensor__": {
+          "name": name,
+          "shape": list(item.shape),
+          "dtype": str(item.dtype),
+          "device": str(item.device),
+        }
+      }
     if isinstance(item, dict):
-      return {str(key): encode(value) for key, value in item.items()}
+      return {
+        str(key): encode(value, _join_path(path, str(key)))
+        for key, value in item.items()
+      }
     if isinstance(item, list):
-      return [encode(value) for value in item]
+      return [
+        encode(value, _join_path(path, str(index))) for index, value in enumerate(item)
+      ]
     if isinstance(item, tuple):
-      return {"__tuple__": [encode(value) for value in item]}
+      return {
+        "__tuple__": [
+          encode(value, _join_path(path, str(index)))
+          for index, value in enumerate(item)
+        ]
+      }
     return item
 
-  return _EncodedState(metadata=encode(value), arrays=arrays)
+  return _EncodedState(metadata=encode(value, ""), arrays=arrays)
 
 
 def _decode_state(
@@ -148,7 +165,14 @@ def _decode_state(
   def decode(item: Any) -> Any:
     if isinstance(item, dict):
       if "__tensor__" in item:
-        return torch.from_numpy(arrays[item["__tensor__"]]).to(device)
+        tensor_metadata = item["__tensor__"]
+        array = arrays[tensor_metadata["name"]]
+        _validate_tensor_metadata(
+          name=tensor_metadata["name"],
+          array=array,
+          metadata=tensor_metadata,
+        )
+        return torch.from_numpy(array).to(device)
       if "__tuple__" in item:
         return tuple(decode(value) for value in item["__tuple__"])
       return {_restore_key(key): decode(value) for key, value in item.items()}
@@ -157,6 +181,34 @@ def _decode_state(
     return item
 
   return decode(metadata)
+
+
+def _join_path(prefix: str, name: str) -> str:
+  if not prefix:
+    return name
+  return f"{prefix}.{name}"
+
+
+def _validate_tensor_metadata(
+  *,
+  name: str,
+  array: np.ndarray,
+  metadata: dict[str, Any],
+) -> None:
+  shape = list(array.shape)
+  dtype = str(array.dtype)
+  if shape != metadata["shape"]:
+    raise ValueError(
+      f"checkpoint tensor {name} shape mismatch: {shape} != {metadata['shape']}"
+    )
+  if dtype != _torch_dtype_to_numpy_dtype(metadata["dtype"]):
+    raise ValueError(
+      f"checkpoint tensor {name} dtype mismatch: {dtype} != {metadata['dtype']}"
+    )
+
+
+def _torch_dtype_to_numpy_dtype(value: str) -> str:
+  return value.removeprefix("torch.")
 
 
 def _restore_key(key: str) -> str | int:

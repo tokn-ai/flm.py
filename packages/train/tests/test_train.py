@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 from flm_train.data import publish_repo_source_dataset
 from flm_train.data_cli import parse_args, run_from_args
 from flm_train.presets import train_language_model
@@ -218,6 +219,20 @@ def test_train_language_model_resumes_from_checkpoint(tmp_path: Path) -> None:
     on_step=first_metrics.append,
   )
   assert (checkpoint_dir / "step-00000001" / "model.npz").is_file()
+  model_state = json.loads(
+    (checkpoint_dir / "step-00000001" / "model_state.json").read_text(encoding="utf-8")
+  )
+  first_tensor = next(
+    value["__tensor__"]
+    for value in model_state.values()
+    if isinstance(value, dict) and "__tensor__" in value
+  )
+  with np.load(checkpoint_dir / "step-00000001" / "model.npz") as arrays:
+    assert first_tensor["name"] in arrays.files
+  assert first_tensor["name"] != "tensor_0"
+  assert first_tensor["dtype"].startswith("torch.")
+  assert first_tensor["shape"]
+  assert first_tensor["device"] == "cpu"
 
   resumed_metrics: list[TrainStepMetrics] = []
   train_language_model(
