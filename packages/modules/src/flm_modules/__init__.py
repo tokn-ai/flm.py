@@ -22,6 +22,7 @@ from flm_modules.hyper import (
 )
 from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attention
 from flm_modules.linear import GroupedLinear
+from flm_modules.losses import LossBackend, language_model_loss, linear_cross_entropy
 from flm_modules.moe import (
   DeepSeekMoE,
   DeepSeekTopKRouter,
@@ -51,6 +52,9 @@ __all__ = [
   "DeepSeekV4MLP",
   "ExpertKind",
   "GroupedLinear",
+  "language_model_loss",
+  "linear_cross_entropy",
+  "LossBackend",
   "RMSNorm",
   "RouterScoring",
   "RopeLayout",

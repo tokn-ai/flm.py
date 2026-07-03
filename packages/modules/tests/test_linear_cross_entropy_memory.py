@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 import torch
-from flm_llm.losses import linear_cross_entropy
+from flm_modules.losses import linear_cross_entropy
 from torch.nn import functional as F
 
 

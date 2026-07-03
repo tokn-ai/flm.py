@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import torch
 from flm_modules import RMSNorm, SelfAttention, SwiGLU
+from flm_modules.losses import language_model_loss
 from torch import nn
 
 from flm_llm.config import ReferenceModelConfig
-from flm_llm.losses import language_model_loss
 
 
 class TransformerBlock(nn.Module):

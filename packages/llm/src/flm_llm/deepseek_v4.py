@@ -13,10 +13,10 @@ from flm_modules import (
   RouterScoring,
   SwiGLU,
 )
+from flm_modules.losses import language_model_loss
 from torch import nn
 
 from flm_llm.config import DeepSeekV4Config
-from flm_llm.losses import language_model_loss
 
 
 class DeepSeekV4Block(nn.Module):

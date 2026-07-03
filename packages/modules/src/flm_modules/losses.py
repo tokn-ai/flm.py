@@ -1,4 +1,4 @@
-"""Language-model loss helpers."""
+"""Loss helpers for model building blocks."""
 
 from __future__ import annotations
 

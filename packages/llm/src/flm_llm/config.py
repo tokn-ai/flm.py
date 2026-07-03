@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from flm_modules import AttentionBackend, DeepSeekV4AttentionKind
-
-from flm_llm.losses import LossBackend
+from flm_modules.losses import LossBackend
 
 
 @dataclass(frozen=True)
