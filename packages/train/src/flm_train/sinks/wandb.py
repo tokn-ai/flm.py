@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from flm_train.config import ExperimentConfig, WandbSinkConfig, config_to_plain
-from flm_train.sinks.base import JsonValue, RunContext, RunStatus, Scalar
+from flm_train.sinks.base import (
+  JsonValue,
+  RunContext,
+  RunStatus,
+  Scalar,
+  flatten_json_metrics,
+)
 from flm_train.types import TrainingResult
 
 
@@ -16,6 +22,7 @@ class WandbRunSink:
     self.config = config
     self.module = module
     self.run: Any | None = None
+    self.system_metrics_step = 0
 
   def start_run(self, context: RunContext, config: ExperimentConfig) -> None:
     module = self._module()
@@ -46,7 +53,10 @@ class WandbRunSink:
     self._module().log(metrics, step=step)
 
   def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
-    del metrics
+    payload = flatten_json_metrics(metrics, prefix="system")
+    payload["system/sample"] = self.system_metrics_step
+    self._module().log(payload)
+    self.system_metrics_step += 1
 
   def log_artifact(self, path: Path, name: str | None = None) -> None:
     module = self._module()

@@ -605,12 +605,21 @@ def test_tensorboard_sink_logs_scalars_and_text(tmp_path: Path) -> None:
 
   sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="tb"))
   sink.log_metrics({"train/loss": 1.5, "phase": "train"}, step=2)
+  sink.log_system_metrics(
+    {
+      "process": {"max_rss_bytes": 1024},
+      "gpus": [{"index": 0, "name": "gpu", "utilization_pct": 25.0}],
+    }
+  )
   sink.log_artifact(tmp_path / "checkpoint.pt")
   sink.finish_run(TrainingResult(losses=[1.5], token_count=10, file_count=1))
   sink.close()
 
   assert ("train/loss", 1.5, 2) in writer.scalars
   assert ("phase", "train", 2) in writer.texts
+  assert ("system/process/max_rss_bytes", 1024, 0) in writer.scalars
+  assert ("system/gpus/0/utilization_pct", 25.0, 0) in writer.scalars
+  assert ("system/gpus/0/name", "gpu", 0) in writer.texts
   assert writer.closed
 
 
@@ -628,13 +637,29 @@ def test_mlflow_sink_logs_run_data(tmp_path: Path) -> None:
 
   sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="mlflow"))
   sink.log_metrics({"train/loss": 1.25, "phase": "train"}, step=3)
+  sink.log_system_metrics(
+    {
+      "process": {"max_rss_bytes": 2048},
+      "gpus": [{"index": 0, "name": "gpu", "utilization_pct": 50.0}],
+    }
+  )
   sink.log_artifact(tmp_path / "artifact.txt", name="artifacts")
   sink.finish_run(TrainingResult(losses=[1.25], token_count=10, file_count=1))
 
   assert client.tracking_uri == "file:mlruns"
   assert client.experiment_name == "exp"
   assert client.started == {"run_name": "run", "nested": True}
-  assert client.metrics == [({"train/loss": 1.25}, 3)]
+  assert client.metrics == [
+    ({"train/loss": 1.25}, 3),
+    (
+      {
+        "system/process/max_rss_bytes": 2048.0,
+        "system/gpus/0/index": 0.0,
+        "system/gpus/0/utilization_pct": 50.0,
+      },
+      0,
+    ),
+  ]
   assert client.artifacts == [(str(tmp_path / "artifact.txt"), "artifacts")]
   assert client.ended == ["FINISHED"]
 
@@ -656,13 +681,29 @@ def test_wandb_sink_logs_run_data(tmp_path: Path) -> None:
 
   sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="wandb"))
   sink.log_metrics({"train/loss": 2.0}, step=4)
+  sink.log_system_metrics(
+    {
+      "process": {"max_rss_bytes": 4096},
+      "gpus": [{"index": 0, "name": "gpu", "utilization_pct": 75.0}],
+    }
+  )
   sink.log_artifact(tmp_path / "artifact.txt")
   sink.finish_run(TrainingResult(losses=[2.0], token_count=10, file_count=1))
 
   assert module.init_kwargs["project"] == "project"
   assert module.init_kwargs["entity"] == "entity"
   assert module.init_kwargs["name"] == "run"
-  assert module.logs[-2] == ({"train/loss": 2.0}, 4)
+  assert module.logs[-3] == ({"train/loss": 2.0}, 4)
+  assert module.logs[-2] == (
+    {
+      "system/process/max_rss_bytes": 4096,
+      "system/gpus/0/index": 0,
+      "system/gpus/0/name": "gpu",
+      "system/gpus/0/utilization_pct": 75.0,
+      "system/sample": 0,
+    },
+    None,
+  )
   assert module.artifacts[0].files == [str(tmp_path / "artifact.txt")]
   assert module.run.finished
 

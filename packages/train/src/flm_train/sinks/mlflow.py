@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from flm_train.config import ExperimentConfig, MlflowSinkConfig, config_to_plain
-from flm_train.sinks.base import JsonValue, RunContext, RunStatus, Scalar
+from flm_train.sinks.base import (
+  JsonValue,
+  RunContext,
+  RunStatus,
+  Scalar,
+  flatten_json_metrics,
+)
 from flm_train.types import TrainingResult
 
 
@@ -16,6 +22,7 @@ class MlflowRunSink:
     self.config = config
     self.client = client
     self.active = False
+    self.system_metrics_step = 0
 
   def start_run(self, context: RunContext, config: ExperimentConfig) -> None:
     del context
@@ -51,7 +58,14 @@ class MlflowRunSink:
       self._client().log_metrics(numeric_metrics, step=step)
 
   def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
-    del metrics
+    numeric_metrics = {
+      name: float(value)
+      for name, value in flatten_json_metrics(metrics, prefix="system").items()
+      if isinstance(value, int | float | bool)
+    }
+    if numeric_metrics:
+      self._client().log_metrics(numeric_metrics, step=self.system_metrics_step)
+    self.system_metrics_step += 1
 
   def log_artifact(self, path: Path, name: str | None = None) -> None:
     self._client().log_artifact(str(path), artifact_path=name)

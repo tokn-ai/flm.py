@@ -79,3 +79,31 @@ class CompositeRunSink:
 
 def utc_now() -> str:
   return datetime.now(UTC).isoformat()
+
+
+def flatten_json_metrics(
+  value: dict[str, JsonValue],
+  *,
+  prefix: str,
+) -> dict[str, Scalar]:
+  return _flatten_json_value(value, prefix=prefix)
+
+
+def _flatten_json_value(value: JsonValue, *, prefix: str) -> dict[str, Scalar]:
+  if value is None:
+    return {}
+  if isinstance(value, bool | int | float | str):
+    return {prefix: value}
+  if isinstance(value, dict):
+    flattened: dict[str, Scalar] = {}
+    for key, item in value.items():
+      name = f"{prefix}/{key}" if prefix else key
+      flattened.update(_flatten_json_value(item, prefix=name))
+    return flattened
+  if isinstance(value, list):
+    flattened = {}
+    for index, item in enumerate(value):
+      name = f"{prefix}/{index}" if prefix else str(index)
+      flattened.update(_flatten_json_value(item, prefix=name))
+    return flattened
+  return {}
