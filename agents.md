@@ -49,6 +49,39 @@ Before committing:
 - run focused tests or full tests depending on scope;
 - do not revert unrelated user changes.
 
+## Blog
+
+Day-log posts live under `blog/`, named `YYYYMMDD-NN-slug.md` where
+`YYYYMMDD` is the date and `NN` is the zero-padded order of the post within
+that day (01, 02, ...). `slug` is a short kebab-case description.
+Translations live under `blog/cn/` with the same filename, e.g.
+`blog/20260703-01-from-script-to-system.md` and
+`blog/cn/20260703-01-from-script-to-system.md`.
+
+Structure (top to bottom):
+
+1. `# Title` — framed around the day's *theme*, not just "day N".
+2. One-line opener — what this entry is.
+3. `## Goal` — the north-star as a blockquote (`>`), kept stable across
+   posts so readers track it.
+4. `### Task board` — a single merged checklist with three marker states,
+   in order Done -> Current -> Next:
+   - `- [x]` Done (shipped, one-liners)
+   - `- [ ] (current)` In progress right now (one-liners)
+   - `- [ ]` Next, not started (one-liners)
+   - All three buckets at the same simple one-liner density; no nested
+     bullets in the board. The board evolves between posts: current items
+     graduate to done, next items become current.
+5. `---` rule separating status from story.
+6. Body — the narrative of the day, theme-driven and high-level, not a diff
+   dump. Lead with the concept; let commits support it. At most one tiny
+   snippet to anchor an idea.
+7. Closing — short "why it mattered" + one-line summary.
+
+Style: high-level / why-focused over code-heavy; scope is the day's work
+but always tied back to the Goal; never duplicate detail between the board
+and the body.
+
 ## Current Training Entry Point
 
 The current experiment command is:
