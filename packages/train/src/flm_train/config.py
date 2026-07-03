@@ -151,6 +151,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       repo_root=Path(data.get("repo_root", ".")),
       encoding_name=str(data.get("encoding_name", "cl100k_base")),
       seq_len=int(data.get("seq_len", 128)),
+      cache_dir=_optional_path(data.get("cache_dir", ".cache/data")),
     ),
     model=_parse_model(model),
     optimizer=OptimizerConfig(

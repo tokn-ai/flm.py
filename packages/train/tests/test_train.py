@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from flm_train.data import build_repo_source_dataset
 from flm_train.presets import train_on_repo_sources
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
@@ -50,6 +51,20 @@ def test_train_on_repo_sources_runs_one_step(tmp_path: Path) -> None:
   assert result.token_count > result.file_count
   assert len(result.losses) == 1
   assert result.losses[0] > 0
+
+
+def test_repo_source_dataset_caches_tokens(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+
+  bundle = build_repo_source_dataset(train_config(repo_root=tmp_path))
+
+  cache_files = list((tmp_path / ".cache" / "data").glob("repo_sources-*.pkl"))
+  assert len(cache_files) == 1
+  assert bundle.file_count == 1
+  assert bundle.token_count > 0
 
 
 def test_train_on_repo_sources_emits_step_metrics(tmp_path: Path) -> None:

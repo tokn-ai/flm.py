@@ -13,6 +13,7 @@ class DataConfig:
   repo_root: Path = Path(".")
   encoding_name: str = "cl100k_base"
   seq_len: int = 128
+  cache_dir: Path | None = Path(".cache/data")
 
 
 @dataclass(frozen=True)
