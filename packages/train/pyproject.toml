@@ -25,6 +25,7 @@ flm-modules = { workspace = true }
 [project.scripts]
 flm-data = "flm_train.data_cli:main"
 flm-train-experiment = "flm_train.cli:main"
+flm-train-tune = "flm_train.tune:main"
 
 [build-system]
 requires = ["hatchling"]
