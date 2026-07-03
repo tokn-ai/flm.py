@@ -6,6 +6,7 @@ from flm_train.data_cli import parse_args, run_from_args
 from flm_train.presets import train_language_model
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
+  CheckpointConfig,
   DataConfig,
   DeepSeekV4ModelConfig,
   DSTinyModelConfig,
@@ -189,6 +190,58 @@ def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   assert all(metrics.tokens_per_sec > 0 for metrics in step_metrics)
   assert "train/loss" in step_metrics[0].to_log_dict()
   assert "train/tokens_seen" in step_metrics[0].to_log_dict()
+
+
+def test_train_language_model_resumes_from_checkpoint(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  checkpoint_dir = tmp_path / "checkpoints"
+
+  train_language_model(
+    train_config(repo_root=tmp_path, steps=1),
+    checkpoint_dir=checkpoint_dir,
+  )
+  first_metrics: list[TrainStepMetrics] = []
+  train_language_model(
+    TrainConfig(
+      data=DataConfig(
+        dataset_root=tmp_path / ".cache" / "data" / "repo_sources",
+        seq_len=8,
+      ),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=1),
+      checkpoint=CheckpointConfig(enabled=True, every_steps=1, keep_last=2),
+    ),
+    checkpoint_dir=checkpoint_dir,
+    on_step=first_metrics.append,
+  )
+  assert (checkpoint_dir / "step-00000001" / "model.npz").is_file()
+
+  resumed_metrics: list[TrainStepMetrics] = []
+  train_language_model(
+    TrainConfig(
+      data=DataConfig(
+        dataset_root=tmp_path / ".cache" / "data" / "repo_sources",
+        seq_len=8,
+      ),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=2),
+      checkpoint=CheckpointConfig(
+        enabled=True,
+        every_steps=1,
+        keep_last=2,
+        resume="auto",
+      ),
+    ),
+    checkpoint_dir=checkpoint_dir,
+    on_step=resumed_metrics.append,
+  )
+
+  assert [metrics.step for metrics in first_metrics] == [1]
+  assert [metrics.step for metrics in resumed_metrics] == [2]
+  assert (checkpoint_dir / "step-00000002" / "model.npz").is_file()
 
 
 def test_train_language_model_smoke_trains_deepseek_v4(tmp_path: Path) -> None:

@@ -44,6 +44,11 @@ class ExperimentRunner:
         on_step=lambda metrics: self.report_step(metrics, sink=sink),
         on_eval=lambda metrics: self.report_eval(metrics, sink=sink),
         on_rollout=lambda batch: self.report_rollout(batch, sink=sink),
+        on_checkpoint=lambda path, step: self.report_checkpoint(
+          path,
+          step=step,
+          sink=sink,
+        ),
       )
       self.report_result(result)
       sink.finish_run(result)
@@ -62,12 +67,15 @@ class ExperimentRunner:
     on_step,
     on_eval,
     on_rollout,
+    on_checkpoint,
   ) -> TrainingResult:
     return train_language_model(
       self.config.to_train_config(),
       on_step=on_step,
       on_eval=on_eval,
       on_rollout=on_rollout,
+      checkpoint_dir=self.run_dir / "checkpoints",
+      on_checkpoint=on_checkpoint,
     )
 
   def resolved_config(self) -> ExperimentConfig:
@@ -79,6 +87,7 @@ class ExperimentRunner:
       loop=self.config.loop,
       eval=self.config.eval,
       rollout=self.config.rollout,
+      checkpoint=self.config.checkpoint,
       system_metrics=self.config.system_metrics,
       run=resolve_run_config(self.config.name, self.config.run),
       secrets=self.config.secrets,
@@ -104,6 +113,10 @@ class ExperimentRunner:
     )
     sink.log_artifact(path, name=f"rollouts/step-{batch.step:08d}.json")
     self._log(f"step={batch.step} rollouts={path}")
+
+  def report_checkpoint(self, path: Path, *, step: int, sink) -> None:
+    sink.log_artifact(path, name=f"checkpoints/step-{step:08d}")
+    self._log(f"step={step} checkpoint={path}")
 
   def report_result(self, result: TrainingResult) -> None:
     self._log(f"tokens={result.token_count} files={result.file_count}")

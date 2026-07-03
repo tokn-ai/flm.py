@@ -110,6 +110,14 @@ class RolloutConfig:
 
 
 @dataclass(frozen=True)
+class CheckpointConfig:
+  enabled: bool = False
+  every_steps: int = 100
+  keep_last: int = 3
+  resume: str | None = None
+
+
+@dataclass(frozen=True)
 class TrainConfig:
   data: DataConfig = field(default_factory=DataConfig)
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
@@ -117,6 +125,7 @@ class TrainConfig:
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
+  checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
 
 @dataclass(frozen=True)

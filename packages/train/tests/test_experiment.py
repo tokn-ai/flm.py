@@ -33,6 +33,7 @@ from flm_train.sinks import (
 )
 from flm_train.system_metrics import SystemMetricsSampler
 from flm_train.types import (
+  CheckpointConfig,
   DataConfig,
   EvalConfig,
   LoopConfig,
@@ -88,6 +89,12 @@ def test_parse_experiment_config_derives_train_config() -> None:
       "system_metrics": {
         "enabled": True,
         "every_seconds": 2.5,
+      },
+      "checkpoint": {
+        "enabled": True,
+        "every_steps": 2,
+        "keep_last": 1,
+        "resume": "auto",
       },
       "run": {
         "id": "run-123",
@@ -161,6 +168,12 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert config.system_metrics == SystemMetricsConfig(
     enabled=True,
     every_seconds=2.5,
+  )
+  assert config.checkpoint == CheckpointConfig(
+    enabled=True,
+    every_steps=2,
+    keep_last=1,
+    resume="auto",
   )
   assert config.run == RunConfig(
     id="run-123",
@@ -548,6 +561,37 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   )
   artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
   assert "rollouts/step-00000002.json" in artifacts
+
+
+def test_run_experiment_writes_checkpoints(tmp_path: Path) -> None:
+  dataset_root = publish_fixture_dataset(tmp_path)
+  run_dir = tmp_path / "runs" / "checkpoint_test" / "run-123"
+
+  run_experiment(
+    ExperimentConfig(
+      name="checkpoint_test",
+      run=RunConfig(id="run-123"),
+      data=DataConfig(dataset_root=dataset_root, seq_len=8),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=2),
+      checkpoint=CheckpointConfig(enabled=True, every_steps=1, keep_last=1),
+      output=OutputConfig(root_dir=tmp_path / "runs"),
+    )
+  )
+
+  checkpoint_dir = run_dir / "checkpoints"
+  latest = checkpoint_dir / "latest"
+  assert latest.read_text(encoding="utf-8").strip() == "step-00000002"
+  assert not (checkpoint_dir / "step-00000001").exists()
+  checkpoint = checkpoint_dir / "step-00000002"
+  assert (checkpoint / "model.npz").is_file()
+  assert (checkpoint / "optimizer.npz").is_file()
+  assert (checkpoint / "trainer_state.json").is_file()
+  manifest = json.loads((checkpoint / "manifest.json").read_text(encoding="utf-8"))
+  assert manifest["format"] == "flm-checkpoint-v1"
+  assert manifest["step"] == 2
+  artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
+  assert "checkpoints/step-00000002" in artifacts
 
 
 def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:

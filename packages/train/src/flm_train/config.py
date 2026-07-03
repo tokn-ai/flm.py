@@ -9,6 +9,7 @@ from typing import Any, Literal
 import yaml
 
 from flm_train.types import (
+  CheckpointConfig,
   DataConfig,
   DeepSeekV4ModelConfig,
   DSTinyModelConfig,
@@ -101,6 +102,7 @@ class ExperimentConfig:
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
+  checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
   system_metrics: SystemMetricsConfig = field(default_factory=SystemMetricsConfig)
   run: RunConfig = field(default_factory=RunConfig)
   secrets: SecretsConfig = field(default_factory=SecretsConfig)
@@ -125,6 +127,7 @@ class ExperimentConfig:
       loop=self.loop,
       eval=self.eval,
       rollout=self.rollout,
+      checkpoint=self.checkpoint,
     )
 
 
@@ -152,6 +155,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "loop",
     "eval",
     "rollout",
+    "checkpoint",
     "system_metrics",
     "run",
     "secrets",
@@ -170,6 +174,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   loop = _section(raw, "loop")
   eval_config = _optional_section(raw, "eval")
   rollout = _optional_section(raw, "rollout")
+  checkpoint = _section(raw, "checkpoint")
   system_metrics = _section(raw, "system_metrics")
   run = _section(raw, "run")
   secrets = _section(raw, "secrets")
@@ -192,6 +197,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     ),
     eval=_parse_eval(eval_config),
     rollout=_parse_rollout(rollout),
+    checkpoint=_parse_checkpoint(checkpoint),
     system_metrics=_parse_system_metrics(system_metrics),
     run=_parse_run(run),
     secrets=SecretsConfig(
@@ -219,6 +225,7 @@ def apply_overrides(
     ),
     eval=config.eval,
     rollout=config.rollout,
+    checkpoint=config.checkpoint,
     system_metrics=config.system_metrics,
     run=config.run,
     secrets=config.secrets,
@@ -333,6 +340,25 @@ def _parse_rollout(value: dict[str, Any] | None) -> RolloutConfig | None:
     every_steps=int(value.get("every_steps", 100)),
     max_new_tokens=int(value.get("max_new_tokens", 64)),
     prompts=_parse_rollout_prompts(value.get("prompts")),
+  )
+
+
+def _parse_checkpoint(value: dict[str, Any]) -> CheckpointConfig:
+  allowed = {"enabled", "every_steps", "keep_last", "resume"}
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown checkpoint config keys: {sorted(unknown)}")
+  every_steps = int(value.get("every_steps", 100))
+  keep_last = int(value.get("keep_last", 3))
+  if every_steps <= 0:
+    raise ValueError("checkpoint.every_steps must be positive")
+  if keep_last < 0:
+    raise ValueError("checkpoint.keep_last must be non-negative")
+  return CheckpointConfig(
+    enabled=bool(value.get("enabled", False)),
+    every_steps=every_steps,
+    keep_last=keep_last,
+    resume=_optional_str(value.get("resume")),
   )
 
 

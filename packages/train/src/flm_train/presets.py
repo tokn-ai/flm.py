@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import torch
 from flm_datasets import get_tokenizer
@@ -28,6 +29,8 @@ def train_language_model(
   on_step: Callable[[TrainStepMetrics], None] | None = None,
   on_eval: Callable[[EvalMetrics], None] | None = None,
   on_rollout: Callable[[RolloutBatch], None] | None = None,
+  checkpoint_dir: Path | None = None,
+  on_checkpoint: Callable[[Path, int], None] | None = None,
 ) -> TrainingResult:
   torch.manual_seed(config.loop.seed)
 
@@ -83,6 +86,9 @@ def train_language_model(
       step=step,
     ),
     on_rollout=on_rollout,
+    checkpoint=config.checkpoint,
+    checkpoint_dir=checkpoint_dir,
+    on_checkpoint=on_checkpoint,
   )
   step_metrics = trainer.train()
 

@@ -38,6 +38,12 @@ rollout:
     - name: fib
       prompt: "def fib(n):"
 
+checkpoint:
+  enabled: true
+  every_steps: 100
+  keep_last: 3
+  resume: auto
+
 secrets:
   env_file: .secret
 

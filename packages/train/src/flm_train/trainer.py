@@ -5,14 +5,28 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 import torch
 from torch.utils.data import DataLoader
 
+from flm_train.checkpoints import (
+  CheckpointState,
+  latest_checkpoint_path,
+  load_checkpoint,
+  prune_checkpoints,
+  save_checkpoint,
+)
+from flm_train.types import CheckpointConfig
+
 
 class LanguageModel(Protocol):
   def train(self, mode: bool = True): ...
+
+  def state_dict(self): ...
+
+  def load_state_dict(self, state_dict): ...
 
   def __call__(
     self,
@@ -82,6 +96,7 @@ EvalCallback = Callable[[int, LanguageModel], EvalMetrics]
 EvalMetricsCallback = Callable[[EvalMetrics], None]
 RolloutCallback = Callable[[int, LanguageModel], RolloutBatch]
 RolloutBatchCallback = Callable[[RolloutBatch], None]
+CheckpointCallback = Callable[[Path, int], None]
 
 
 class LanguageModelTrainer:
@@ -100,6 +115,9 @@ class LanguageModelTrainer:
     rollout_every_steps: int | None = None,
     rollout: RolloutCallback | None = None,
     on_rollout: RolloutBatchCallback | None = None,
+    checkpoint: CheckpointConfig | None = None,
+    checkpoint_dir: Path | None = None,
+    on_checkpoint: CheckpointCallback | None = None,
   ) -> None:
     if steps < 0:
       raise ValueError("steps must be non-negative")
@@ -115,14 +133,18 @@ class LanguageModelTrainer:
     self.rollout_every_steps = rollout_every_steps
     self.rollout = rollout
     self.on_rollout = on_rollout
+    self.checkpoint = checkpoint or CheckpointConfig()
+    self.checkpoint_dir = checkpoint_dir
+    self.on_checkpoint = on_checkpoint
 
   def train(self) -> list[TrainStepMetrics]:
     metrics: list[TrainStepMetrics] = []
     iterator = iter(self.dataloader)
-    tokens_seen = 0
+    checkpoint_state = self._load_checkpoint_if_requested()
+    tokens_seen = checkpoint_state.tokens_seen
     self.model.train()
 
-    for step in range(1, self.steps + 1):
+    for step in range(checkpoint_state.step + 1, self.steps + 1):
       input_ids, targets, iterator = self._next_batch(iterator)
       input_ids = input_ids.to(self.device)
       targets = targets.to(self.device)
@@ -160,6 +182,10 @@ class LanguageModelTrainer:
         if self.on_rollout is not None:
           self.on_rollout(rollout_batch)
         self.model.train()
+      if self._should_checkpoint(step):
+        path = self._save_checkpoint(step=step, tokens_seen=tokens_seen)
+        if self.on_checkpoint is not None:
+          self.on_checkpoint(path, step)
 
     return metrics
 
@@ -186,6 +212,51 @@ class LanguageModelTrainer:
       self.rollout_every_steps is not None
       and self.rollout_every_steps > 0
       and step % self.rollout_every_steps == 0
+    )
+
+  def _should_checkpoint(self, step: int) -> bool:
+    return (
+      self.checkpoint.enabled
+      and self.checkpoint_dir is not None
+      and self.checkpoint.every_steps > 0
+      and step % self.checkpoint.every_steps == 0
+    )
+
+  def _save_checkpoint(self, *, step: int, tokens_seen: int) -> Path:
+    if self.checkpoint_dir is None:
+      raise RuntimeError("checkpoint_dir is required to save checkpoints")
+    path = save_checkpoint(
+      checkpoint_dir=self.checkpoint_dir,
+      model=self.model,
+      optimizer=self.optimizer,
+      state=CheckpointState(step=step, tokens_seen=tokens_seen),
+    )
+    prune_checkpoints(
+      checkpoint_dir=self.checkpoint_dir,
+      keep_last=self.checkpoint.keep_last,
+    )
+    return path
+
+  def _load_checkpoint_if_requested(self) -> CheckpointState:
+    if (
+      not self.checkpoint.enabled
+      or self.checkpoint.resume is None
+      or self.checkpoint.resume == "none"
+    ):
+      return CheckpointState(step=0, tokens_seen=0)
+    if self.checkpoint_dir is None:
+      raise RuntimeError("checkpoint_dir is required to resume checkpoints")
+    if self.checkpoint.resume == "auto":
+      path = latest_checkpoint_path(self.checkpoint_dir)
+      if path is None:
+        return CheckpointState(step=0, tokens_seen=0)
+    else:
+      path = Path(self.checkpoint.resume)
+    return load_checkpoint(
+      path=path,
+      model=self.model,
+      optimizer=self.optimizer,
+      map_location=self.device,
     )
 
 

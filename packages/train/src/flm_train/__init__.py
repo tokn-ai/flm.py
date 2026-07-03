@@ -16,6 +16,7 @@ from flm_train.trainer import (
   TrainStepMetrics,
 )
 from flm_train.types import (
+  CheckpointConfig,
   DataConfig,
   DeepSeekV4ModelConfig,
   DSTinyModelConfig,
@@ -31,6 +32,7 @@ from flm_train.types import (
 )
 
 __all__ = [
+  "CheckpointConfig",
   "DataConfig",
   "DeepSeekV4ModelConfig",
   "DSTinyModelConfig",
