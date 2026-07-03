@@ -91,6 +91,18 @@ def _memory_cases(*, chunk_size: int) -> list[MemoryCase]:
         ),
       )
     )
+  tilelang_cross_entropy = _tilelang_cross_entropy()
+  if tilelang_cross_entropy is not None:
+    cases.append(
+      MemoryCase(
+        name="tilelang_linear_cross_entropy",
+        loss_fn=lambda hidden, weight, targets: tilelang_cross_entropy(
+          hidden,
+          weight,
+          targets,
+        ),
+      )
+    )
   return cases
 
 
@@ -129,3 +141,12 @@ def _cut_cross_entropy():
       return cce_linear_cross_entropy(hidden, weight, targets, impl="cce")
 
   return loss_fn
+
+
+def _tilelang_cross_entropy():
+  try:
+    import tilelang  # noqa: F401
+    from flm_modules.kernels.tilelang import tilelang_linear_cross_entropy
+  except ImportError:
+    return None
+  return tilelang_linear_cross_entropy

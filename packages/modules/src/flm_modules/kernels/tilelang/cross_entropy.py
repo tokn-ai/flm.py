@@ -135,7 +135,12 @@ def _get_forward_kernel(
     raise ImportError("TileLang CCE requires the tilelang package") from exc
 
   @tilelang.jit(out_idx=[-2, -1], target="cuda")
-  def forward_kernel():
+  def forward_kernel(
+    token_count: int,
+    d_model: int,
+    vocab_size: int,
+    dtype: str,
+  ):
     def kernel(
       hidden: T.Tensor([token_count, d_model], dtype),
       weight: T.Tensor([vocab_size, d_model], dtype),
@@ -177,7 +182,7 @@ def _get_forward_kernel(
 
     return T.prim_func(kernel)
 
-  return forward_kernel()
+  return forward_kernel(token_count, d_model, vocab_size, dtype)
 
 
 @lru_cache(maxsize=32)
@@ -196,7 +201,12 @@ def _get_backward_kernel(
   grad_scale = 1.0 / token_count
 
   @tilelang.jit(out_idx=[], target="cuda")
-  def backward_kernel():
+  def backward_kernel(
+    token_count: int,
+    d_model: int,
+    vocab_size: int,
+    dtype: str,
+  ):
     def kernel(
       hidden: T.Tensor([token_count, d_model], dtype),
       weight: T.Tensor([vocab_size, d_model], dtype),
@@ -233,4 +243,4 @@ def _get_backward_kernel(
 
     return T.prim_func(kernel)
 
-  return backward_kernel()
+  return backward_kernel(token_count, d_model, vocab_size, dtype)
