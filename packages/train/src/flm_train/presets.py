@@ -118,7 +118,7 @@ def evaluate_language_model(
     for input_ids, targets in dataloader:
       input_ids = input_ids.to(device)
       targets = targets.to(device)
-      _, loss = model(input_ids, targets)
+      _, loss = model(input_ids, targets, return_logits=False)
       if loss is None:
         raise RuntimeError("eval loss was not produced")
       token_count = int(input_ids.numel())

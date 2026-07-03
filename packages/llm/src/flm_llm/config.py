@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from flm_modules import AttentionBackend, DeepSeekV4AttentionKind
 
+from flm_llm.losses import LossBackend
+
 
 @dataclass(frozen=True)
 class ReferenceModelConfig:
@@ -19,6 +21,8 @@ class ReferenceModelConfig:
   rope_base: float = 10_000.0
   norm_eps: float = 1e-6
   attention_backend: AttentionBackend | str = AttentionBackend.TORCH
+  loss_backend: LossBackend = "cross_entropy"
+  loss_chunk_size: int = 512
 
   @property
   def ffn_d_ff(self) -> int:
@@ -44,6 +48,8 @@ class DSTinyConfig:
   rope_base: float = 10_000.0
   norm_eps: float = 1e-6
   attention_backend: AttentionBackend | str = AttentionBackend.TORCH
+  loss_backend: LossBackend = "cross_entropy"
+  loss_chunk_size: int = 512
 
   @property
   def ffn_d_ff(self) -> int:
@@ -95,6 +101,8 @@ class DeepSeekV4Config:
   norm_eps: float = 1e-6
   initializer_range: float = 0.02
   attention_backend: AttentionBackend | str = AttentionBackend.TORCH
+  loss_backend: LossBackend = "cross_entropy"
+  loss_chunk_size: int = 512
 
   @property
   def ffn_d_ff(self) -> int:

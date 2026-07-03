@@ -420,12 +420,20 @@ def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
 
 def _parse_model(value: dict[str, Any]) -> ModelConfig:
   kind = value.get("kind", "reference")
+  loss_backend = str(value.get("loss_backend", "cross_entropy"))
+  if loss_backend not in {"cross_entropy", "linear_cross_entropy"}:
+    raise ValueError(f"unsupported model.loss_backend: {loss_backend}")
+  loss_chunk_size = int(value.get("loss_chunk_size", 512))
+  if loss_chunk_size <= 0:
+    raise ValueError("model.loss_chunk_size must be positive")
   if kind == "reference":
     return ReferenceModelConfig(
       d_model=int(value.get("d_model", 128)),
       n_layers=int(value.get("n_layers", 2)),
       n_heads=int(value.get("n_heads", 4)),
       d_ff=_optional_int(value.get("d_ff")),
+      loss_backend=loss_backend,
+      loss_chunk_size=loss_chunk_size,
     )
   if kind == "ds_tiny":
     return DSTinyModelConfig(
@@ -438,6 +446,8 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       qk_nope_head_dim=int(value.get("qk_nope_head_dim", 16)),
       qk_rope_head_dim=int(value.get("qk_rope_head_dim", 16)),
       v_head_dim=int(value.get("v_head_dim", 32)),
+      loss_backend=loss_backend,
+      loss_chunk_size=loss_chunk_size,
     )
   if kind == "deepseek_v4":
     return DeepSeekV4ModelConfig(
@@ -466,6 +476,8 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       n_group=int(value.get("n_group", 2)),
       topk_group=int(value.get("topk_group", 1)),
       dense_layers=int(value.get("dense_layers", 1)),
+      loss_backend=loss_backend,
+      loss_chunk_size=loss_chunk_size,
     )
   raise ValueError(f"unsupported model.kind: {kind}")
 

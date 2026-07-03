@@ -32,7 +32,9 @@ class LanguageModel(Protocol):
     self,
     input_ids: torch.Tensor,
     targets: torch.Tensor | None = None,
-  ) -> tuple[torch.Tensor, torch.Tensor | None]: ...
+    *,
+    return_logits: bool = True,
+  ) -> tuple[torch.Tensor | None, torch.Tensor | None]: ...
 
 
 @dataclass(frozen=True)
@@ -151,7 +153,7 @@ class LanguageModelTrainer:
 
       started_at = time.perf_counter()
       self.optimizer.zero_grad(set_to_none=True)
-      _, loss = self.model(input_ids, targets)
+      _, loss = self.model(input_ids, targets, return_logits=False)
       if loss is None:
         raise RuntimeError("training loss was not produced")
       loss.backward()

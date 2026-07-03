@@ -59,6 +59,8 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "n_layers": 3,
         "n_heads": 4,
         "d_ff": 64,
+        "loss_backend": "linear_cross_entropy",
+        "loss_chunk_size": 16,
       },
       "optimizer": {
         "kind": "adamw",
@@ -151,6 +153,8 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.model.n_layers == 3
   assert train_config.model.n_heads == 4
   assert train_config.model.d_ff == 64
+  assert train_config.model.loss_backend == "linear_cross_entropy"
+  assert train_config.model.loss_chunk_size == 16
   assert train_config.optimizer.learning_rate == 1.0e-3
   assert train_config.optimizer.weight_decay == 0.01
   assert train_config.loop.seed == 7
@@ -457,6 +461,8 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
     "n_layers": 3,
     "n_heads": 4,
     "d_ff": 64,
+    "loss_backend": "cross_entropy",
+    "loss_chunk_size": 512,
   }
 
 

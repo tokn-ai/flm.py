@@ -14,9 +14,9 @@ from flm_modules import (
   SwiGLU,
 )
 from torch import nn
-from torch.nn import functional as F
 
 from flm_llm.config import DeepSeekV4Config
+from flm_llm.losses import language_model_loss
 
 
 class DeepSeekV4Block(nn.Module):
@@ -132,7 +132,9 @@ class DeepSeekV4(nn.Module):
     self,
     input_ids: torch.Tensor,
     targets: torch.Tensor | None = None,
-  ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    *,
+    return_logits: bool = True,
+  ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     if input_ids.ndim != 2:
       raise ValueError("input_ids must have shape (batch, seq_len)")
     if input_ids.shape[1] > self.config.max_seq_len:
@@ -149,13 +151,17 @@ class DeepSeekV4(nn.Module):
     )
     for block in self.blocks:
       x = block(x, attention_mask=attention_mask, positions=positions)
-    logits = self.lm_head(self.norm(self.hc_head(x)))
+    hidden_states = self.norm(self.hc_head(x))
+    logits = self.lm_head(hidden_states) if return_logits else None
 
     loss = None
     if targets is not None:
-      loss = F.cross_entropy(
-        logits.view(-1, logits.size(-1)),
-        targets.view(-1),
+      loss = language_model_loss(
+        hidden_states=hidden_states,
+        classifier_weight=self.lm_head.weight,
+        targets=targets,
+        backend=self.config.loss_backend,
+        chunk_size=self.config.loss_chunk_size,
       )
     return logits, loss
 

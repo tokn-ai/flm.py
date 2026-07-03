@@ -25,6 +25,8 @@ class ReferenceModelConfig:
   n_layers: int = 2
   n_heads: int = 4
   d_ff: int | None = None
+  loss_backend: Literal["cross_entropy", "linear_cross_entropy"] = "cross_entropy"
+  loss_chunk_size: int = 512
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,8 @@ class DSTinyModelConfig:
   qk_nope_head_dim: int = 16
   qk_rope_head_dim: int = 16
   v_head_dim: int = 32
+  loss_backend: Literal["cross_entropy", "linear_cross_entropy"] = "cross_entropy"
+  loss_chunk_size: int = 512
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,8 @@ class DeepSeekV4ModelConfig:
   n_group: int = 2
   topk_group: int = 1
   dense_layers: int = 1
+  loss_backend: Literal["cross_entropy", "linear_cross_entropy"] = "cross_entropy"
+  loss_chunk_size: int = 512
 
 
 ModelConfig = ReferenceModelConfig | DSTinyModelConfig | DeepSeekV4ModelConfig
