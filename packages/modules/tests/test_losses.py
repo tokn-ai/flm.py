@@ -200,6 +200,43 @@ def test_language_model_loss_dispatches_linear_cross_entropy_backward() -> None:
   torch.testing.assert_close(actual_weight.grad, expected_weight.grad)
 
 
+def test_language_model_loss_dispatches_cut_cross_entropy_backward() -> None:
+  cut_cross_entropy = _cut_cross_entropy()
+  if cut_cross_entropy is None:
+    pytest.skip("cut_cross_entropy is not installed")
+  if not torch.cuda.is_available():
+    pytest.skip("cut_cross_entropy default kernel requires CUDA")
+
+  torch.manual_seed(0)
+  hidden = torch.randn(2, 4, 6, device="cuda", dtype=torch.float16, requires_grad=True)
+  weight = torch.randn(9, 6, device="cuda", dtype=torch.float16, requires_grad=True)
+  targets = torch.randint(0, 9, (2, 4), device="cuda")
+
+  expected_hidden = hidden.detach().clone().requires_grad_(True)
+  expected_weight = weight.detach().clone().requires_grad_(True)
+  expected = cut_cross_entropy(
+    expected_hidden,
+    expected_weight,
+    targets,
+  )
+  expected.backward()
+
+  actual_hidden = hidden.detach().clone().requires_grad_(True)
+  actual_weight = weight.detach().clone().requires_grad_(True)
+  actual = language_model_loss(
+    hidden_states=actual_hidden,
+    classifier_weight=actual_weight,
+    targets=targets,
+    backend="cut_cross_entropy",
+    chunk_size=3,
+  )
+  actual.backward()
+
+  torch.testing.assert_close(actual, expected)
+  torch.testing.assert_close(actual_hidden.grad, expected_hidden.grad)
+  torch.testing.assert_close(actual_weight.grad, expected_weight.grad)
+
+
 def _cut_cross_entropy():
   try:
     from cut_cross_entropy import linear_cross_entropy as cce_linear_cross_entropy

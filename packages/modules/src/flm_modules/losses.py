@@ -10,6 +10,7 @@ from torch.nn import functional as F
 LossBackend = Literal[
   "cross_entropy",
   "linear_cross_entropy",
+  "cut_cross_entropy",
   "tilelang_linear_cross_entropy",
 ]
 
@@ -43,6 +44,22 @@ def language_model_loss(
       classifier_weight,
       targets,
     )
+  if backend == "cut_cross_entropy":
+    try:
+      from cut_cross_entropy import linear_cross_entropy as cut_cross_entropy
+    except ModuleNotFoundError as exc:
+      raise ImportError(
+        "cut_cross_entropy backend requires the cut-cross-entropy package"
+      ) from exc
+    try:
+      return cut_cross_entropy(hidden_states, classifier_weight, targets)
+    except TypeError:
+      return cut_cross_entropy(
+        hidden_states,
+        classifier_weight,
+        targets,
+        impl="cce",
+      )
   raise ValueError(f"unknown loss backend: {backend}")
 
 

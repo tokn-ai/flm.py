@@ -424,6 +424,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
   if loss_backend not in {
     "cross_entropy",
     "linear_cross_entropy",
+    "cut_cross_entropy",
     "tilelang_linear_cross_entropy",
   }:
     raise ValueError(f"unsupported model.loss_backend: {loss_backend}")

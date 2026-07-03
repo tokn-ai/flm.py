@@ -466,6 +466,20 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
   }
 
 
+def test_parse_experiment_config_accepts_cut_cross_entropy_backend() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "cut_cce",
+      "model": {
+        "kind": "reference",
+        "loss_backend": "cut_cross_entropy",
+      },
+    }
+  )
+
+  assert config.model.loss_backend == "cut_cross_entropy"
+
+
 def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   dataset_root = publish_fixture_dataset(tmp_path)
   run_dir = tmp_path / "runs" / "artifact_test" / "run-123"

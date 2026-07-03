@@ -9,6 +9,7 @@ from typing import Literal
 LossBackend = Literal[
   "cross_entropy",
   "linear_cross_entropy",
+  "cut_cross_entropy",
   "tilelang_linear_cross_entropy",
 ]
 
