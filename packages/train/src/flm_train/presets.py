@@ -46,7 +46,7 @@ def train_language_model(
   model = build_model(
     config,
     vocab_size=encoding.n_vocab,
-  ).to(config.loop.device)
+  ).to(device=config.loop.device, dtype=_torch_dtype(config.loop.dtype))
   optimizer = configure_adamw(
     model,
     learning_rate=config.optimizer.learning_rate,
@@ -136,6 +136,16 @@ def evaluate_language_model(
     loss=loss,
     tokens=total_tokens,
   )
+
+
+def _torch_dtype(value: str) -> torch.dtype:
+  if value == "float32":
+    return torch.float32
+  if value == "float16":
+    return torch.float16
+  if value == "bfloat16":
+    return torch.bfloat16
+  raise ValueError(f"unsupported torch dtype: {value}")
 
 
 def generate_rollouts(

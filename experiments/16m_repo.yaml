@@ -15,7 +15,7 @@ model:
   n_heads: 2
   d_ff: 512
   attention_backend: tilelang
-  loss_backend: tilelang_linear_cross_entropy
+  loss_backend: cut_cross_entropy
   loss_chunk_size: 256
 
 optimizer:
@@ -26,6 +26,7 @@ optimizer:
 loop:
   seed: 42
   device: cuda
+  dtype: bfloat16
   batch_size: 8
   steps: 1000
 

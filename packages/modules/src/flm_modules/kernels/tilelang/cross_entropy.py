@@ -143,7 +143,7 @@ def _get_forward_kernel(
     vocab_size: int,
     dtype: str,
   ):
-    def kernel(
+    def tilelang_linear_cross_entropy_forward_kernel(
       hidden: T.Tensor([token_count, d_model], dtype),
       weight: T.Tensor([vocab_size, d_model], dtype),
       targets: T.Tensor([token_count], "int64"),
@@ -182,7 +182,7 @@ def _get_forward_kernel(
         lse[token] = T.log(denom[0]) + max_logit[0]
         losses[token] = lse[token] - target_logit[0]
 
-    return T.prim_func(kernel)
+    return T.prim_func(tilelang_linear_cross_entropy_forward_kernel)
 
   return forward_kernel(token_count, d_model, vocab_size, dtype)
 
@@ -209,7 +209,7 @@ def _get_backward_kernel(
     vocab_size: int,
     dtype: str,
   ):
-    def kernel(
+    def tilelang_linear_cross_entropy_backward_kernel(
       hidden: T.Tensor([token_count, d_model], dtype),
       weight: T.Tensor([vocab_size, d_model], dtype),
       targets: T.Tensor([token_count], "int64"),
@@ -243,6 +243,6 @@ def _get_backward_kernel(
             T.cast(coeff[0] * T.cast(hidden[token, dim], "float32"), dtype),
           )
 
-    return T.prim_func(kernel)
+    return T.prim_func(tilelang_linear_cross_entropy_backward_kernel)
 
   return backward_kernel(token_count, d_model, vocab_size, dtype)

@@ -71,6 +71,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
       "loop": {
         "seed": 7,
         "device": "cpu",
+        "dtype": "bfloat16",
         "batch_size": 2,
         "steps": 5,
       },
@@ -161,6 +162,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.optimizer.weight_decay == 0.01
   assert train_config.loop.seed == 7
   assert train_config.loop.device == "cpu"
+  assert train_config.loop.dtype == "bfloat16"
   assert train_config.eval == EvalConfig(
     split="test",
     every_steps=2,
@@ -395,6 +397,7 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
 
   assert overridden.loop.seed == 1
   assert overridden.loop.device == "cpu"
+  assert overridden.loop.dtype == "float32"
   assert overridden.loop.batch_size == 4
   assert overridden.loop.steps == 2
   assert overridden.secrets == config.secrets
@@ -473,7 +476,8 @@ def test_16m_repo_config_uses_tilelang_backends() -> None:
   config = load_experiment_config(Path("experiments/16m_repo.yaml"))
 
   assert config.model.attention_backend == "tilelang"
-  assert config.model.loss_backend == "tilelang_linear_cross_entropy"
+  assert config.model.loss_backend == "cut_cross_entropy"
+  assert config.loop.dtype == "bfloat16"
 
 
 def test_parse_experiment_config_accepts_cut_cross_entropy_backend() -> None:

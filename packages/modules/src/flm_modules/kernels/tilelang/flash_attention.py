@@ -129,7 +129,7 @@ def _get_tilelang_kernel(
   @tilelang.jit(out_idx=[-1], target="cuda")
   def flash_attention_kernel():
     @T.prim_func
-    def kernel(
+    def tilelang_flash_attention_forward_kernel(
       q: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
       k: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
       v: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
@@ -173,7 +173,7 @@ def _get_tilelang_kernel(
         for dim in T.serial(0, head_dim):
           out[batch, row, head, dim] = T.cast(acc[dim] / denom[0], dtype)
 
-    return kernel
+    return tilelang_flash_attention_forward_kernel
 
   return flash_attention_kernel()
 
@@ -199,7 +199,7 @@ def _get_tilelang_dq_kernel(
   @tilelang.jit(out_idx=[-1], target="cuda")
   def dq_kernel():
     @T.prim_func
-    def kernel(
+    def tilelang_flash_attention_dq_kernel(
       q: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
       k: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
       v: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
@@ -265,7 +265,7 @@ def _get_tilelang_dq_kernel(
               grad[0] += d_score[0] * T.cast(k[batch, head, col, dim], "float32")
           dq[batch, head, row, dim] = T.cast(grad[0] * scale, dtype)
 
-    return kernel
+    return tilelang_flash_attention_dq_kernel
 
   return dq_kernel()
 
@@ -291,7 +291,7 @@ def _get_tilelang_dkv_kernel(
   @tilelang.jit(out_idx=[-2, -1], target="cuda")
   def dkv_kernel():
     @T.prim_func
-    def kernel(
+    def tilelang_flash_attention_dkv_kernel(
       q: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
       k: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
       v: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
@@ -362,6 +362,6 @@ def _get_tilelang_dkv_kernel(
           dk[batch, head, col, dim] = T.cast(grad_k[0] * scale, dtype)
           dv[batch, head, col, dim] = T.cast(grad_v[0], dtype)
 
-    return kernel
+    return tilelang_flash_attention_dkv_kernel
 
   return dkv_kernel()

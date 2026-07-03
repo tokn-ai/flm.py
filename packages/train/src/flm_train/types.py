@@ -13,6 +13,7 @@ LossBackend = Literal[
   "tilelang_linear_cross_entropy",
 ]
 AttentionBackend = Literal["torch", "flash_attention2", "tilelang"]
+TorchDType = Literal["float32", "float16", "bfloat16"]
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,7 @@ class LoopConfig:
   steps: int = 10
   device: str = "cpu"
   seed: int = 42
+  dtype: TorchDType = "float32"
 
 
 @dataclass(frozen=True)

@@ -20,6 +20,7 @@ from flm_train.types import (
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
+  TorchDType,
   TrainConfig,
 )
 
@@ -192,6 +193,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     loop=LoopConfig(
       seed=int(loop.get("seed", 42)),
       device=str(loop.get("device", "cpu")),
+      dtype=_parse_torch_dtype(loop.get("dtype", "float32")),
       batch_size=int(loop.get("batch_size", 8)),
       steps=int(loop.get("steps", 10)),
     ),
@@ -220,6 +222,7 @@ def apply_overrides(
     loop=LoopConfig(
       seed=config.loop.seed if overrides.seed is None else overrides.seed,
       device=config.loop.device if overrides.device is None else overrides.device,
+      dtype=config.loop.dtype,
       batch_size=config.loop.batch_size,
       steps=config.loop.steps if overrides.steps is None else overrides.steps,
     ),
@@ -312,6 +315,21 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     split=split,
     resolved_version=value.get("resolved_version"),
   )
+
+
+def _parse_torch_dtype(value: Any) -> TorchDType:
+  dtype = str(value)
+  aliases = {
+    "fp32": "float32",
+    "float": "float32",
+    "fp16": "float16",
+    "half": "float16",
+    "bf16": "bfloat16",
+  }
+  dtype = aliases.get(dtype, dtype)
+  if dtype not in {"float32", "float16", "bfloat16"}:
+    raise ValueError(f"unsupported loop.dtype: {dtype}")
+  return dtype
 
 
 def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
