@@ -223,6 +223,39 @@ def test_parse_experiment_config_rejects_output_run_dir() -> None:
     )
 
 
+def test_parse_experiment_config_accepts_null_optional_sections() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "resolved",
+      "eval": None,
+      "rollout": None,
+      "sinks": [
+        {
+          "kind": "files",
+          "run_dir": None,
+        },
+        {
+          "kind": "tensorboard",
+          "log_dir": None,
+        },
+        {
+          "kind": "wandb",
+          "dir": None,
+        },
+      ],
+    }
+  )
+
+  assert config.eval is None
+  assert config.rollout is None
+  assert isinstance(config.sinks[0], FilesSinkConfig)
+  assert config.sinks[0].run_dir is None
+  assert isinstance(config.sinks[1], TensorBoardSinkConfig)
+  assert config.sinks[1].log_dir is None
+  assert isinstance(config.sinks[2], WandbSinkConfig)
+  assert config.sinks[2].dir is None
+
+
 def test_resolved_config_generates_run_identity() -> None:
   run = resolve_run_config("identity", RunConfig())
 

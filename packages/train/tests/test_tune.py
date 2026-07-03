@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import flm_train.cli
 from flm_train.config import ExperimentConfig, OutputConfig, RunConfig
 from flm_train.tune import (
   build_nsys_command,
@@ -73,10 +74,12 @@ def test_prepare_tune_config_disables_noisy_workflows() -> None:
 
 
 def test_build_nsys_command_uses_resolved_config_path() -> None:
+  config_path = Path("runs/tune/run-123/tune/nsys/config.resolved.yaml").resolve()
+  output_prefix = Path("runs/tune/run-123/tune/nsys/profile").resolve()
   command = build_nsys_command(
     nsys="/usr/bin/nsys",
-    config_path=Path("runs/tune/run-123/tune/nsys/config.resolved.yaml"),
-    output_prefix=Path("runs/tune/run-123/tune/nsys/profile"),
+    config_path=config_path,
+    output_prefix=output_prefix,
     trace="cuda,nvtx",
   )
 
@@ -84,14 +87,19 @@ def test_build_nsys_command_uses_resolved_config_path() -> None:
     "/usr/bin/nsys",
     "profile",
     "--force-overwrite=true",
-    "--output=runs/tune/run-123/tune/nsys/profile",
+    f"--output={output_prefix}",
     "--trace=cuda,nvtx",
   ]
   assert command[-3:] == [
     "-m",
     "flm_train.cli",
-    "runs/tune/run-123/tune/nsys/config.resolved.yaml",
+    str(config_path),
   ]
+
+
+def test_cli_module_has_main_entrypoint() -> None:
+  assert hasattr(flm_train.cli, "main")
+  assert flm_train.cli.__name__ != "__main__"
 
 
 def test_run_torch_profile_writes_artifacts(tmp_path: Path, monkeypatch) -> None:

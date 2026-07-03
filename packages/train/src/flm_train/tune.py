@@ -167,7 +167,7 @@ def run_nsys_profile(
   nsys = shutil.which("nsys")
   if nsys is None:
     raise RuntimeError("nsys was not found on PATH")
-  tune_dir = config.run_dir / "tune" / "nsys"
+  tune_dir = (config.run_dir / "tune" / "nsys").resolve()
   tune_dir.mkdir(parents=True, exist_ok=True)
   config_path = tune_dir / "config.resolved.yaml"
   write_yaml(config_path, config_to_plain(config))
@@ -177,11 +177,15 @@ def run_nsys_profile(
     output_prefix=tune_dir / "profile",
     trace=trace,
   )
+  stdout_path = tune_dir / "stdout.log"
+  stderr_path = tune_dir / "stderr.log"
   (tune_dir / "command.json").write_text(
     json.dumps(
       {
         "command": command,
         "run_dir": str(config.run_dir),
+        "stderr": str(stderr_path),
+        "stdout": str(stdout_path),
       },
       indent=2,
       sort_keys=True,
@@ -190,7 +194,9 @@ def run_nsys_profile(
     encoding="utf-8",
   )
   log(" ".join(command))
-  subprocess.run(command, check=True)
+  with stdout_path.open("w", encoding="utf-8") as stdout:
+    with stderr_path.open("w", encoding="utf-8") as stderr:
+      subprocess.run(command, check=True, stderr=stderr, stdout=stdout)
   log(f"tune=nsys dir={tune_dir}")
   return tune_dir
 
@@ -206,12 +212,12 @@ def build_nsys_command(
     nsys,
     "profile",
     "--force-overwrite=true",
-    f"--output={output_prefix}",
+    f"--output={output_prefix.resolve()}",
     f"--trace={trace}",
     sys.executable,
     "-m",
     "flm_train.cli",
-    str(config_path),
+    str(config_path.resolve()),
   ]
 
 
@@ -223,3 +229,7 @@ def _profiler_sort_key(activities: list[ProfilerActivity]) -> str:
 
 def main(argv: Sequence[str] | None = None) -> None:
   run_from_args(parse_args(argv))
+
+
+if __name__ == "__main__":
+  main()

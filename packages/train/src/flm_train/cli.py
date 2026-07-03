@@ -44,3 +44,7 @@ def run_from_args(args: argparse.Namespace) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
   run_from_args(parse_args(argv))
+
+
+if __name__ == "__main__":
+  main()

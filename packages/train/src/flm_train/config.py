@@ -267,6 +267,8 @@ def _section(raw: dict[str, Any], name: str) -> dict[str, Any]:
 def _optional_section(raw: dict[str, Any], name: str) -> dict[str, Any] | None:
   if name not in raw:
     return None
+  if raw[name] is None:
+    return None
   return _section(raw, name)
 
 
@@ -496,7 +498,7 @@ def _parse_sink(value: Any) -> SinkConfig:
   kind = value.get("kind")
   if kind == "files":
     return FilesSinkConfig(
-      run_dir=Path(value["run_dir"]) if "run_dir" in value else None,
+      run_dir=_optional_path(value.get("run_dir")),
       config_json=str(value.get("config_json", "config.json")),
       resolved_config_yaml=str(
         value.get("resolved_config_yaml", "config.resolved.yaml")
@@ -510,7 +512,7 @@ def _parse_sink(value: Any) -> SinkConfig:
     )
   if kind == "tensorboard":
     return TensorBoardSinkConfig(
-      log_dir=Path(value["log_dir"]) if "log_dir" in value else None,
+      log_dir=_optional_path(value.get("log_dir")),
       flush_secs=int(value.get("flush_secs", 10)),
     )
   if kind == "mlflow":
@@ -526,7 +528,7 @@ def _parse_sink(value: Any) -> SinkConfig:
       entity=value.get("entity"),
       name=value.get("name"),
       mode=value.get("mode"),
-      dir=Path(value["dir"]) if "dir" in value else None,
+      dir=_optional_path(value.get("dir")),
       tags=_str_tuple(value.get("tags")),
       group=value.get("group"),
       job_type=value.get("job_type"),
