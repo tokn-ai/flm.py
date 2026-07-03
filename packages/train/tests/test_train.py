@@ -104,6 +104,9 @@ def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) ->
   published = publish_repo_source_dataset(
     repo_root=repo_root,
     dataset_root=dataset_root,
+    train_ratio=1.0,
+    val_ratio=0.0,
+    test_ratio=0.0,
   )
 
   result = train_language_model(

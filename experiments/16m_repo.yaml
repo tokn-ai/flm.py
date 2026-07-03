@@ -26,6 +26,18 @@ loop:
   batch_size: 8
   steps: 1000
 
+eval:
+  split: test
+  every_steps: 100
+  max_batches: 8
+
+rollout:
+  every_steps: 100
+  max_new_tokens: 64
+  prompts:
+    - name: fib
+      prompt: "def fib(n):"
+
 secrets:
   env_file: .secret
 

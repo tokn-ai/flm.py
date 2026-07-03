@@ -27,7 +27,15 @@ from flm_train.sinks import (
   WandbRunSink,
   build_run_sink,
 )
-from flm_train.types import DataConfig, LoopConfig, ReferenceModelConfig, TrainingResult
+from flm_train.types import (
+  DataConfig,
+  EvalConfig,
+  LoopConfig,
+  ReferenceModelConfig,
+  RolloutConfig,
+  RolloutPromptConfig,
+  TrainingResult,
+)
 
 
 def test_parse_experiment_config_derives_train_config() -> None:
@@ -56,6 +64,21 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "device": "cpu",
         "batch_size": 2,
         "steps": 5,
+      },
+      "eval": {
+        "split": "test",
+        "every_steps": 2,
+        "max_batches": 3,
+      },
+      "rollout": {
+        "every_steps": 2,
+        "max_new_tokens": 8,
+        "prompts": [
+          {
+            "name": "fib",
+            "prompt": "def fib(n):",
+          }
+        ],
       },
       "secrets": {
         "env_file": ".secret",
@@ -110,6 +133,16 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.optimizer.weight_decay == 0.01
   assert train_config.loop.seed == 7
   assert train_config.loop.device == "cpu"
+  assert train_config.eval == EvalConfig(
+    split="test",
+    every_steps=2,
+    max_batches=3,
+  )
+  assert train_config.rollout == RolloutConfig(
+    every_steps=2,
+    max_new_tokens=8,
+    prompts=(RolloutPromptConfig(name="fib", prompt="def fib(n):"),),
+  )
   assert config.secrets.env_file == Path(".secret")
   assert config.sinks == (
     FilesSinkConfig(metrics_jsonl="train-metrics.jsonl"),
@@ -395,6 +428,42 @@ def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
   assert f"resolved_version: {published.version}" in resolved
 
 
+def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
+  dataset_root = publish_split_fixture_dataset(tmp_path)
+  run_dir = tmp_path / "run"
+
+  run_experiment(
+    ExperimentConfig(
+      name="eval_rollout_test",
+      data=DataConfig(dataset_root=dataset_root, seq_len=8),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=2),
+      eval=EvalConfig(split="test", every_steps=1, max_batches=1),
+      rollout=RolloutConfig(
+        every_steps=2,
+        max_new_tokens=2,
+        prompts=(RolloutPromptConfig(name="fib", prompt="def fib(n):"),),
+      ),
+      output=OutputConfig(run_dir=run_dir),
+    )
+  )
+
+  metrics_lines = (run_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+  eval_metrics = [
+    json.loads(line) for line in metrics_lines if "eval/test_perplexity" in line
+  ]
+  assert [metrics["step"] for metrics in eval_metrics] == [1, 2]
+  assert all(metrics["eval/test_perplexity"] > 0 for metrics in eval_metrics)
+
+  rollout_path = run_dir / "rollouts" / "step-00000002.json"
+  rollout = json.loads(rollout_path.read_text(encoding="utf-8"))
+  assert rollout["step"] == 2
+  assert rollout["samples"][0]["name"] == "fib"
+  assert rollout["samples"][0]["prompt"] == "def fib(n):"
+  artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
+  assert "rollouts/step-00000002.json" in artifacts
+
+
 def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
   dataset_root = publish_fixture_dataset(tmp_path)
   run_dir = tmp_path / "run"
@@ -527,6 +596,27 @@ def publish_fixture_dataset(tmp_path: Path) -> Path:
     val_ratio=0.0,
     test_ratio=0.0,
   )
+  return dataset_root
+
+
+def publish_split_fixture_dataset(tmp_path: Path) -> Path:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  for index in range(80):
+    (repo_root / f"model_{index}.py").write_text(
+      "\n".join(f"def f_{index}_{i}(): return {i}" for i in range(20)),
+      encoding="utf-8",
+    )
+  published = publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+    train_ratio=0.5,
+    val_ratio=0.0,
+    test_ratio=0.5,
+  )
+  assert published.splits["train"]["token_count"] > 8
+  assert published.splits["test"]["token_count"] > 8
   return dataset_root
 
 

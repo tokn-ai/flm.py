@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from math import exp
 from typing import Protocol
 
 import torch
@@ -42,7 +43,41 @@ class TrainStepMetrics:
     }
 
 
+@dataclass(frozen=True)
+class EvalMetrics:
+  step: int
+  split: str
+  loss: float
+  perplexity: float
+  tokens: int
+
+  def to_log_dict(self) -> dict[str, float | int]:
+    return {
+      f"eval/{self.split}_loss": self.loss,
+      f"eval/{self.split}_perplexity": self.perplexity,
+      f"eval/{self.split}_tokens": self.tokens,
+    }
+
+
+@dataclass(frozen=True)
+class RolloutSample:
+  name: str
+  prompt: str
+  completion: str
+  text: str
+
+
+@dataclass(frozen=True)
+class RolloutBatch:
+  step: int
+  samples: tuple[RolloutSample, ...]
+
+
 StepCallback = Callable[[TrainStepMetrics], None]
+EvalCallback = Callable[[int, LanguageModel], EvalMetrics]
+EvalMetricsCallback = Callable[[EvalMetrics], None]
+RolloutCallback = Callable[[int, LanguageModel], RolloutBatch]
+RolloutBatchCallback = Callable[[RolloutBatch], None]
 
 
 class LanguageModelTrainer:
@@ -55,6 +90,12 @@ class LanguageModelTrainer:
     device: str,
     steps: int,
     on_step: StepCallback | None = None,
+    eval_every_steps: int | None = None,
+    evaluate: EvalCallback | None = None,
+    on_eval: EvalMetricsCallback | None = None,
+    rollout_every_steps: int | None = None,
+    rollout: RolloutCallback | None = None,
+    on_rollout: RolloutBatchCallback | None = None,
   ) -> None:
     if steps < 0:
       raise ValueError("steps must be non-negative")
@@ -64,6 +105,12 @@ class LanguageModelTrainer:
     self.device = device
     self.steps = steps
     self.on_step = on_step
+    self.eval_every_steps = eval_every_steps
+    self.evaluate = evaluate
+    self.on_eval = on_eval
+    self.rollout_every_steps = rollout_every_steps
+    self.rollout = rollout
+    self.on_rollout = on_rollout
 
   def train(self) -> list[TrainStepMetrics]:
     metrics: list[TrainStepMetrics] = []
@@ -99,6 +146,16 @@ class LanguageModelTrainer:
       metrics.append(step_metrics)
       if self.on_step is not None:
         self.on_step(step_metrics)
+      if self._should_eval(step) and self.evaluate is not None:
+        eval_metrics = self.evaluate(step, self.model)
+        if self.on_eval is not None:
+          self.on_eval(eval_metrics)
+        self.model.train()
+      if self._should_rollout(step) and self.rollout is not None:
+        rollout_batch = self.rollout(step, self.model)
+        if self.on_rollout is not None:
+          self.on_rollout(rollout_batch)
+        self.model.train()
 
     return metrics
 
@@ -113,8 +170,29 @@ class LanguageModelTrainer:
       input_ids, targets = next(iterator)
     return input_ids, targets, iterator
 
+  def _should_eval(self, step: int) -> bool:
+    return (
+      self.eval_every_steps is not None
+      and self.eval_every_steps > 0
+      and step % self.eval_every_steps == 0
+    )
+
+  def _should_rollout(self, step: int) -> bool:
+    return (
+      self.rollout_every_steps is not None
+      and self.rollout_every_steps > 0
+      and step % self.rollout_every_steps == 0
+    )
+
 
 def _learning_rate(optimizer: torch.optim.Optimizer) -> float:
   if not optimizer.param_groups:
     return 0.0
   return float(optimizer.param_groups[0].get("lr", 0.0))
+
+
+def perplexity(loss: float) -> float:
+  try:
+    return exp(loss)
+  except OverflowError:
+    return float("inf")

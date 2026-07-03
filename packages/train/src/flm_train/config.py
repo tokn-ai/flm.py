@@ -12,10 +12,13 @@ from flm_train.types import (
   DataConfig,
   DeepSeekV4ModelConfig,
   DSTinyModelConfig,
+  EvalConfig,
   LoopConfig,
   ModelConfig,
   OptimizerConfig,
   ReferenceModelConfig,
+  RolloutConfig,
+  RolloutPromptConfig,
   TrainConfig,
 )
 
@@ -82,6 +85,8 @@ class ExperimentConfig:
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   loop: LoopConfig = field(default_factory=LoopConfig)
+  eval: EvalConfig | None = None
+  rollout: RolloutConfig | None = None
   secrets: SecretsConfig = field(default_factory=SecretsConfig)
   output: OutputConfig = field(default_factory=OutputConfig)
   sinks: tuple[SinkConfig, ...] = field(default_factory=tuple)
@@ -102,6 +107,8 @@ class ExperimentConfig:
       model=self.model,
       optimizer=self.optimizer,
       loop=self.loop,
+      eval=self.eval,
+      rollout=self.rollout,
     )
 
 
@@ -127,6 +134,8 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "model",
     "optimizer",
     "loop",
+    "eval",
+    "rollout",
     "secrets",
     "output",
     "sinks",
@@ -141,6 +150,8 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   model = _section(raw, "model")
   optimizer = _section(raw, "optimizer")
   loop = _section(raw, "loop")
+  eval_config = _optional_section(raw, "eval")
+  rollout = _optional_section(raw, "rollout")
   secrets = _section(raw, "secrets")
   output = _section(raw, "output")
 
@@ -159,6 +170,8 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       batch_size=int(loop.get("batch_size", 8)),
       steps=int(loop.get("steps", 10)),
     ),
+    eval=_parse_eval(eval_config),
+    rollout=_parse_rollout(rollout),
     secrets=SecretsConfig(
       env_file=_optional_path(secrets.get("env_file", ".secret")),
     ),
@@ -184,6 +197,8 @@ def apply_overrides(
       batch_size=config.loop.batch_size,
       steps=config.loop.steps if overrides.steps is None else overrides.steps,
     ),
+    eval=config.eval,
+    rollout=config.rollout,
     secrets=config.secrets,
     output=config.output
     if overrides.run_dir is None
@@ -218,6 +233,12 @@ def _section(raw: dict[str, Any], name: str) -> dict[str, Any]:
   if not isinstance(value, dict):
     raise ValueError(f"experiment config section '{name}' must be a mapping")
   return value
+
+
+def _optional_section(raw: dict[str, Any], name: str) -> dict[str, Any] | None:
+  if name not in raw:
+    return None
+  return _section(raw, name)
 
 
 def _optional_int(value: Any) -> int | None:
@@ -260,6 +281,55 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     split=split,
     resolved_version=value.get("resolved_version"),
   )
+
+
+def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
+  if value is None:
+    return None
+  allowed = {"split", "every_steps", "max_batches"}
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown eval config keys: {sorted(unknown)}")
+  split = str(value.get("split", "test"))
+  if split not in {"val", "test"}:
+    raise ValueError(f"unsupported eval.split: {split}")
+  return EvalConfig(
+    split=split,
+    every_steps=int(value.get("every_steps", 100)),
+    max_batches=int(value.get("max_batches", 8)),
+  )
+
+
+def _parse_rollout(value: dict[str, Any] | None) -> RolloutConfig | None:
+  if value is None:
+    return None
+  allowed = {"every_steps", "max_new_tokens", "prompts"}
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown rollout config keys: {sorted(unknown)}")
+  return RolloutConfig(
+    every_steps=int(value.get("every_steps", 100)),
+    max_new_tokens=int(value.get("max_new_tokens", 64)),
+    prompts=_parse_rollout_prompts(value.get("prompts")),
+  )
+
+
+def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
+  if value is None:
+    return ()
+  if not isinstance(value, list | tuple):
+    raise ValueError("rollout.prompts must be a list")
+  prompts = []
+  for item in value:
+    if not isinstance(item, dict):
+      raise ValueError("rollout prompt must be a mapping")
+    prompts.append(
+      RolloutPromptConfig(
+        name=str(item.get("name", "prompt")),
+        prompt=str(item.get("prompt", "")),
+      )
+    )
+  return tuple(prompts)
 
 
 def _parse_model(value: dict[str, Any]) -> ModelConfig:

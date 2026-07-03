@@ -90,11 +90,33 @@ class LoopConfig:
 
 
 @dataclass(frozen=True)
+class EvalConfig:
+  split: Literal["val", "test"] = "test"
+  every_steps: int = 100
+  max_batches: int = 8
+
+
+@dataclass(frozen=True)
+class RolloutPromptConfig:
+  name: str
+  prompt: str
+
+
+@dataclass(frozen=True)
+class RolloutConfig:
+  every_steps: int = 100
+  max_new_tokens: int = 64
+  prompts: tuple[RolloutPromptConfig, ...] = ()
+
+
+@dataclass(frozen=True)
 class TrainConfig:
   data: DataConfig = field(default_factory=DataConfig)
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   loop: LoopConfig = field(default_factory=LoopConfig)
+  eval: EvalConfig | None = None
+  rollout: RolloutConfig | None = None
 
 
 @dataclass(frozen=True)
