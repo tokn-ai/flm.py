@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import flm_train.cli
@@ -310,6 +311,10 @@ def test_run_torch_memory_profile_records_cuda_trace_by_default(
     "flm_train.tune.torch.cuda.memory.memory_snapshot",
     lambda *, include_traces: {"segments": [], "include_traces": include_traces},
   )
+  monkeypatch.setattr(
+    "flm_train.tune.torch.cuda.memory._dump_snapshot",
+    lambda path: Path(path).write_bytes(b"memory-viz"),
+  )
 
   run_torch_memory_profile(
     ExperimentConfig(
@@ -322,10 +327,15 @@ def test_run_torch_memory_profile_records_cuda_trace_by_default(
   )
 
   tune_dir = tmp_path / "tune" / "run-123" / "tune" / "memory"
+  summary = json.loads((tune_dir / "summary.json").read_text(encoding="utf-8"))
   assert (tune_dir / "memory_snapshot.json").is_file()
+  assert (tune_dir / "memory_snapshot.pickle").read_bytes() == b"memory-viz"
   assert (tune_dir / "memory_summary.txt").read_text(encoding="utf-8") == (
     "summary for cuda"
   )
+  assert summary["memory_viz"] == "https://pytorch.org/memory_viz"
+  assert summary["memory_viz_snapshot"] == str(tune_dir / "memory_snapshot.pickle")
+  assert summary["memory_viz_snapshot_format"] == "pytorch_cuda_memory_viz_pickle"
   assert calls[0] == (
     "record",
     {

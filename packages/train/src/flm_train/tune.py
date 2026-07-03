@@ -242,6 +242,9 @@ def run_torch_memory_profile(
   if cuda_enabled:
     torch.cuda.synchronize()
     after_stats = torch.cuda.memory.memory_stats_as_nested_dict()
+    memory_viz_path = tune_dir / "memory_snapshot.pickle" if trace else None
+    if trace:
+      torch.cuda.memory._dump_snapshot(str(memory_viz_path))
     (tune_dir / "memory_summary.txt").write_text(
       torch.cuda.memory_summary(device=config.loop.device),
       encoding="utf-8",
@@ -252,6 +255,7 @@ def run_torch_memory_profile(
     )
   else:
     after_stats = {}
+    memory_viz_path = None
 
   _write_json(tune_dir / "memory_stats_before.json", before_stats)
   _write_json(tune_dir / "memory_stats_after.json", after_stats)
@@ -263,6 +267,11 @@ def run_torch_memory_profile(
       "memory_stats_after": str(tune_dir / "memory_stats_after.json"),
       "memory_stats_before": str(tune_dir / "memory_stats_before.json"),
       "memory_summary": str(tune_dir / "memory_summary.txt") if cuda_enabled else None,
+      "memory_viz": "https://pytorch.org/memory_viz",
+      "memory_viz_snapshot": str(memory_viz_path) if memory_viz_path else None,
+      "memory_viz_snapshot_format": "pytorch_cuda_memory_viz_pickle"
+      if memory_viz_path
+      else None,
       "profiler": "memory",
       "run_dir": str(config.run_dir),
       "snapshot": str(tune_dir / "memory_snapshot.json") if cuda_enabled else None,

@@ -53,6 +53,10 @@ Before committing:
 
 Avoid `pickle`/`.pkl` and `torch.load`/`.pt` for caches or data artifacts by
 default because they are unsafe to read from untrusted or stale locations.
+Exception: tune runs may write PyTorch CUDA memory visualizer snapshots as
+`.pickle` because `https://pytorch.org/memory_viz` requires that format. Treat
+those files as write-only diagnostics for the external viewer; never load them
+inside this repo.
 
 For token and array caches:
 
