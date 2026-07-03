@@ -12,6 +12,7 @@ LossBackend = Literal[
   "cut_cross_entropy",
   "tilelang_linear_cross_entropy",
 ]
+AttentionBackend = Literal["torch", "flash_attention2", "tilelang"]
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class ReferenceModelConfig:
   n_layers: int = 2
   n_heads: int = 4
   d_ff: int | None = None
+  attention_backend: AttentionBackend = "torch"
   loss_backend: LossBackend = "cross_entropy"
   loss_chunk_size: int = 512
 
@@ -48,6 +50,7 @@ class DSTinyModelConfig:
   qk_nope_head_dim: int = 16
   qk_rope_head_dim: int = 16
   v_head_dim: int = 32
+  attention_backend: AttentionBackend = "torch"
   loss_backend: LossBackend = "cross_entropy"
   loss_chunk_size: int = 512
 
@@ -80,6 +83,7 @@ class DeepSeekV4ModelConfig:
   n_group: int = 2
   topk_group: int = 1
   dense_layers: int = 1
+  attention_backend: AttentionBackend = "torch"
   loss_backend: LossBackend = "cross_entropy"
   loss_chunk_size: int = 512
 

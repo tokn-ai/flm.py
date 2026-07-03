@@ -26,6 +26,7 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         n_layers=model_config.n_layers,
         n_heads=model_config.n_heads,
         d_ff=model_config.d_ff,
+        attention_backend=model_config.attention_backend,
         loss_backend=model_config.loss_backend,
         loss_chunk_size=model_config.loss_chunk_size,
       )
@@ -60,6 +61,7 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         n_group=model_config.n_group,
         topk_group=model_config.topk_group,
         dense_layers=model_config.dense_layers,
+        attention_backend=model_config.attention_backend,
         loss_backend=model_config.loss_backend,
         loss_chunk_size=model_config.loss_chunk_size,
       )
@@ -78,6 +80,7 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         qk_rope_head_dim=model_config.qk_rope_head_dim,
         v_head_dim=model_config.v_head_dim,
         d_ff=model_config.d_ff,
+        attention_backend=model_config.attention_backend,
         loss_backend=model_config.loss_backend,
         loss_chunk_size=model_config.loss_chunk_size,
       )

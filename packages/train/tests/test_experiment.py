@@ -59,6 +59,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "n_layers": 3,
         "n_heads": 4,
         "d_ff": 64,
+        "attention_backend": "tilelang",
         "loss_backend": "linear_cross_entropy",
         "loss_chunk_size": 16,
       },
@@ -153,6 +154,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.model.n_layers == 3
   assert train_config.model.n_heads == 4
   assert train_config.model.d_ff == 64
+  assert train_config.model.attention_backend == "tilelang"
   assert train_config.model.loss_backend == "linear_cross_entropy"
   assert train_config.model.loss_chunk_size == 16
   assert train_config.optimizer.learning_rate == 1.0e-3
@@ -461,9 +463,17 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
     "n_layers": 3,
     "n_heads": 4,
     "d_ff": 64,
+    "attention_backend": "torch",
     "loss_backend": "cross_entropy",
     "loss_chunk_size": 512,
   }
+
+
+def test_16m_repo_config_uses_tilelang_backends() -> None:
+  config = load_experiment_config(Path("experiments/16m_repo.yaml"))
+
+  assert config.model.attention_backend == "tilelang"
+  assert config.model.loss_backend == "tilelang_linear_cross_entropy"
 
 
 def test_parse_experiment_config_accepts_cut_cross_entropy_backend() -> None:

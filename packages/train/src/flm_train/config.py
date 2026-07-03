@@ -420,6 +420,9 @@ def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
 
 def _parse_model(value: dict[str, Any]) -> ModelConfig:
   kind = value.get("kind", "reference")
+  attention_backend = str(value.get("attention_backend", "torch"))
+  if attention_backend not in {"torch", "flash_attention2", "tilelang"}:
+    raise ValueError(f"unsupported model.attention_backend: {attention_backend}")
   loss_backend = str(value.get("loss_backend", "cross_entropy"))
   if loss_backend not in {
     "cross_entropy",
@@ -437,6 +440,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       n_layers=int(value.get("n_layers", 2)),
       n_heads=int(value.get("n_heads", 4)),
       d_ff=_optional_int(value.get("d_ff")),
+      attention_backend=attention_backend,
       loss_backend=loss_backend,
       loss_chunk_size=loss_chunk_size,
     )
@@ -451,6 +455,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       qk_nope_head_dim=int(value.get("qk_nope_head_dim", 16)),
       qk_rope_head_dim=int(value.get("qk_rope_head_dim", 16)),
       v_head_dim=int(value.get("v_head_dim", 32)),
+      attention_backend=attention_backend,
       loss_backend=loss_backend,
       loss_chunk_size=loss_chunk_size,
     )
@@ -481,6 +486,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       n_group=int(value.get("n_group", 2)),
       topk_group=int(value.get("topk_group", 1)),
       dense_layers=int(value.get("dense_layers", 1)),
+      attention_backend=attention_backend,
       loss_backend=loss_backend,
       loss_chunk_size=loss_chunk_size,
     )
