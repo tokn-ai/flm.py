@@ -12,6 +12,7 @@ from flm_train.data import resolve_data_config
 from flm_train.presets import train_language_model
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import RunContext, build_run_sink
+from flm_train.system_metrics import SystemMetricsSampler
 from flm_train.trainer import EvalMetrics, RolloutBatch, TrainStepMetrics
 from flm_train.types import TrainingResult
 
@@ -30,8 +31,11 @@ class ExperimentRunner:
     sink = build_run_sink(self.config)
     context = RunContext(run_dir=self.run_dir)
     self._log(f"run_dir={self.run_dir}")
+    sampler = self._system_metrics_sampler(sink)
     try:
       sink.start_run(context, self.config)
+      if sampler is not None:
+        sampler.start()
       result = self.train(
         on_step=lambda metrics: self.report_step(metrics, sink=sink),
         on_eval=lambda metrics: self.report_eval(metrics, sink=sink),
@@ -44,6 +48,8 @@ class ExperimentRunner:
       sink.log_status("failed", message=str(exc))
       raise
     finally:
+      if sampler is not None:
+        sampler.stop()
       sink.close()
 
   def train(
@@ -69,6 +75,7 @@ class ExperimentRunner:
       loop=self.config.loop,
       eval=self.config.eval,
       rollout=self.config.rollout,
+      system_metrics=self.config.system_metrics,
       secrets=self.config.secrets,
       output=self.config.output,
       sinks=self.config.sinks,
@@ -99,6 +106,14 @@ class ExperimentRunner:
   def _log(self, message: str) -> None:
     if self.log is not None:
       self.log(message)
+
+  def _system_metrics_sampler(self, sink) -> SystemMetricsSampler | None:
+    if not self.config.system_metrics.enabled:
+      return None
+    return SystemMetricsSampler(
+      every_seconds=self.config.system_metrics.every_seconds,
+      emit=sink.log_system_metrics,
+    )
 
 
 def run_experiment(

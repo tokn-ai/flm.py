@@ -12,7 +12,7 @@ from flm_train.config import (
   TensorBoardSinkConfig,
   config_to_plain,
 )
-from flm_train.sinks.base import RunContext, RunStatus, Scalar
+from flm_train.sinks.base import JsonValue, RunContext, RunStatus, Scalar
 from flm_train.types import TrainingResult
 
 
@@ -53,6 +53,9 @@ class TensorBoardRunSink:
         writer.add_scalar(name, value, step)
       else:
         writer.add_text(name, str(value), step)
+
+  def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
+    del metrics
 
   def log_artifact(self, path: Path, name: str | None = None) -> None:
     self._writer().add_text(f"artifact/{name or path.name}", str(path), 0)

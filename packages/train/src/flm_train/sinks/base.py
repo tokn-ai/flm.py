@@ -11,6 +11,9 @@ from flm_train.config import ExperimentConfig
 from flm_train.types import TrainingResult
 
 Scalar = float | int | bool | str
+type JsonValue = (
+  bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
+)
 RunStatus = Literal["running", "success", "failed"]
 
 
@@ -27,6 +30,8 @@ class RunSink(Protocol):
   def log_status(self, status: RunStatus, message: str | None = None) -> None: ...
 
   def log_metrics(self, metrics: dict[str, Scalar], step: int) -> None: ...
+
+  def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None: ...
 
   def log_artifact(self, path: Path, name: str | None = None) -> None: ...
 
@@ -54,6 +59,10 @@ class CompositeRunSink:
   def log_metrics(self, metrics: dict[str, Scalar], step: int) -> None:
     for sink in self.sinks:
       sink.log_metrics(metrics, step)
+
+  def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
+    for sink in self.sinks:
+      sink.log_system_metrics(metrics)
 
   def log_artifact(self, path: Path, name: str | None = None) -> None:
     for sink in self.sinks:

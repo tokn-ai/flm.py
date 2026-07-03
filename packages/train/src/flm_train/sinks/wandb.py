@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from flm_train.config import ExperimentConfig, WandbSinkConfig, config_to_plain
-from flm_train.sinks.base import RunContext, RunStatus, Scalar
+from flm_train.sinks.base import JsonValue, RunContext, RunStatus, Scalar
 from flm_train.types import TrainingResult
 
 
@@ -44,6 +44,9 @@ class WandbRunSink:
 
   def log_metrics(self, metrics: dict[str, Scalar], step: int) -> None:
     self._module().log(metrics, step=step)
+
+  def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
+    del metrics
 
   def log_artifact(self, path: Path, name: str | None = None) -> None:
     module = self._module()

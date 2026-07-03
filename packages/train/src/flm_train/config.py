@@ -41,6 +41,7 @@ class FilesSinkConfig:
   resolved_config_yaml: str = "config.resolved.yaml"
   status_json: str = "status.json"
   metrics_jsonl: str = "metrics.jsonl"
+  system_metrics_jsonl: str = "system_metrics.jsonl"
   result_json: str = "result.json"
 
 
@@ -73,6 +74,12 @@ class WandbSinkConfig:
   job_type: str | None = None
 
 
+@dataclass(frozen=True)
+class SystemMetricsConfig:
+  enabled: bool = True
+  every_seconds: float = 5.0
+
+
 SinkConfig = (
   FilesSinkConfig | TensorBoardSinkConfig | MlflowSinkConfig | WandbSinkConfig
 )
@@ -87,6 +94,7 @@ class ExperimentConfig:
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
+  system_metrics: SystemMetricsConfig = field(default_factory=SystemMetricsConfig)
   secrets: SecretsConfig = field(default_factory=SecretsConfig)
   output: OutputConfig = field(default_factory=OutputConfig)
   sinks: tuple[SinkConfig, ...] = field(default_factory=tuple)
@@ -136,6 +144,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "loop",
     "eval",
     "rollout",
+    "system_metrics",
     "secrets",
     "output",
     "sinks",
@@ -152,6 +161,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   loop = _section(raw, "loop")
   eval_config = _optional_section(raw, "eval")
   rollout = _optional_section(raw, "rollout")
+  system_metrics = _section(raw, "system_metrics")
   secrets = _section(raw, "secrets")
   output = _section(raw, "output")
 
@@ -172,6 +182,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     ),
     eval=_parse_eval(eval_config),
     rollout=_parse_rollout(rollout),
+    system_metrics=_parse_system_metrics(system_metrics),
     secrets=SecretsConfig(
       env_file=_optional_path(secrets.get("env_file", ".secret")),
     ),
@@ -199,6 +210,7 @@ def apply_overrides(
     ),
     eval=config.eval,
     rollout=config.rollout,
+    system_metrics=config.system_metrics,
     secrets=config.secrets,
     output=config.output
     if overrides.run_dir is None
@@ -314,6 +326,20 @@ def _parse_rollout(value: dict[str, Any] | None) -> RolloutConfig | None:
   )
 
 
+def _parse_system_metrics(value: dict[str, Any]) -> SystemMetricsConfig:
+  allowed = {"enabled", "every_seconds"}
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown system_metrics config keys: {sorted(unknown)}")
+  every_seconds = float(value.get("every_seconds", 5.0))
+  if every_seconds <= 0:
+    raise ValueError("system_metrics.every_seconds must be positive")
+  return SystemMetricsConfig(
+    enabled=bool(value.get("enabled", True)),
+    every_seconds=every_seconds,
+  )
+
+
 def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
   if value is None:
     return ()
@@ -413,6 +439,9 @@ def _parse_sink(value: Any) -> SinkConfig:
       ),
       status_json=str(value.get("status_json", "status.json")),
       metrics_jsonl=str(value.get("metrics_jsonl", "metrics.jsonl")),
+      system_metrics_jsonl=str(
+        value.get("system_metrics_jsonl", "system_metrics.jsonl")
+      ),
       result_json=str(value.get("result_json", "result.json")),
     )
   if kind == "tensorboard":

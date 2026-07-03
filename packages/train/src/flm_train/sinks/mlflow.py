@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from flm_train.config import ExperimentConfig, MlflowSinkConfig, config_to_plain
-from flm_train.sinks.base import RunContext, RunStatus, Scalar
+from flm_train.sinks.base import JsonValue, RunContext, RunStatus, Scalar
 from flm_train.types import TrainingResult
 
 
@@ -49,6 +49,9 @@ class MlflowRunSink:
     }
     if numeric_metrics:
       self._client().log_metrics(numeric_metrics, step=step)
+
+  def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
+    del metrics
 
   def log_artifact(self, path: Path, name: str | None = None) -> None:
     self._client().log_artifact(str(path), artifact_path=name)

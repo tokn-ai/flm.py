@@ -12,7 +12,7 @@ from flm_train.config import (
   config_to_plain,
   write_yaml,
 )
-from flm_train.sinks.base import RunContext, RunStatus, Scalar, utc_now
+from flm_train.sinks.base import JsonValue, RunContext, RunStatus, Scalar, utc_now
 from flm_train.types import TrainingResult
 
 
@@ -51,6 +51,15 @@ class FilesRunSink:
       **metrics,
     }
     path = self._run_dir() / self.config.metrics_jsonl
+    with path.open("a", encoding="utf-8") as file:
+      file.write(json.dumps(payload, sort_keys=True) + "\n")
+
+  def log_system_metrics(self, metrics: dict[str, JsonValue]) -> None:
+    payload: dict[str, JsonValue] = {
+      "time": utc_now(),
+      **metrics,
+    }
+    path = self._run_dir() / self.config.system_metrics_jsonl
     with path.open("a", encoding="utf-8") as file:
       file.write(json.dumps(payload, sort_keys=True) + "\n")
 

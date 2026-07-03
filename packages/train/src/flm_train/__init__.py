@@ -1,6 +1,11 @@
 """Training workflows."""
 
-from flm_train.config import ExperimentConfig, SecretsConfig, load_experiment_config
+from flm_train.config import (
+  ExperimentConfig,
+  SecretsConfig,
+  SystemMetricsConfig,
+  load_experiment_config,
+)
 from flm_train.presets import train_language_model
 from flm_train.runner import run_experiment
 from flm_train.trainer import (
@@ -40,6 +45,7 @@ __all__ = [
   "RolloutPromptConfig",
   "RolloutSample",
   "SecretsConfig",
+  "SystemMetricsConfig",
   "TrainConfig",
   "TrainStepMetrics",
   "TrainingResult",

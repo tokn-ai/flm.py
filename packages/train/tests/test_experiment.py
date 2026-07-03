@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from flm_train.config import (
   FilesSinkConfig,
   MlflowSinkConfig,
   OutputConfig,
+  SystemMetricsConfig,
   TensorBoardSinkConfig,
   WandbSinkConfig,
   apply_overrides,
@@ -21,12 +23,14 @@ from flm_train.data import publish_repo_source_dataset
 from flm_train.runner import run_experiment
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import (
+  FilesRunSink,
   MlflowRunSink,
   RunContext,
   TensorBoardRunSink,
   WandbRunSink,
   build_run_sink,
 )
+from flm_train.system_metrics import SystemMetricsSampler
 from flm_train.types import (
   DataConfig,
   EvalConfig,
@@ -80,6 +84,10 @@ def test_parse_experiment_config_derives_train_config() -> None:
           }
         ],
       },
+      "system_metrics": {
+        "enabled": True,
+        "every_seconds": 2.5,
+      },
       "secrets": {
         "env_file": ".secret",
       },
@@ -90,6 +98,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         {
           "kind": "files",
           "metrics_jsonl": "train-metrics.jsonl",
+          "system_metrics_jsonl": "system.jsonl",
         },
         {
           "kind": "tensorboard",
@@ -143,9 +152,16 @@ def test_parse_experiment_config_derives_train_config() -> None:
     max_new_tokens=8,
     prompts=(RolloutPromptConfig(name="fib", prompt="def fib(n):"),),
   )
+  assert config.system_metrics == SystemMetricsConfig(
+    enabled=True,
+    every_seconds=2.5,
+  )
   assert config.secrets.env_file == Path(".secret")
   assert config.sinks == (
-    FilesSinkConfig(metrics_jsonl="train-metrics.jsonl"),
+    FilesSinkConfig(
+      metrics_jsonl="train-metrics.jsonl",
+      system_metrics_jsonl="system.jsonl",
+    ),
     TensorBoardSinkConfig(log_dir=Path("tb"), flush_secs=3),
     MlflowSinkConfig(
       tracking_uri="file:mlruns",
@@ -387,6 +403,14 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   assert metrics_payload["train/tokens_seen"] == 16
   assert metrics_payload["train/tokens_per_sec"] > 0
   assert metrics_payload["system/step_time_sec"] > 0
+  system_metrics_lines = (
+    (run_dir / "system_metrics.jsonl").read_text(encoding="utf-8").splitlines()
+  )
+  assert len(system_metrics_lines) >= 1
+  system_metrics_payload = json.loads(system_metrics_lines[0])
+  assert "time" in system_metrics_payload
+  assert "process" in system_metrics_payload
+  assert "gpus" in system_metrics_payload
   result_payload = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
   assert result_payload["file_count"] == 1
   assert len(result_payload["losses"]) == 1
@@ -499,6 +523,7 @@ def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
           resolved_config_yaml="cfg.yaml",
           status_json="state.json",
           metrics_jsonl="scalars.jsonl",
+          system_metrics_jsonl="system.jsonl",
           result_json="done.json",
         ),
       ),
@@ -510,6 +535,7 @@ def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:
   assert (sink_dir / "cfg.yaml").is_file()
   assert (sink_dir / "state.json").is_file()
   assert (sink_dir / "scalars.jsonl").is_file()
+  assert (sink_dir / "system.jsonl").is_file()
   assert (sink_dir / "done.json").is_file()
 
 
@@ -527,6 +553,50 @@ def test_build_run_sink_builds_all_sink_kinds() -> None:
   )
 
   assert len(sink.sinks) == 4
+
+
+def test_files_sink_logs_system_metrics(tmp_path: Path) -> None:
+  sink = FilesRunSink(FilesSinkConfig(system_metrics_jsonl="system.jsonl"))
+
+  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="files"))
+  sink.log_system_metrics(
+    {
+      "process": {"pid": 123, "max_rss_bytes": 456},
+      "gpus": [
+        {
+          "source": "nvidia-smi",
+          "index": 0,
+          "utilization_pct": 12.5,
+        }
+      ],
+    }
+  )
+
+  payload = json.loads((tmp_path / "system.jsonl").read_text(encoding="utf-8"))
+  assert "time" in payload
+  assert payload["process"]["pid"] == 123
+  assert payload["gpus"][0]["utilization_pct"] == 12.5
+
+
+def test_system_metrics_sampler_emits_immediately() -> None:
+  emissions = []
+  emitted = threading.Event()
+
+  def emit(metrics) -> None:
+    emissions.append(metrics)
+    emitted.set()
+
+  sampler = SystemMetricsSampler(
+    every_seconds=60.0,
+    collect=lambda: {"process": {"pid": 1}, "gpus": []},
+    emit=emit,
+  )
+
+  sampler.start()
+  assert emitted.wait(timeout=1.0)
+  sampler.stop()
+
+  assert emissions == [{"process": {"pid": 1}, "gpus": []}]
 
 
 def test_tensorboard_sink_logs_scalars_and_text(tmp_path: Path) -> None:
