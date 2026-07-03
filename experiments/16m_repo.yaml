@@ -32,3 +32,4 @@ output:
 
 sinks:
   - kind: files
+  - kind: tensorboard
