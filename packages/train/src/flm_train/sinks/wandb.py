@@ -29,12 +29,13 @@ class WandbRunSink:
     self.run = module.init(
       project=self.config.project,
       entity=self.config.entity,
-      name=self.config.name or config.name,
+      id=config.run.id,
+      name=self.config.name or config.run.name or config.name,
       mode=self.config.mode,
       dir=str(self.config.dir or context.run_dir),
       config=config_to_plain(config),
       tags=list(self.config.tags) if self.config.tags else None,
-      group=self.config.group,
+      group=self.config.group or config.run.group or config.name,
       job_type=self.config.job_type,
     )
     self.log_status("running")

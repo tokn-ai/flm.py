@@ -2,6 +2,7 @@
 
 from flm_train.config import (
   ExperimentConfig,
+  RunConfig,
   SecretsConfig,
   SystemMetricsConfig,
   load_experiment_config,
@@ -44,6 +45,7 @@ __all__ = [
   "RolloutConfig",
   "RolloutPromptConfig",
   "RolloutSample",
+  "RunConfig",
   "SecretsConfig",
   "SystemMetricsConfig",
   "TrainConfig",

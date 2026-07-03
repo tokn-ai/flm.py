@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import random
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
-from flm_train.config import ExperimentConfig
+from flm_train.config import ExperimentConfig, RunConfig
 from flm_train.data import resolve_data_config
 from flm_train.presets import train_language_model
 from flm_train.secrets import apply_secret_env, load_secret_env
@@ -28,6 +31,7 @@ class ExperimentRunner:
   def run(self) -> TrainingResult:
     apply_secret_env(load_secret_env(self.config.secrets.env_file))
     self.config = self.resolved_config()
+    self.run_dir = self.config.run_dir
     sink = build_run_sink(self.config)
     context = RunContext(run_dir=self.run_dir)
     self._log(f"run_dir={self.run_dir}")
@@ -76,6 +80,7 @@ class ExperimentRunner:
       eval=self.config.eval,
       rollout=self.config.rollout,
       system_metrics=self.config.system_metrics,
+      run=resolve_run_config(self.config.name, self.config.run),
       secrets=self.config.secrets,
       output=self.config.output,
       sinks=self.config.sinks,
@@ -126,3 +131,41 @@ def run_experiment(
 
 def result_path(run_dir: Path) -> Path:
   return run_dir / "result.json"
+
+
+def resolve_run_config(experiment_name: str, run: RunConfig) -> RunConfig:
+  run_id = run.id or generate_run_id()
+  run_name = run.name or generate_run_name(experiment_name)
+  return RunConfig(id=run_id, name=run_name, group=run.group)
+
+
+def generate_run_id() -> str:
+  timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+  return f"{timestamp}-{uuid4().hex[:6]}"
+
+
+def generate_run_name(experiment_name: str) -> str:
+  return f"{experiment_name} {random.choice(_ADJECTIVES)}-{random.choice(_NOUNS)}"
+
+
+_ADJECTIVES = (
+  "brisk",
+  "calm",
+  "clear",
+  "direct",
+  "fresh",
+  "quiet",
+  "sharp",
+  "steady",
+)
+
+_NOUNS = (
+  "arc",
+  "beam",
+  "field",
+  "forge",
+  "signal",
+  "spark",
+  "trail",
+  "vector",
+)

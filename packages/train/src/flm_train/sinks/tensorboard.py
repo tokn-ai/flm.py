@@ -41,11 +41,19 @@ class TensorBoardRunSink:
     self.log_status("running")
 
   def write_config(self, config: ExperimentConfig) -> None:
-    self._writer().add_text(
+    writer = self._writer()
+    writer.add_text(
       "config/json",
       json.dumps(config_to_plain(config), indent=2, sort_keys=True),
       0,
     )
+    writer.add_text("experiment/name", config.name, 0)
+    if config.run.id is not None:
+      writer.add_text("run/id", config.run.id, 0)
+    if config.run.name is not None:
+      writer.add_text("run/name", config.run.name, 0)
+    if config.run.group is not None:
+      writer.add_text("run/group", config.run.group, 0)
 
   def log_status(self, status: RunStatus, message: str | None = None) -> None:
     payload = {"status": status}

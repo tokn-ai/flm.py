@@ -29,12 +29,13 @@ class MlflowRunSink:
     client = self._client()
     if self.config.tracking_uri is not None:
       client.set_tracking_uri(self.config.tracking_uri)
-    client.set_experiment(self.config.experiment_name)
+    client.set_experiment(self.config.experiment_name or config.name)
     client.start_run(
-      run_name=self.config.run_name or config.name,
+      run_name=self.config.run_name or config.run.name or config.name,
       nested=self.config.nested,
     )
     self.active = True
+    client.set_tags(_run_tags(config))
     self.write_config(config)
     self.log_status("running")
 
@@ -103,3 +104,14 @@ def _flatten(value: object, prefix: str = "") -> dict[str, str]:
   if isinstance(value, list):
     return {prefix: ",".join(str(item) for item in value)}
   return {prefix: str(value)}
+
+
+def _run_tags(config: ExperimentConfig) -> dict[str, str]:
+  tags = {"flm.experiment_name": config.name}
+  if config.run.id is not None:
+    tags["flm.run_id"] = config.run.id
+  if config.run.name is not None:
+    tags["flm.run_name"] = config.run.name
+  if config.run.group is not None:
+    tags["flm.run_group"] = config.run.group
+  return tags

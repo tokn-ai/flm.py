@@ -20,8 +20,10 @@ class FilesRunSink:
   def __init__(self, config: FilesSinkConfig) -> None:
     self.config = config
     self.run_dir: Path | None = None
+    self.experiment_config: ExperimentConfig | None = None
 
   def start_run(self, context: RunContext, config: ExperimentConfig) -> None:
+    self.experiment_config = config
     self.run_dir = self.config.run_dir or context.run_dir
     self.run_dir.mkdir(parents=True, exist_ok=True)
     self.write_config(config)
@@ -37,9 +39,19 @@ class FilesRunSink:
 
   def log_status(self, status: RunStatus, message: str | None = None) -> None:
     payload: dict[str, Scalar] = {
+      "experiment_name": self.experiment_config.name
+      if self.experiment_config is not None
+      else "",
       "status": status,
       "updated_at": utc_now(),
     }
+    if self.experiment_config is not None:
+      if self.experiment_config.run.id is not None:
+        payload["run_id"] = self.experiment_config.run.id
+      if self.experiment_config.run.name is not None:
+        payload["run_name"] = self.experiment_config.run.name
+      if self.experiment_config.run.group is not None:
+        payload["run_group"] = self.experiment_config.run.group
     if message is not None:
       payload["message"] = message
     _write_json(self._run_dir() / self.config.status_json, payload)

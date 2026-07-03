@@ -34,6 +34,13 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class RunConfig:
+  id: str | None = None
+  name: str | None = None
+  group: str | None = None
+
+
+@dataclass(frozen=True)
 class FilesSinkConfig:
   kind: Literal["files"] = "files"
   run_dir: Path | None = None
@@ -56,7 +63,7 @@ class TensorBoardSinkConfig:
 class MlflowSinkConfig:
   kind: Literal["mlflow"] = "mlflow"
   tracking_uri: str | None = None
-  experiment_name: str = "flm"
+  experiment_name: str | None = None
   run_name: str | None = None
   nested: bool = False
 
@@ -95,6 +102,7 @@ class ExperimentConfig:
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
   system_metrics: SystemMetricsConfig = field(default_factory=SystemMetricsConfig)
+  run: RunConfig = field(default_factory=RunConfig)
   secrets: SecretsConfig = field(default_factory=SecretsConfig)
   output: OutputConfig = field(default_factory=OutputConfig)
   sinks: tuple[SinkConfig, ...] = field(default_factory=tuple)
@@ -103,7 +111,9 @@ class ExperimentConfig:
   def run_dir(self) -> Path:
     if self.output.run_dir is not None:
       return self.output.run_dir
-    return Path("runs") / self.name
+    if self.run.id is None:
+      return Path("runs") / self.name
+    return Path("runs") / self.name / self.run.id
 
   def to_train_config(self) -> TrainConfig:
     if self.data.kind != "token_dataset":
@@ -145,6 +155,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "eval",
     "rollout",
     "system_metrics",
+    "run",
     "secrets",
     "output",
     "sinks",
@@ -162,6 +173,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   eval_config = _optional_section(raw, "eval")
   rollout = _optional_section(raw, "rollout")
   system_metrics = _section(raw, "system_metrics")
+  run = _section(raw, "run")
   secrets = _section(raw, "secrets")
   output = _section(raw, "output")
 
@@ -183,6 +195,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     eval=_parse_eval(eval_config),
     rollout=_parse_rollout(rollout),
     system_metrics=_parse_system_metrics(system_metrics),
+    run=_parse_run(run),
     secrets=SecretsConfig(
       env_file=_optional_path(secrets.get("env_file", ".secret")),
     ),
@@ -211,6 +224,7 @@ def apply_overrides(
     eval=config.eval,
     rollout=config.rollout,
     system_metrics=config.system_metrics,
+    run=config.run,
     secrets=config.secrets,
     output=config.output
     if overrides.run_dir is None
@@ -340,6 +354,18 @@ def _parse_system_metrics(value: dict[str, Any]) -> SystemMetricsConfig:
   )
 
 
+def _parse_run(value: dict[str, Any]) -> RunConfig:
+  allowed = {"id", "name", "group"}
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown run config keys: {sorted(unknown)}")
+  return RunConfig(
+    id=_optional_str(value.get("id")),
+    name=_optional_str(value.get("name")),
+    group=_optional_str(value.get("group")),
+  )
+
+
 def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
   if value is None:
     return ()
@@ -418,6 +444,12 @@ def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:
   return tuple(str(item) for item in value)
 
 
+def _optional_str(value: Any) -> str | None:
+  if value is None:
+    return None
+  return str(value)
+
+
 def _parse_sinks(value: Any) -> tuple[SinkConfig, ...]:
   if value is None:
     return ()
@@ -452,7 +484,7 @@ def _parse_sink(value: Any) -> SinkConfig:
   if kind == "mlflow":
     return MlflowSinkConfig(
       tracking_uri=value.get("tracking_uri"),
-      experiment_name=str(value.get("experiment_name", "flm")),
+      experiment_name=_optional_str(value.get("experiment_name")),
       run_name=value.get("run_name"),
       nested=bool(value.get("nested", False)),
     )

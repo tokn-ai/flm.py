@@ -11,6 +11,7 @@ from flm_train.config import (
   FilesSinkConfig,
   MlflowSinkConfig,
   OutputConfig,
+  RunConfig,
   SystemMetricsConfig,
   TensorBoardSinkConfig,
   WandbSinkConfig,
@@ -20,7 +21,7 @@ from flm_train.config import (
   parse_experiment_config,
 )
 from flm_train.data import publish_repo_source_dataset
-from flm_train.runner import run_experiment
+from flm_train.runner import resolve_run_config, run_experiment
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import (
   FilesRunSink,
@@ -87,6 +88,11 @@ def test_parse_experiment_config_derives_train_config() -> None:
       "system_metrics": {
         "enabled": True,
         "every_seconds": 2.5,
+      },
+      "run": {
+        "id": "run-123",
+        "name": "tiny brisk-signal",
+        "group": "smoke",
       },
       "secrets": {
         "env_file": ".secret",
@@ -156,6 +162,11 @@ def test_parse_experiment_config_derives_train_config() -> None:
     enabled=True,
     every_seconds=2.5,
   )
+  assert config.run == RunConfig(
+    id="run-123",
+    name="tiny brisk-signal",
+    group="smoke",
+  )
   assert config.secrets.env_file == Path(".secret")
   assert config.sinks == (
     FilesSinkConfig(
@@ -185,6 +196,23 @@ def test_parse_experiment_config_derives_train_config() -> None:
 def test_parse_experiment_config_rejects_unknown_keys() -> None:
   with pytest.raises(ValueError, match="unknown experiment config keys"):
     parse_experiment_config({"name": "bad", "typo": True})
+
+
+def test_resolved_config_generates_run_identity() -> None:
+  run = resolve_run_config("identity", RunConfig())
+
+  assert run.id is not None
+  assert run.name is not None
+  assert run.name.startswith("identity ")
+  assert ExperimentConfig(name="identity", run=run).run_dir == (
+    Path("runs") / "identity" / run.id
+  )
+
+
+def test_run_dir_uses_explicit_run_id() -> None:
+  config = ExperimentConfig(name="identity", run=RunConfig(id="run-123"))
+
+  assert config.run_dir == Path("runs") / "identity" / "run-123"
 
 
 def test_parse_experiment_config_rejects_live_repo_data() -> None:
@@ -393,6 +421,9 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   assert (run_dir / "config.resolved.yaml").is_file()
   status_payload = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
   assert status_payload["status"] == "success"
+  assert status_payload["experiment_name"] == "artifact_test"
+  assert status_payload["run_id"]
+  assert status_payload["run_name"].startswith("artifact_test ")
   metrics_lines = (run_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
   assert len(metrics_lines) == 1
   metrics_payload = json.loads(metrics_lines[0])
@@ -603,7 +634,13 @@ def test_tensorboard_sink_logs_scalars_and_text(tmp_path: Path) -> None:
   writer = FakeSummaryWriter()
   sink = TensorBoardRunSink(TensorBoardSinkConfig(), writer=writer)
 
-  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="tb"))
+  sink.start_run(
+    RunContext(run_dir=tmp_path),
+    ExperimentConfig(
+      name="tb",
+      run=RunConfig(id="run-123", name="tb brisk-signal", group="smoke"),
+    ),
+  )
   sink.log_metrics({"train/loss": 1.5, "phase": "train"}, step=2)
   sink.log_system_metrics(
     {
@@ -617,6 +654,10 @@ def test_tensorboard_sink_logs_scalars_and_text(tmp_path: Path) -> None:
 
   assert ("train/loss", 1.5, 2) in writer.scalars
   assert ("phase", "train", 2) in writer.texts
+  assert ("experiment/name", "tb", 0) in writer.texts
+  assert ("run/id", "run-123", 0) in writer.texts
+  assert ("run/name", "tb brisk-signal", 0) in writer.texts
+  assert ("run/group", "smoke", 0) in writer.texts
   assert ("system/process/max_rss_bytes", 1024, 0) in writer.scalars
   assert ("system/gpus/0/utilization_pct", 25.0, 0) in writer.scalars
   assert ("system/gpus/0/name", "gpu", 0) in writer.texts
@@ -628,14 +669,18 @@ def test_mlflow_sink_logs_run_data(tmp_path: Path) -> None:
   sink = MlflowRunSink(
     MlflowSinkConfig(
       tracking_uri="file:mlruns",
-      experiment_name="exp",
-      run_name="run",
       nested=True,
     ),
     client=client,
   )
 
-  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="mlflow"))
+  sink.start_run(
+    RunContext(run_dir=tmp_path),
+    ExperimentConfig(
+      name="mlflow",
+      run=RunConfig(id="run-123", name="mlflow brisk-signal", group="smoke"),
+    ),
+  )
   sink.log_metrics({"train/loss": 1.25, "phase": "train"}, step=3)
   sink.log_system_metrics(
     {
@@ -647,8 +692,14 @@ def test_mlflow_sink_logs_run_data(tmp_path: Path) -> None:
   sink.finish_run(TrainingResult(losses=[1.25], token_count=10, file_count=1))
 
   assert client.tracking_uri == "file:mlruns"
-  assert client.experiment_name == "exp"
-  assert client.started == {"run_name": "run", "nested": True}
+  assert client.experiment_name == "mlflow"
+  assert client.started == {"run_name": "mlflow brisk-signal", "nested": True}
+  assert client.tags[0] == {
+    "flm.experiment_name": "mlflow",
+    "flm.run_id": "run-123",
+    "flm.run_name": "mlflow brisk-signal",
+    "flm.run_group": "smoke",
+  }
   assert client.metrics == [
     ({"train/loss": 1.25}, 3),
     (
@@ -670,16 +721,20 @@ def test_wandb_sink_logs_run_data(tmp_path: Path) -> None:
     WandbSinkConfig(
       project="project",
       entity="entity",
-      name="run",
       mode="offline",
       tags=("tag-a",),
-      group="group",
       job_type="job",
     ),
     module=module,
   )
 
-  sink.start_run(RunContext(run_dir=tmp_path), ExperimentConfig(name="wandb"))
+  sink.start_run(
+    RunContext(run_dir=tmp_path),
+    ExperimentConfig(
+      name="wandb",
+      run=RunConfig(id="run-123", name="wandb brisk-signal", group="smoke"),
+    ),
+  )
   sink.log_metrics({"train/loss": 2.0}, step=4)
   sink.log_system_metrics(
     {
@@ -692,7 +747,9 @@ def test_wandb_sink_logs_run_data(tmp_path: Path) -> None:
 
   assert module.init_kwargs["project"] == "project"
   assert module.init_kwargs["entity"] == "entity"
-  assert module.init_kwargs["name"] == "run"
+  assert module.init_kwargs["id"] == "run-123"
+  assert module.init_kwargs["name"] == "wandb brisk-signal"
+  assert module.init_kwargs["group"] == "smoke"
   assert module.logs[-3] == ({"train/loss": 2.0}, 4)
   assert module.logs[-2] == (
     {
