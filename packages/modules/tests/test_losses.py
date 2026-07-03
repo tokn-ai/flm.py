@@ -16,7 +16,7 @@ class LossCase:
 
 
 def test_linear_cross_entropy_matches_cross_entropy() -> None:
-  _assert_matches_cross_entropy(
+  _assert_forward_and_backward_match_cross_entropy(
     LossCase(
       name="chunked_cce",
       loss_fn=lambda hidden, weight, targets: linear_cross_entropy(
@@ -33,7 +33,7 @@ def test_torch_linear_cross_entropy_matches_cross_entropy_when_available() -> No
   torch_linear_cross_entropy = getattr(F, "linear_cross_entropy", None)
   if torch_linear_cross_entropy is None:
     pytest.skip("torch.nn.functional.linear_cross_entropy is not available")
-  _assert_matches_cross_entropy(
+  _assert_forward_and_backward_match_cross_entropy(
     LossCase(
       name="F.linear_cross_entropy",
       loss_fn=lambda hidden, weight, targets: torch_linear_cross_entropy(
@@ -51,7 +51,7 @@ def test_cut_cross_entropy_matches_cross_entropy_when_available() -> None:
     pytest.skip("cut_cross_entropy is not installed")
   if not torch.cuda.is_available():
     pytest.skip("cut_cross_entropy default kernel requires CUDA")
-  _assert_matches_cross_entropy(
+  _assert_forward_and_backward_match_cross_entropy(
     LossCase(
       name="cut_cross_entropy",
       loss_fn=lambda hidden, weight, targets: cut_cross_entropy(
@@ -73,7 +73,7 @@ def test_tilelang_linear_cross_entropy_matches_cross_entropy_when_available() ->
     pytest.skip("TileLang CCE requires CUDA")
   from flm_modules.kernels.tilelang import tilelang_linear_cross_entropy
 
-  _assert_matches_cross_entropy(
+  _assert_forward_and_backward_match_cross_entropy(
     LossCase(
       name="tilelang_linear_cross_entropy",
       loss_fn=lambda hidden, weight, targets: tilelang_linear_cross_entropy(
@@ -89,7 +89,7 @@ def test_tilelang_linear_cross_entropy_matches_cross_entropy_when_available() ->
   )
 
 
-def _assert_matches_cross_entropy(
+def _assert_forward_and_backward_match_cross_entropy(
   case: LossCase,
   *,
   device: torch.device | str = "cpu",
@@ -136,27 +136,36 @@ def _assert_matches_cross_entropy(
   )
 
 
-def test_language_model_loss_dispatches_linear_cross_entropy() -> None:
+def test_language_model_loss_dispatches_linear_cross_entropy_backward() -> None:
   torch.manual_seed(0)
   hidden = torch.randn(2, 4, 6, requires_grad=True)
   weight = torch.randn(9, 6, requires_grad=True)
   targets = torch.randint(0, 9, (2, 4))
 
+  expected_hidden = hidden.detach().clone().requires_grad_(True)
+  expected_weight = weight.detach().clone().requires_grad_(True)
   expected = linear_cross_entropy(
-    hidden_states=hidden,
-    classifier_weight=weight,
+    hidden_states=expected_hidden,
+    classifier_weight=expected_weight,
     targets=targets,
     chunk_size=3,
   )
+  expected.backward()
+
+  actual_hidden = hidden.detach().clone().requires_grad_(True)
+  actual_weight = weight.detach().clone().requires_grad_(True)
   actual = language_model_loss(
-    hidden_states=hidden,
-    classifier_weight=weight,
+    hidden_states=actual_hidden,
+    classifier_weight=actual_weight,
     targets=targets,
     backend="linear_cross_entropy",
     chunk_size=3,
   )
+  actual.backward()
 
   torch.testing.assert_close(actual, expected)
+  torch.testing.assert_close(actual_hidden.grad, expected_hidden.grad)
+  torch.testing.assert_close(actual_weight.grad, expected_weight.grad)
 
 
 def _cut_cross_entropy():
