@@ -17,6 +17,8 @@ from flm_train.trainer import (
   LanguageModelTrainer,
   RolloutBatch,
   RolloutSample,
+  RolloutToken,
+  RolloutTopLogProb,
   TrainStepMetrics,
 )
 from flm_train.types import RolloutPromptConfig, TrainConfig, TrainingResult
@@ -147,19 +149,23 @@ def generate_rollouts(
   with torch.no_grad():
     for prompt in prompts:
       prompt_tokens = encoding.encode_ordinary(prompt.prompt)
-      output_tokens = greedy_decode(
+      generated_tokens = greedy_decode(
         model=model,
         prompt_tokens=prompt_tokens,
+        encoding=encoding,
         device=device,
         max_seq_len=max_seq_len,
         max_new_tokens=max_new_tokens,
       )
+      output_tokens = prompt_tokens + [token.token for token in generated_tokens]
       text = encoding.decode(output_tokens)
       samples.append(
         RolloutSample(
           name=prompt.name,
           prompt=prompt.prompt,
-          completion=encoding.decode(output_tokens[len(prompt_tokens) :]),
+          prompt_tokens=tuple(prompt_tokens),
+          tokens=tuple(generated_tokens),
+          completion=encoding.decode([token.token for token in generated_tokens]),
           text=text,
         )
       )
@@ -170,17 +176,40 @@ def greedy_decode(
   *,
   model: LanguageModel,
   prompt_tokens: list[int],
+  encoding,
   device: str,
   max_seq_len: int,
   max_new_tokens: int,
-) -> list[int]:
+) -> list[RolloutToken]:
   if not prompt_tokens:
     raise ValueError("rollout prompt must not be empty")
   tokens = list(prompt_tokens)
+  generated_tokens: list[RolloutToken] = []
   for _ in range(max_new_tokens):
     window = tokens[-max_seq_len:]
     input_ids = torch.tensor([window], dtype=torch.long, device=device)
     logits, _ = model(input_ids)
-    next_token = int(torch.argmax(logits[0, -1]).detach().cpu())
+    log_probs = torch.log_softmax(logits[0, -1], dim=-1)
+    probs = torch.exp(log_probs)
+    entropy = float(-(probs * log_probs).sum().detach().cpu())
+    top_log_probs, top_tokens = torch.topk(log_probs, k=min(10, log_probs.numel()))
+    next_token = int(top_tokens[0].detach().cpu())
+    next_log_prob = float(top_log_probs[0].detach().cpu())
+    generated_tokens.append(
+      RolloutToken(
+        token=next_token,
+        text=encoding.decode([next_token]),
+        log_prob=next_log_prob,
+        top_log_probs=tuple(
+          RolloutTopLogProb(
+            token=int(token.detach().cpu()),
+            text=encoding.decode([int(token.detach().cpu())]),
+            log_prob=float(log_prob.detach().cpu()),
+          )
+          for token, log_prob in zip(top_tokens, top_log_probs, strict=True)
+        ),
+        entropy=entropy,
+      )
+    )
     tokens.append(next_token)
-  return tokens
+  return generated_tokens

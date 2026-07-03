@@ -60,8 +60,26 @@ class EvalMetrics:
 class RolloutSample:
   name: str
   prompt: str
+  prompt_tokens: tuple[int, ...]
+  tokens: tuple[RolloutToken, ...]
   completion: str
   text: str
+
+
+@dataclass(frozen=True)
+class RolloutTopLogProb:
+  token: int
+  text: str
+  log_prob: float
+
+
+@dataclass(frozen=True)
+class RolloutToken:
+  token: int
+  text: str
+  log_prob: float
+  top_log_probs: tuple[RolloutTopLogProb, ...]
+  entropy: float
 
 
 @dataclass(frozen=True)
