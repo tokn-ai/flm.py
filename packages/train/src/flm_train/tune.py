@@ -17,13 +17,14 @@ from torch.profiler import ProfilerActivity, profile
 from flm_train.config import (
   ExperimentConfig,
   ExperimentOverrides,
+  FilesSinkConfig,
   RunConfig,
   apply_overrides,
   config_to_plain,
   load_experiment_config,
   write_yaml,
 )
-from flm_train.runner import ExperimentRunner, run_experiment
+from flm_train.runner import ExperimentRunner, generate_run_id, run_experiment
 from flm_train.types import CheckpointConfig
 
 
@@ -36,8 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument("--seed", type=int, default=None)
   parser.add_argument(
     "--profiler",
-    choices=("torch", "nsys", "both"),
     default="torch",
+    help="Profiler to run: torch, nsys, all, or a comma-separated list.",
   )
   parser.add_argument(
     "--nsys-trace",
@@ -70,11 +71,25 @@ def run_from_args(args: argparse.Namespace) -> None:
     include_rollout=args.include_rollout,
     include_checkpoint=args.include_checkpoint,
   )
-  if args.profiler in {"torch", "both"}:
+  profilers = parse_profilers(args.profiler)
+  if "torch" in profilers:
     run_torch_profile(config, log=print)
-  if args.profiler in {"nsys", "both"}:
+  if "nsys" in profilers:
     run_nsys_profile(config, trace=args.nsys_trace, log=print)
     return
+
+
+def parse_profilers(value: str) -> tuple[str, ...]:
+  profilers = tuple(item.strip() for item in value.split(",") if item.strip())
+  if profilers == ("all",):
+    return ("torch", "nsys")
+  supported = {"torch", "nsys"}
+  unknown = sorted(set(profilers) - supported)
+  if unknown:
+    raise ValueError(f"unsupported profiler: {unknown}")
+  if not profilers:
+    raise ValueError("profiler must not be empty")
+  return profilers
 
 
 def prepare_tune_config(
@@ -84,6 +99,7 @@ def prepare_tune_config(
   include_rollout: bool,
   include_checkpoint: bool,
 ) -> ExperimentConfig:
+  config = _with_tune_run_id(config)
   resolved = ExperimentRunner(config).resolved_config()
   return ExperimentConfig(
     name=resolved.name,
@@ -104,7 +120,31 @@ def prepare_tune_config(
     ),
     secrets=resolved.secrets,
     output=resolved.output,
-    sinks=resolved.sinks,
+    sinks=(FilesSinkConfig(),),
+  )
+
+
+def _with_tune_run_id(config: ExperimentConfig) -> ExperimentConfig:
+  if config.run.id is not None:
+    return config
+  return ExperimentConfig(
+    name=config.name,
+    data=config.data,
+    model=config.model,
+    optimizer=config.optimizer,
+    loop=config.loop,
+    eval=config.eval,
+    rollout=config.rollout,
+    checkpoint=config.checkpoint,
+    system_metrics=config.system_metrics,
+    run=RunConfig(
+      id=f"tune-{generate_run_id()}",
+      name=config.run.name,
+      group=config.run.group,
+    ),
+    secrets=config.secrets,
+    output=config.output,
+    sinks=config.sinks,
   )
 
 

@@ -1,10 +1,17 @@
 from pathlib import Path
 
 import flm_train.cli
-from flm_train.config import ExperimentConfig, OutputConfig, RunConfig
+from flm_train.config import (
+  ExperimentConfig,
+  FilesSinkConfig,
+  OutputConfig,
+  RunConfig,
+  TensorBoardSinkConfig,
+)
 from flm_train.tune import (
   build_nsys_command,
   parse_args,
+  parse_profilers,
   prepare_tune_config,
   run_torch_profile,
 )
@@ -28,7 +35,7 @@ def test_parse_args_accepts_tune_options() -> None:
       "--root-dir",
       "/tmp/runs",
       "--profiler",
-      "nsys",
+      "nsys,torch",
       "--nsys-trace",
       "cuda,nvtx",
       "--include-eval",
@@ -39,10 +46,16 @@ def test_parse_args_accepts_tune_options() -> None:
   assert args.steps == 2
   assert args.device == "cuda"
   assert args.root_dir == Path("/tmp/runs")
-  assert args.profiler == "nsys"
+  assert args.profiler == "nsys,torch"
   assert args.nsys_trace == "cuda,nvtx"
   assert args.include_eval is True
   assert args.include_rollout is False
+
+
+def test_parse_profilers_accepts_all_and_lists() -> None:
+  assert parse_profilers("all") == ("torch", "nsys")
+  assert parse_profilers("nsys,torch") == ("nsys", "torch")
+  assert parse_profilers("torch") == ("torch",)
 
 
 def test_prepare_tune_config_disables_noisy_workflows() -> None:
@@ -58,6 +71,7 @@ def test_prepare_tune_config_disables_noisy_workflows() -> None:
       ),
       checkpoint=CheckpointConfig(enabled=True, every_steps=1),
       output=OutputConfig(root_dir=Path("runs")),
+      sinks=(TensorBoardSinkConfig(),),
     ),
     include_eval=False,
     include_rollout=False,
@@ -71,6 +85,26 @@ def test_prepare_tune_config_disables_noisy_workflows() -> None:
   assert config.rollout is None
   assert config.checkpoint.enabled is False
   assert config.system_metrics.enabled is False
+  assert config.sinks == (FilesSinkConfig(),)
+
+
+def test_prepare_tune_config_marks_generated_run_id() -> None:
+  config = prepare_tune_config(
+    ExperimentConfig(
+      name="tune",
+      loop=LoopConfig(steps=3),
+      output=OutputConfig(root_dir=Path("runs")),
+      sinks=(TensorBoardSinkConfig(),),
+    ),
+    include_eval=False,
+    include_rollout=False,
+    include_checkpoint=False,
+  )
+
+  assert config.run.id is not None
+  assert config.run.id.startswith("tune-")
+  assert config.run_dir == Path("runs") / "tune" / config.run.id
+  assert config.sinks == (FilesSinkConfig(),)
 
 
 def test_build_nsys_command_uses_resolved_config_path() -> None:
