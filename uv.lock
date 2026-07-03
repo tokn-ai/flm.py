@@ -830,6 +830,7 @@ dependencies = [
     { name = "flm-datasets" },
     { name = "flm-llm" },
     { name = "flm-modules" },
+    { name = "numpy" },
     { name = "pyyaml" },
     { name = "torch" },
 ]
@@ -851,6 +852,7 @@ requires-dist = [
     { name = "flm-llm", editable = "packages/llm" },
     { name = "flm-modules", editable = "packages/modules" },
     { name = "mlflow", marker = "extra == 'mlflow'", specifier = ">=2.0" },
+    { name = "numpy", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tensorboard", marker = "extra == 'tensorboard'", specifier = ">=2.0" },
     { name = "torch", specifier = ">=2.5" },

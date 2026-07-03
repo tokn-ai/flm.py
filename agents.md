@@ -49,6 +49,20 @@ Before committing:
 - run focused tests or full tests depending on scope;
 - do not revert unrelated user changes.
 
+## Data Artifacts
+
+Avoid `pickle`/`.pkl` and `torch.load`/`.pt` for caches or data artifacts by
+default because they are unsafe to read from untrusted or stale locations.
+
+For token and array caches:
+
+- use `.npy` with `allow_pickle=False` for a single array;
+- write adjacent JSON metadata for version, dtype, counts, and related file
+  names;
+- keep generated data caches under `.cache/data`;
+- only use `.pt` for model checkpoints when the checkpoint format is
+  intentionally part of the training/checkpointing design.
+
 ## Blog
 
 Day-log posts live under `blog/`, named `YYYYMMDD-NN-slug.md` where

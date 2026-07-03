@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from flm_train.data import build_repo_source_dataset
@@ -61,8 +62,16 @@ def test_repo_source_dataset_caches_tokens(tmp_path: Path) -> None:
 
   bundle = build_repo_source_dataset(train_config(repo_root=tmp_path))
 
-  cache_files = list((tmp_path / ".cache" / "data").glob("repo_sources-*.pkl"))
-  assert len(cache_files) == 1
+  cache_dir = tmp_path / ".cache" / "data"
+  token_cache_files = list(cache_dir.glob("repo_sources-*.npy"))
+  metadata_cache_files = list(cache_dir.glob("repo_sources-*.json"))
+  assert len(token_cache_files) == 1
+  assert len(metadata_cache_files) == 1
+  metadata = json.loads(metadata_cache_files[0].read_text(encoding="utf-8"))
+  assert metadata["tokens_file"] == token_cache_files[0].name
+  assert metadata["dtype"] == "int32"
+  assert metadata["token_count"] == bundle.token_count
+  assert metadata["file_count"] == bundle.file_count
   assert bundle.file_count == 1
   assert bundle.token_count > 0
 

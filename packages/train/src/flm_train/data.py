@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+import numpy as np
 from flm_datasets import (
   SourceCorpusConfig,
   TokenDataset,
@@ -21,6 +20,7 @@ from torch.utils.data import DataLoader
 from flm_train.types import TrainConfig
 
 _REPO_SOURCE_CACHE_VERSION = 1
+_TOKEN_CACHE_DTYPE = "int32"
 
 
 @dataclass(frozen=True)
@@ -30,21 +30,32 @@ class RepoSourceDatasetBundle:
   file_count: int
 
 
+@dataclass(frozen=True)
+class RepoSourceCachePaths:
+  tokens: Path
+  metadata: Path
+
+
 def build_repo_source_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   corpus_config = SourceCorpusConfig(root=config.data.repo_root)
   source_files = iter_source_files(corpus_config)
   file_count = len(source_files)
-  cache_path = _repo_source_cache_path(
+  cache_paths = _repo_source_cache_paths(
     root=config.data.repo_root,
     cache_dir=config.data.cache_dir,
     encoding_name=config.data.encoding_name,
     source_files=source_files,
   )
-  tokens = _read_token_cache(cache_path)
+  tokens = _read_token_cache(cache_paths)
   if tokens is None:
     corpus = read_source_corpus(corpus_config, paths=source_files)
     tokens = encode_text(corpus, encoding_name=config.data.encoding_name)
-    _write_token_cache(cache_path, tokens)
+    _write_token_cache(
+      cache_paths,
+      tokens=tokens,
+      encoding_name=config.data.encoding_name,
+      file_count=file_count,
+    )
   dataset = TokenDataset(tokens, seq_len=config.data.seq_len)
   dataloader = DataLoader(
     dataset,
@@ -59,13 +70,13 @@ def build_repo_source_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   )
 
 
-def _repo_source_cache_path(
+def _repo_source_cache_paths(
   *,
   root: Path,
   cache_dir: Path | None,
   encoding_name: str,
   source_files: list[Path],
-) -> Path | None:
+) -> RepoSourceCachePaths | None:
   if cache_dir is None:
     return None
   root = root.resolve()
@@ -75,7 +86,11 @@ def _repo_source_cache_path(
     encoding_name=encoding_name,
     source_files=source_files,
   )
-  return resolved_cache_dir / f"repo_sources-{digest}.pkl"
+  stem = f"repo_sources-{digest}"
+  return RepoSourceCachePaths(
+    tokens=resolved_cache_dir / f"{stem}.npy",
+    metadata=resolved_cache_dir / f"{stem}.json",
+  )
 
 
 def _repo_source_cache_digest(
@@ -101,37 +116,66 @@ def _repo_source_cache_digest(
   return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _read_token_cache(path: Path | None) -> list[int] | None:
-  if path is None or not path.exists():
+def _read_token_cache(paths: RepoSourceCachePaths | None) -> list[int] | None:
+  if paths is None or not paths.tokens.exists() or not paths.metadata.exists():
     return None
-  with path.open("rb") as file:
-    payload = pickle.load(file)
-  if not _is_token_cache_payload(payload):
+  try:
+    metadata = json.loads(paths.metadata.read_text(encoding="utf-8"))
+  except json.JSONDecodeError:
     return None
-  if payload["version"] != _REPO_SOURCE_CACHE_VERSION:
+  if not _is_token_cache_metadata(metadata):
     return None
-  return payload["tokens"]
+  if metadata["tokens_file"] != paths.tokens.name:
+    return None
+  try:
+    token_array = np.load(paths.tokens, allow_pickle=False)
+  except ValueError:
+    return None
+  if token_array.dtype != np.dtype(_TOKEN_CACHE_DTYPE):
+    return None
+  if token_array.ndim != 1:
+    return None
+  if int(metadata["token_count"]) != int(token_array.shape[0]):
+    return None
+  return token_array.astype(np.int64).tolist()
 
 
-def _write_token_cache(path: Path | None, tokens: list[int]) -> None:
-  if path is None:
+def _write_token_cache(
+  paths: RepoSourceCachePaths | None,
+  *,
+  tokens: list[int],
+  encoding_name: str,
+  file_count: int,
+) -> None:
+  if paths is None:
     return
-  path.parent.mkdir(parents=True, exist_ok=True)
-  with path.open("wb") as file:
-    pickle.dump(
+  paths.tokens.parent.mkdir(parents=True, exist_ok=True)
+  token_array = np.asarray(tokens, dtype=np.int32)
+  np.save(paths.tokens, token_array)
+  paths.metadata.write_text(
+    json.dumps(
       {
         "version": _REPO_SOURCE_CACHE_VERSION,
-        "tokens": tokens,
+        "encoding_name": encoding_name,
+        "dtype": _TOKEN_CACHE_DTYPE,
+        "token_count": int(token_array.shape[0]),
+        "file_count": file_count,
+        "tokens_file": paths.tokens.name,
       },
-      file,
-      protocol=pickle.HIGHEST_PROTOCOL,
+      indent=2,
+      sort_keys=True,
     )
+    + "\n",
+    encoding="utf-8",
+  )
 
 
-def _is_token_cache_payload(payload: Any) -> bool:
+def _is_token_cache_metadata(metadata: object) -> bool:
   return (
-    isinstance(payload, dict)
-    and isinstance(payload.get("version"), int)
-    and isinstance(payload.get("tokens"), list)
-    and all(isinstance(token, int) for token in payload["tokens"])
+    isinstance(metadata, dict)
+    and metadata.get("version") == _REPO_SOURCE_CACHE_VERSION
+    and metadata.get("dtype") == _TOKEN_CACHE_DTYPE
+    and isinstance(metadata.get("token_count"), int)
+    and isinstance(metadata.get("file_count"), int)
+    and isinstance(metadata.get("tokens_file"), str)
   )
