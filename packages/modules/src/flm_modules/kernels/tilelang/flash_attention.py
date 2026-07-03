@@ -8,6 +8,9 @@ from functools import lru_cache
 
 import torch
 
+_BLOCK_M = 16
+_BLOCK_N = 32
+
 
 def tilelang_flash_attention(
   q: torch.Tensor,
@@ -53,7 +56,7 @@ def _tilelang_flash_attention_forward(
   v: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
   batch_size, n_heads, seq_len, head_dim = q.shape
-  kernel = _get_tilelang_kernel(
+  kernel = _get_tilelang_forward_kernel(
     batch_size=batch_size,
     n_heads=n_heads,
     seq_len=seq_len,
@@ -110,7 +113,37 @@ def _validate_inputs(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> None:
 
 
 @lru_cache(maxsize=32)
-def _get_tilelang_kernel(
+def _get_tilelang_forward_kernel(
+  batch_size: int,
+  n_heads: int,
+  seq_len: int,
+  head_dim: int,
+  dtype: str,
+):
+  if (
+    dtype in {"float16", "bfloat16"}
+    and seq_len % _BLOCK_M == 0
+    and seq_len % _BLOCK_N == 0
+    and head_dim % 16 == 0
+  ):
+    return _get_tilelang_block_forward_kernel(
+      batch_size=batch_size,
+      n_heads=n_heads,
+      seq_len=seq_len,
+      head_dim=head_dim,
+      dtype=dtype,
+    )
+  return _get_tilelang_scalar_forward_kernel(
+    batch_size=batch_size,
+    n_heads=n_heads,
+    seq_len=seq_len,
+    head_dim=head_dim,
+    dtype=dtype,
+  )
+
+
+@lru_cache(maxsize=32)
+def _get_tilelang_scalar_forward_kernel(
   batch_size: int,
   n_heads: int,
   seq_len: int,
@@ -177,6 +210,118 @@ def _get_tilelang_kernel(
         lse[batch, head, row] = T.log(denom[0]) + m[0]
 
     return tilelang_flash_attention_forward_kernel
+
+  return flash_attention_kernel()
+
+
+@lru_cache(maxsize=32)
+def _get_tilelang_block_forward_kernel(
+  batch_size: int,
+  n_heads: int,
+  seq_len: int,
+  head_dim: int,
+  dtype: str,
+):
+  try:
+    import tilelang
+    from tilelang import language as T
+  except ImportError as exc:
+    raise ImportError(
+      "TileLang attention backend requires the tilelang package"
+    ) from exc
+
+  scale = head_dim**-0.5
+  block_m = _BLOCK_M
+  block_n = _BLOCK_N
+  q_blocks = seq_len // block_m
+  kv_blocks = seq_len // block_n
+
+  @tilelang.jit(out_idx=[-2, -1], target="cuda")
+  def flash_attention_kernel():
+    @T.prim_func
+    def tilelang_flash_attention_block_forward_kernel(
+      q: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      k: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      v: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      out: T.Tensor([batch_size, seq_len, n_heads, head_dim], dtype),
+      lse: T.Tensor([batch_size, n_heads, seq_len], "float32"),
+    ):
+      with T.Kernel(batch_size, n_heads, q_blocks, threads=32) as (
+        batch,
+        head,
+        q_block,
+      ):
+        q_s = T.alloc_shared([block_m, head_dim], dtype)
+        k_s = T.alloc_shared([block_n, head_dim], dtype)
+        v_s = T.alloc_shared([block_n, head_dim], dtype)
+        scores = T.alloc_fragment([block_m, block_n], "float32")
+        scores_s = T.alloc_shared([block_m, block_n], "float32")
+        probs = T.alloc_shared([block_m, block_n], dtype)
+        acc = T.alloc_local([block_m, head_dim], "float32")
+        pv = T.alloc_local([1], "float32")
+        m = T.alloc_local([block_m], "float32")
+        denom = T.alloc_local([block_m], "float32")
+        m_new = T.alloc_local([block_m], "float32")
+        alpha = T.alloc_local([block_m], "float32")
+
+        q_start = q_block * block_m
+        T.copy(q[batch, head, q_start : q_start + block_m, 0:head_dim], q_s)
+        T.clear(acc)
+        for row in T.serial(0, block_m):
+          m[row] = -3.4028234663852886e38
+          denom[row] = 0.0
+
+        for kv_block in T.serial(0, kv_blocks):
+          kv_start = kv_block * block_n
+          T.copy(k[batch, head, kv_start : kv_start + block_n, 0:head_dim], k_s)
+          T.copy(v[batch, head, kv_start : kv_start + block_n, 0:head_dim], v_s)
+          T.gemm(q_s, k_s, scores, transpose_B=True, clear_accum=True)
+          T.copy(scores, scores_s)
+
+          for row in T.serial(0, block_m):
+            m_new[row] = m[row]
+            for col in T.serial(0, block_n):
+              if kv_start + col <= q_start + row:
+                scores_s[row, col] = scores_s[row, col] * scale
+                m_new[row] = T.max(m_new[row], scores_s[row, col])
+              else:
+                scores_s[row, col] = -3.4028234663852886e38
+
+          for row in T.serial(0, block_m):
+            for col in T.serial(0, block_n):
+              if kv_start + col <= q_start + row:
+                probs[row, col] = T.cast(
+                  T.exp(scores_s[row, col] - m_new[row]), dtype
+                )
+              else:
+                probs[row, col] = T.cast(0.0, dtype)
+
+          for row in T.serial(0, block_m):
+            alpha[row] = T.exp(m[row] - m_new[row])
+            denom[row] = denom[row] * alpha[row]
+            for col in T.serial(0, block_n):
+              if kv_start + col <= q_start + row:
+                denom[row] += T.cast(probs[row, col], "float32")
+            for dim in T.serial(0, head_dim):
+              pv[0] = 0.0
+              for col in T.serial(0, block_n):
+                if kv_start + col <= q_start + row:
+                  pv[0] += T.cast(probs[row, col], "float32") * T.cast(
+                    v_s[col, dim],
+                    "float32",
+                  )
+              acc[row, dim] = acc[row, dim] * alpha[row] + pv[0]
+            m[row] = m_new[row]
+
+        for row in T.serial(0, block_m):
+          lse[batch, head, q_start + row] = T.log(denom[row]) + m[row]
+          for dim in T.serial(0, head_dim):
+            out[batch, q_start + row, head, dim] = T.cast(
+              acc[row, dim] / denom[row],
+              dtype,
+            )
+
+    return tilelang_flash_attention_block_forward_kernel
 
   return flash_attention_kernel()
 
