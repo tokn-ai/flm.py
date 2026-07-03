@@ -14,6 +14,7 @@ class DataConfig:
   seq_len: int = 128
   dataset_root: Path = Path(".cache/data/repo_sources")
   version: str = "latest"
+  split: Literal["train", "val", "test"] = "train"
   resolved_version: str | None = None
 
 

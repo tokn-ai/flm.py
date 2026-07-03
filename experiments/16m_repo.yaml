@@ -4,6 +4,7 @@ data:
   kind: token_dataset
   dataset_root: .cache/data/repo_sources
   version: latest
+  split: train
   encoding_name: cl100k_base
   seq_len: 512
 

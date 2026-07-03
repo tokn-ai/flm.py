@@ -239,6 +239,7 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     "seq_len",
     "dataset_root",
     "version",
+    "split",
     "resolved_version",
   }
   unknown = set(value) - allowed
@@ -247,12 +248,16 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
   kind = value.get("kind", "token_dataset")
   if kind != "token_dataset":
     raise ValueError(f"unsupported data.kind: {kind}")
+  split = str(value.get("split", "train"))
+  if split not in {"train", "val", "test"}:
+    raise ValueError(f"unsupported data.split: {split}")
   return DataConfig(
     kind=kind,
     encoding_name=str(value.get("encoding_name", "cl100k_base")),
     seq_len=int(value.get("seq_len", 128)),
     dataset_root=Path(value.get("dataset_root", ".cache/data/repo_sources")),
     version=str(value.get("version", "latest")),
+    split=split,
     resolved_version=value.get("resolved_version"),
   )
 

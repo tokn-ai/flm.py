@@ -162,6 +162,18 @@ def test_parse_experiment_config_rejects_unknown_data_keys() -> None:
     )
 
 
+def test_parse_experiment_config_rejects_unknown_split() -> None:
+  with pytest.raises(ValueError, match="unsupported data.split"):
+    parse_experiment_config(
+      {
+        "name": "bad",
+        "data": {
+          "split": "valid",
+        },
+      }
+    )
+
+
 def test_load_experiment_config_reads_yaml(tmp_path: Path) -> None:
   config_path = tmp_path / "experiment.yaml"
   config_path.write_text(
@@ -193,6 +205,7 @@ def test_parse_experiment_config_reads_token_dataset_config() -> None:
         "kind": "token_dataset",
         "dataset_root": ".cache/data/repo_sources",
         "version": "latest",
+        "split": "val",
         "encoding_name": "cl100k_base",
         "seq_len": 512,
       },
@@ -202,6 +215,7 @@ def test_parse_experiment_config_reads_token_dataset_config() -> None:
   assert config.data.kind == "token_dataset"
   assert config.data.dataset_root == Path(".cache/data/repo_sources")
   assert config.data.version == "latest"
+  assert config.data.split == "val"
   assert config.data.seq_len == 512
 
 
@@ -366,6 +380,7 @@ def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
         kind="token_dataset",
         dataset_root=dataset_root,
         version="latest",
+        split="train",
         seq_len=8,
       ),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
@@ -376,6 +391,7 @@ def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:
 
   resolved = (run_dir / "config.resolved.yaml").read_text(encoding="utf-8")
   assert "version: latest" in resolved
+  assert "split: train" in resolved
   assert f"resolved_version: {published.version}" in resolved
 
 
@@ -504,7 +520,13 @@ def publish_fixture_dataset(tmp_path: Path) -> Path:
     "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
     encoding="utf-8",
   )
-  publish_repo_source_dataset(repo_root=repo_root, dataset_root=dataset_root)
+  publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+    train_ratio=1.0,
+    val_ratio=0.0,
+    test_ratio=0.0,
+  )
   return dataset_root
 
 

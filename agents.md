@@ -73,7 +73,17 @@ uv run flm-data repo-sources publish \
 ```
 
 Experiments train from `kind: token_dataset` with `version: latest` or a pinned
-version. Resolved run configs must record the concrete `resolved_version`.
+version and an explicit `split`. Resolved run configs must record the concrete
+`resolved_version`.
+
+Repo token datasets use file-level hash splits by default:
+
+- `train`: 0.98
+- `val`: 0.01
+- `test`: 0.01
+
+Training configs should use `split: train`; evaluation should use `val` or
+`test`. Do not create train/test splits inside the training loop.
 
 ## Blog
 

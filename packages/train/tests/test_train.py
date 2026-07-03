@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from flm_train.data import publish_repo_source_dataset
@@ -22,7 +23,13 @@ def train_config(
   steps: int = 1,
 ) -> TrainConfig:
   dataset_root = repo_root / ".cache" / "data" / "repo_sources"
-  publish_repo_source_dataset(repo_root=repo_root, dataset_root=dataset_root)
+  publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+    train_ratio=1.0,
+    val_ratio=0.0,
+    test_ratio=0.0,
+  )
   model_config = model
   if model_config is None:
     model_config = ReferenceModelConfig(
@@ -68,12 +75,20 @@ def test_publish_repo_source_dataset_writes_versioned_artifacts(tmp_path: Path) 
   published = publish_repo_source_dataset(
     repo_root=repo_root,
     dataset_root=dataset_root,
+    train_ratio=1.0,
+    val_ratio=0.0,
+    test_ratio=0.0,
   )
 
   assert (dataset_root / "latest.json").is_file()
   assert published.manifest_path.is_file()
-  assert published.tokens_path.is_file()
+  assert published.split_paths["train"].is_file()
+  assert published.split_paths["val"].is_file()
+  assert published.split_paths["test"].is_file()
   assert (published.manifest_path.parent / "files.jsonl").is_file()
+  manifest = json.loads(published.manifest_path.read_text(encoding="utf-8"))
+  assert manifest["split"]["strategy"] == "file_hash"
+  assert set(manifest["splits"]) == {"train", "val", "test"}
   assert published.file_count == 1
   assert published.token_count > 0
 
@@ -97,6 +112,7 @@ def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) ->
         kind="token_dataset",
         dataset_root=dataset_root,
         version="latest",
+        split="train",
         encoding_name="cl100k_base",
         seq_len=8,
       ),
@@ -107,7 +123,8 @@ def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) ->
 
   assert published.version
   assert result.file_count == 1
-  assert result.token_count == published.token_count
+  assert result.token_count > 0
+  assert result.token_count <= published.token_count
   assert len(result.losses) == 1
 
 
@@ -125,6 +142,12 @@ def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
       str(repo_root),
       "--dataset-root",
       str(dataset_root),
+      "--train-ratio",
+      "1.0",
+      "--val-ratio",
+      "0.0",
+      "--test-ratio",
+      "0.0",
     ]
   )
   run_from_args(args)
@@ -132,6 +155,9 @@ def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
   output = capsys.readouterr().out
   assert "version=" in output
   assert "tokens=" in output
+  assert "train_tokens=" in output
+  assert "val_tokens=" in output
+  assert "test_tokens=" in output
   assert (dataset_root / "latest.json").is_file()
 
 

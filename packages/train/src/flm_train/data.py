@@ -37,9 +37,10 @@ class PublishedDatasetInfo:
   dataset_root: Path
   version: str
   manifest_path: Path
-  tokens_path: Path
+  split_paths: dict[str, Path]
   token_count: int
   file_count: int
+  splits: dict[str, dict[str, int]]
 
 
 def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
@@ -60,10 +61,11 @@ def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
     shuffle=True,
     drop_last=False,
   )
+  split_metadata = _split_metadata(metadata, resolved_data.split)
   return RepoSourceDatasetBundle(
     dataloader=dataloader,
-    token_count=int(metadata["token_count"]),
-    file_count=int(metadata["file_count"]),
+    token_count=int(split_metadata["token_count"]),
+    file_count=int(split_metadata["file_count"]),
   )
 
 
@@ -77,6 +79,7 @@ def resolve_data_config(config: DataConfig) -> DataConfig:
     seq_len=config.seq_len,
     dataset_root=config.dataset_root,
     version=config.version,
+    split=config.split,
     resolved_version=version,
   )
 
@@ -86,25 +89,60 @@ def publish_repo_source_dataset(
   repo_root: Path,
   dataset_root: Path,
   encoding_name: str = "cl100k_base",
+  train_ratio: float = 0.98,
+  val_ratio: float = 0.01,
+  test_ratio: float = 0.01,
+  split_seed: int = 42,
 ) -> PublishedDatasetInfo:
+  _validate_split_ratios(
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    test_ratio=test_ratio,
+  )
   corpus_config = SourceCorpusConfig(root=repo_root)
   source_files = iter_source_files(corpus_config)
   root = repo_root.resolve()
-  file_records = _source_file_records(root=root, source_files=source_files)
+  file_records = _source_file_records(
+    root=root,
+    source_files=source_files,
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    split_seed=split_seed,
+  )
   version = _published_dataset_digest(
     encoding_name=encoding_name,
+    split_seed=split_seed,
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    test_ratio=test_ratio,
     file_records=file_records,
   )
   version_dir = dataset_root / "versions" / version
-  tokens_path = version_dir / "tokens.npy"
   manifest_path = version_dir / "manifest.json"
   files_path = version_dir / "files.jsonl"
+  split_paths = {
+    "train": version_dir / "train.npy",
+    "val": version_dir / "val.npy",
+    "test": version_dir / "test.npy",
+  }
 
-  if not manifest_path.exists() or not tokens_path.exists() or not files_path.exists():
-    corpus = read_source_corpus(corpus_config, paths=source_files)
-    tokens = encode_text(corpus, encoding_name=encoding_name)
+  if (
+    not manifest_path.exists()
+    or not files_path.exists()
+    or any(not path.exists() for path in split_paths.values())
+  ):
+    split_source_files = _split_source_files(source_files, file_records)
+    split_metadata = {}
     version_dir.mkdir(parents=True, exist_ok=True)
-    np.save(tokens_path, np.asarray(tokens, dtype=np.int32))
+    for split_name, split_files in split_source_files.items():
+      corpus = read_source_corpus(corpus_config, paths=split_files)
+      tokens = encode_text(corpus, encoding_name=encoding_name)
+      np.save(split_paths[split_name], np.asarray(tokens, dtype=np.int32))
+      split_metadata[split_name] = {
+        "tokens_file": split_paths[split_name].name,
+        "token_count": len(tokens),
+        "file_count": len(split_files),
+      }
     files_path.write_text(
       "\n".join(json.dumps(record, sort_keys=True) for record in file_records) + "\n",
       encoding="utf-8",
@@ -118,10 +156,19 @@ def publish_repo_source_dataset(
         "repo_root": str(root),
         "encoding_name": encoding_name,
         "dtype": _TOKEN_CACHE_DTYPE,
-        "token_count": len(tokens),
+        "token_count": sum(
+          int(metadata["token_count"]) for metadata in split_metadata.values()
+        ),
         "file_count": len(source_files),
-        "tokens_file": tokens_path.name,
         "files_file": files_path.name,
+        "split": {
+          "strategy": "file_hash",
+          "seed": split_seed,
+          "train": train_ratio,
+          "val": val_ratio,
+          "test": test_ratio,
+        },
+        "splits": split_metadata,
         "created_at": datetime.now(UTC).isoformat(),
       },
     )
@@ -138,9 +185,16 @@ def publish_repo_source_dataset(
     dataset_root=dataset_root,
     version=version,
     manifest_path=manifest_path,
-    tokens_path=tokens_path,
+    split_paths=split_paths,
     token_count=int(manifest["token_count"]),
     file_count=int(manifest["file_count"]),
+    splits={
+      name: {
+        "token_count": int(metadata["token_count"]),
+        "file_count": int(metadata["file_count"]),
+      }
+      for name, metadata in manifest["splits"].items()
+    },
   )
 
 
@@ -148,12 +202,21 @@ def _source_file_records(
   *,
   root: Path,
   source_files: list[Path],
+  train_ratio: float,
+  val_ratio: float,
+  split_seed: int,
 ) -> list[dict[str, int | str]]:
   return [
     {
       "path": path.relative_to(root).as_posix(),
       "size": stat.st_size,
       "mtime_ns": stat.st_mtime_ns,
+      "split": _assign_file_split(
+        path.relative_to(root).as_posix(),
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        split_seed=split_seed,
+      ),
     }
     for path in source_files
     for stat in [path.stat()]
@@ -163,11 +226,22 @@ def _source_file_records(
 def _published_dataset_digest(
   *,
   encoding_name: str,
+  split_seed: int,
+  train_ratio: float,
+  val_ratio: float,
+  test_ratio: float,
   file_records: list[dict[str, int | str]],
 ) -> str:
   manifest = {
     "format_version": _PUBLISHED_DATASET_VERSION,
     "encoding_name": encoding_name,
+    "split": {
+      "strategy": "file_hash",
+      "seed": split_seed,
+      "train": train_ratio,
+      "val": val_ratio,
+      "test": test_ratio,
+    },
     "files": file_records,
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
@@ -201,7 +275,8 @@ def _load_dataset_manifest(config: DataConfig) -> dict[str, Any]:
       f"dataset encoding {manifest.get('encoding_name')} does not match "
       f"config encoding {config.encoding_name}"
     )
-  if not isinstance(manifest.get("tokens_file"), str):
+  split_metadata = _split_metadata(manifest, config.split)
+  if not isinstance(split_metadata.get("tokens_file"), str):
     raise ValueError(f"invalid dataset manifest: {manifest_path}")
   return manifest
 
@@ -211,17 +286,70 @@ def _load_dataset_tokens(config: DataConfig, manifest: dict[str, Any]) -> np.nda
     config.dataset_root,
     config.version,
   )
+  split_metadata = _split_metadata(manifest, config.split)
   tokens_path = (
-    config.dataset_root / "versions" / resolved_version / str(manifest["tokens_file"])
+    config.dataset_root
+    / "versions"
+    / resolved_version
+    / str(split_metadata["tokens_file"])
   )
   token_array = np.load(tokens_path, allow_pickle=False)
   if token_array.dtype != np.dtype(_TOKEN_CACHE_DTYPE):
     raise ValueError(f"unsupported token dtype: {tokens_path}")
   if token_array.ndim != 1:
     raise ValueError(f"token dataset must be a 1D array: {tokens_path}")
-  if int(manifest["token_count"]) != int(token_array.shape[0]):
+  if int(split_metadata["token_count"]) != int(token_array.shape[0]):
     raise ValueError(f"token count mismatch: {tokens_path}")
   return token_array
+
+
+def _split_metadata(manifest: dict[str, Any], split: str) -> dict[str, Any]:
+  splits = manifest.get("splits")
+  if not isinstance(splits, dict):
+    raise ValueError("dataset manifest does not define splits")
+  metadata = splits.get(split)
+  if not isinstance(metadata, dict):
+    raise ValueError(f"dataset split not found: {split}")
+  return metadata
+
+
+def _validate_split_ratios(
+  *,
+  train_ratio: float,
+  val_ratio: float,
+  test_ratio: float,
+) -> None:
+  if train_ratio < 0 or val_ratio < 0 or test_ratio < 0:
+    raise ValueError("split ratios must be non-negative")
+  total = train_ratio + val_ratio + test_ratio
+  if abs(total - 1.0) > 1e-9:
+    raise ValueError("split ratios must sum to 1.0")
+
+
+def _assign_file_split(
+  relative_path: str,
+  *,
+  train_ratio: float,
+  val_ratio: float,
+  split_seed: int,
+) -> str:
+  payload = f"{split_seed}:{relative_path}".encode()
+  value = int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") / 2**64
+  if value < train_ratio:
+    return "train"
+  if value < train_ratio + val_ratio:
+    return "val"
+  return "test"
+
+
+def _split_source_files(
+  source_files: list[Path],
+  file_records: list[dict[str, int | str]],
+) -> dict[str, list[Path]]:
+  split_files: dict[str, list[Path]] = {"train": [], "val": [], "test": []}
+  for path, record in zip(source_files, file_records, strict=True):
+    split_files[str(record["split"])].append(path)
+  return split_files
 
 
 def _read_json(path: Path) -> dict[str, Any]:
