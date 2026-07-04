@@ -166,6 +166,56 @@ def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
   assert (dataset_root / "latest.json").is_file()
 
 
+def test_data_cli_trains_unitoken_tokenizer_for_repo_sources(
+  tmp_path: Path,
+  capsys,
+) -> None:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  tokenizer_root = tmp_path / "tokenizers"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"def token_{i}(): return {i}" for i in range(120)),
+    encoding="utf-8",
+  )
+
+  args = parse_args(
+    [
+      "repo-sources",
+      "publish",
+      "--repo-root",
+      str(repo_root),
+      "--dataset-root",
+      str(dataset_root),
+      "--unitoken-vocab-size",
+      "300",
+      "--unitoken-special-token-count",
+      "16",
+      "--tokenizer-root",
+      str(tokenizer_root),
+      "--tokenizer-name",
+      "repo_300",
+      "--train-ratio",
+      "1.0",
+      "--val-ratio",
+      "0.0",
+      "--test-ratio",
+      "0.0",
+    ]
+  )
+  run_from_args(args)
+
+  output = capsys.readouterr().out
+  latest = json.loads((dataset_root / "latest.json").read_text(encoding="utf-8"))
+  manifest_path = dataset_root / latest["manifest"]
+  manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+  assert "tokens=" in output
+  assert manifest["encoding_name"] == f"unitoken:{tokenizer_root / 'repo_300'}"
+  assert (tokenizer_root / "vocab.repo_300[u8].json").is_file()
+  assert (tokenizer_root / "merges.repo_300[u8].txt").is_file()
+
+
 def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   (tmp_path / "model.py").write_text(
     "\n".join(f"def f_{i}(): return {i}" for i in range(80)),

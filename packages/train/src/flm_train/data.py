@@ -16,6 +16,8 @@ from flm_datasets import (
   encode_text,
   iter_source_files,
   read_source_corpus,
+  unitoken_encoding_name,
+  unitoken_special_tokens,
 )
 from torch.utils.data import DataLoader
 
@@ -89,6 +91,10 @@ def publish_repo_source_dataset(
   repo_root: Path,
   dataset_root: Path,
   encoding_name: str = "cl100k_base",
+  unitoken_vocab_size: int | None = None,
+  unitoken_special_token_count: int = 16,
+  tokenizer_root: Path = Path(".cache/tokenizers"),
+  tokenizer_name: str | None = None,
   train_ratio: float = 0.98,
   val_ratio: float = 0.01,
   test_ratio: float = 0.01,
@@ -102,6 +108,18 @@ def publish_repo_source_dataset(
   corpus_config = SourceCorpusConfig(root=repo_root)
   source_files = iter_source_files(corpus_config)
   root = repo_root.resolve()
+  if unitoken_vocab_size is not None:
+    if unitoken_special_token_count != 16:
+      raise ValueError("unitoken currently supports exactly 16 reserved special tokens")
+    name = tokenizer_name or f"repo_{unitoken_vocab_size}"
+    tokenizer_path = tokenizer_root / name
+    train_unitoken_tokenizer(
+      source_files=source_files,
+      tokenizer_path=tokenizer_path,
+      vocab_size=unitoken_vocab_size,
+      special_token_count=unitoken_special_token_count,
+    )
+    encoding_name = unitoken_encoding_name(tokenizer_path)
   file_records = _source_file_records(
     root=root,
     source_files=source_files,
@@ -246,6 +264,40 @@ def _published_dataset_digest(
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def train_unitoken_tokenizer(
+  *,
+  source_files: list[Path],
+  tokenizer_path: Path,
+  vocab_size: int,
+  special_token_count: int = 16,
+) -> None:
+  if vocab_size <= 0:
+    raise ValueError("unitoken vocab size must be positive")
+  special_tokens = unitoken_special_tokens(special_token_count)
+  if vocab_size <= 256 + len(special_tokens):
+    raise ValueError(
+      "unitoken vocab size must leave room for byte tokens and special tokens"
+    )
+  vocab_path = tokenizer_path.parent / f"vocab.{tokenizer_path.name}[u8].json"
+  merges_path = tokenizer_path.parent / f"merges.{tokenizer_path.name}[u8].txt"
+  if vocab_path.exists() and merges_path.exists():
+    return
+
+  from uni_tokenizer import BpeTrainer, PreTokenizer
+
+  tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
+  pre_tokenizer = PreTokenizer(special_tokens=special_tokens)
+  words: dict[str, int] = {}
+  for path in source_files:
+    for word, count in pre_tokenizer.get_words_from_file(path).items():
+      words[word] = words.get(word, 0) + int(count)
+
+  trainer = BpeTrainer(special_tokens)
+  trainer.add_words(words)
+  trainer.train(vocab_size=vocab_size)
+  trainer.save(tokenizer_path.name, outdir=tokenizer_path.parent)
 
 
 def _resolve_dataset_version(dataset_root: Path, version: str) -> str:

@@ -7,7 +7,12 @@ from flm_datasets.corpus import (
   read_source_corpus,
 )
 from flm_datasets.token_dataset import TokenDataset
-from flm_datasets.tokenizer import encode_text, get_tokenizer
+from flm_datasets.tokenizer import (
+  encode_text,
+  get_tokenizer,
+  unitoken_encoding_name,
+  unitoken_special_tokens,
+)
 
 __all__ = [
   "CalcQA",
@@ -19,4 +24,6 @@ __all__ = [
   "get_tokenizer",
   "iter_source_files",
   "read_source_corpus",
+  "unitoken_encoding_name",
+  "unitoken_special_tokens",
 ]
