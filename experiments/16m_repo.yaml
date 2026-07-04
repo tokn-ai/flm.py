@@ -14,7 +14,7 @@ model:
   n_layers: 12
   n_heads: 2
   d_ff: 512
-  attention_backend: tilelang
+  attention_backend: torch
   loss_backend: cut_cross_entropy
   loss_chunk_size: 256
 

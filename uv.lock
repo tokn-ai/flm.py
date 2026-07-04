@@ -754,12 +754,14 @@ source = { editable = "packages/datasets" }
 dependencies = [
     { name = "tiktoken" },
     { name = "torch" },
+    { name = "uni-tokenizer" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "tiktoken", specifier = ">=0.8.0" },
     { name = "torch", specifier = ">=2.5" },
+    { name = "uni-tokenizer" },
 ]
 
 [[package]]
@@ -3391,6 +3393,20 @@ source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
 sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/ba/19/1b9b0e29f30c6d35cb345486df41110984ea67ae69dddbc0e8a100999493/tzdata-2026.2.tar.gz", hash = "sha256:9173fde7d80d9018e02a662e168e5a2d04f87c41ea174b139fbef642eda62d10", size = 198254 }
 wheels = [
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/ce/e4/dccd7f47c4b64213ac01ef921a1337ee6e30e8c6466046018326977efd95/tzdata-2026.2-py2.py3-none-any.whl", hash = "sha256:bbe9af844f658da81a5f95019480da3a89415801f6cc966806612cc7169bffe7", size = 349321 },
+]
+
+[[package]]
+name = "uni-tokenizer"
+version = "0.1.2"
+source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/6d/6d/37af07eb2a40020a601eff4afaa988c841d2348fcb75b5abec5d90942b52/uni_tokenizer-0.1.2.tar.gz", hash = "sha256:3df97f873594c9ad1345c52eec02608734ade8e070857dd8039d82e567586101", size = 70712 }
+wheels = [
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/b0/5a/4b94d00cd76dc5361316057a060710fb3be362b07c898cabc2e749d25c72/uni_tokenizer-0.1.2-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:8ca9bb3a001ed6c6ec14081e2fda34e19e869c69d8734813f60fea3f5836f957", size = 1330166 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/7d/f1/56ce1a5ac9bc13d07b22a0927ab56225dc6bf0a2202b784b62ab43a624bb/uni_tokenizer-0.1.2-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f13e38537ecb881b08bc1a9c68eb782259721609729dd9987ef63514287ca91a", size = 1505195 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/c5/e3/de4d8f323b797af880d4dc8c33903b662dc6d5ea0b53bd4b959102d5badc/uni_tokenizer-0.1.2-cp38-abi3-win_amd64.whl", hash = "sha256:1aba045bf1b2054325e508c37050c72cfef0e9102fbe6c7bdb752408763f1f53", size = 1380323 },
 ]
 
 [[package]]

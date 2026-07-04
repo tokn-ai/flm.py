@@ -472,10 +472,10 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
   }
 
 
-def test_16m_repo_config_uses_tilelang_backends() -> None:
+def test_16m_repo_config_uses_sdpa_attention_backend() -> None:
   config = load_experiment_config(Path("experiments/16m_repo.yaml"))
 
-  assert config.model.attention_backend == "tilelang"
+  assert config.model.attention_backend == "torch"
   assert config.model.loss_backend == "cut_cross_entropy"
   assert config.loop.dtype == "bfloat16"
 
