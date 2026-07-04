@@ -38,6 +38,11 @@ class ReferenceModel(nn.Module):
     super().__init__()
     self.config = config
     self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
+    nn.init.uniform_(
+      self.token_embedding.weight,
+      -1.0 / config.d_model,
+      1.0 / config.d_model,
+    )
     self.blocks = nn.ModuleList(
       TransformerBlock(config) for _ in range(config.n_layers)
     )
