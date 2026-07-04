@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
+from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
 from flm_train.data import publish_repo_source_dataset
 from flm_train.data_cli import parse_args, run_from_args
 from flm_train.presets import train_language_model
@@ -307,6 +309,39 @@ def test_train_language_model_resumes_from_checkpoint(tmp_path: Path) -> None:
   assert [metrics.step for metrics in first_metrics] == [1]
   assert [metrics.step for metrics in resumed_metrics] == [2]
   assert (checkpoint_dir / "step-00000002" / "model.npz").is_file()
+
+
+def test_checkpoint_preserves_bfloat16_model_state(tmp_path: Path) -> None:
+  model = torch.nn.Linear(4, 2, bias=False).to(dtype=torch.bfloat16)
+  optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+  expected_weight = model.weight.detach().clone()
+
+  checkpoint = save_checkpoint(
+    checkpoint_dir=tmp_path / "checkpoints",
+    model=model,
+    optimizer=optimizer,
+    state=CheckpointState(step=1, tokens_seen=8),
+  )
+  metadata = json.loads((checkpoint / "model_state.json").read_text(encoding="utf-8"))
+  tensor_metadata = metadata["weight"]["__tensor__"]
+
+  assert tensor_metadata["dtype"] == "torch.bfloat16"
+  assert tensor_metadata["storage_dtype"] == "uint16"
+  with np.load(checkpoint / "model.npz") as arrays:
+    assert arrays[tensor_metadata["name"]].dtype == np.uint16
+
+  restored = torch.nn.Linear(4, 2, bias=False).to(dtype=torch.bfloat16)
+  restored_optimizer = torch.optim.AdamW(restored.parameters(), lr=1e-3)
+  state = load_checkpoint(
+    path=checkpoint,
+    model=restored,
+    optimizer=restored_optimizer,
+    map_location="cpu",
+  )
+
+  assert state == CheckpointState(step=1, tokens_seen=8)
+  assert restored.weight.dtype == torch.bfloat16
+  assert torch.equal(restored.weight, expected_weight)
 
 
 def test_train_language_model_smoke_trains_deepseek_v4(tmp_path: Path) -> None:

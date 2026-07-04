@@ -124,15 +124,21 @@ def _encode_state(value: Any) -> _EncodedState:
   def encode(item: Any, path: str) -> Any:
     if isinstance(item, torch.Tensor):
       name = path
-      arrays[name] = item.detach().cpu().numpy()
-      return {
-        "__tensor__": {
-          "name": name,
-          "shape": list(item.shape),
-          "dtype": str(item.dtype),
-          "device": str(item.device),
-        }
+      tensor = item.detach().cpu()
+      storage_dtype = None
+      if tensor.dtype == torch.bfloat16:
+        tensor = tensor.view(torch.uint16)
+        storage_dtype = "uint16"
+      arrays[name] = tensor.numpy()
+      metadata = {
+        "name": name,
+        "shape": list(item.shape),
+        "dtype": str(item.dtype),
+        "device": str(item.device),
       }
+      if storage_dtype is not None:
+        metadata["storage_dtype"] = storage_dtype
+      return {"__tensor__": metadata}
     if isinstance(item, dict):
       return {
         str(key): encode(value, _join_path(path, str(key)))
@@ -172,7 +178,10 @@ def _decode_state(
           array=array,
           metadata=tensor_metadata,
         )
-        return torch.from_numpy(array).to(device)
+        tensor = torch.from_numpy(array)
+        if tensor_metadata["dtype"] == "torch.bfloat16":
+          tensor = tensor.view(torch.bfloat16)
+        return tensor.to(device)
       if "__tuple__" in item:
         return tuple(decode(value) for value in item["__tuple__"])
       return {_restore_key(key): decode(value) for key, value in item.items()}
@@ -197,11 +206,15 @@ def _validate_tensor_metadata(
 ) -> None:
   shape = list(array.shape)
   dtype = str(array.dtype)
+  expected_dtype = metadata.get(
+    "storage_dtype",
+    _torch_dtype_to_numpy_dtype(metadata["dtype"]),
+  )
   if shape != metadata["shape"]:
     raise ValueError(
       f"checkpoint tensor {name} shape mismatch: {shape} != {metadata['shape']}"
     )
-  if dtype != _torch_dtype_to_numpy_dtype(metadata["dtype"]):
+  if dtype != expected_dtype:
     raise ValueError(
       f"checkpoint tensor {name} dtype mismatch: {dtype} != {metadata['dtype']}"
     )
