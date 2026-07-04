@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -28,6 +28,8 @@ class LanguageModel(Protocol):
 
   def load_state_dict(self, state_dict): ...
 
+  def parameters(self) -> Iterable[torch.nn.Parameter]: ...
+
   def __call__(
     self,
     input_ids: torch.Tensor,
@@ -44,6 +46,7 @@ class TrainStepMetrics:
   learning_rate: float
   tokens: int
   tokens_seen: int
+  grad_norm: float
   step_time_sec: float
   tokens_per_sec: float
 
@@ -53,6 +56,7 @@ class TrainStepMetrics:
       "train/lr": self.learning_rate,
       "train/tokens": self.tokens,
       "train/tokens_seen": self.tokens_seen,
+      "train/grad_norm": self.grad_norm,
       "system/step_time_sec": self.step_time_sec,
       "train/tokens_per_sec": self.tokens_per_sec,
     }
@@ -110,6 +114,7 @@ class LanguageModelTrainer:
     dataloader: DataLoader,
     device: str,
     steps: int,
+    max_grad_norm: float | None = 1.0,
     on_step: StepCallback | None = None,
     eval_every_steps: int | None = None,
     evaluate: EvalCallback | None = None,
@@ -128,6 +133,7 @@ class LanguageModelTrainer:
     self.dataloader = dataloader
     self.device = device
     self.steps = steps
+    self.max_grad_norm = max_grad_norm
     self.on_step = on_step
     self.eval_every_steps = eval_every_steps
     self.evaluate = evaluate
@@ -157,6 +163,10 @@ class LanguageModelTrainer:
       if loss is None:
         raise RuntimeError("training loss was not produced")
       loss.backward()
+      grad_norm = _clip_or_measure_grad_norm(
+        self.model.parameters(),
+        self.max_grad_norm,
+      )
       self.optimizer.step()
       step_time_sec = time.perf_counter() - started_at
 
@@ -168,6 +178,7 @@ class LanguageModelTrainer:
         learning_rate=_learning_rate(self.optimizer),
         tokens=token_count,
         tokens_seen=tokens_seen,
+        grad_norm=grad_norm,
         step_time_sec=step_time_sec,
         tokens_per_sec=token_count / max(step_time_sec, 1e-12),
       )
@@ -266,3 +277,22 @@ def _learning_rate(optimizer: torch.optim.Optimizer) -> float:
   if not optimizer.param_groups:
     return 0.0
   return float(optimizer.param_groups[0].get("lr", 0.0))
+
+
+def _clip_or_measure_grad_norm(
+  parameters: Iterable[torch.nn.Parameter],
+  max_grad_norm: float | None,
+) -> float:
+  params = [param for param in parameters if param.grad is not None]
+  if not params:
+    return 0.0
+  if max_grad_norm is not None:
+    return float(torch.nn.utils.clip_grad_norm_(params, max_grad_norm))
+  return float(
+    torch.linalg.vector_norm(
+      torch.stack(
+        [torch.linalg.vector_norm(param.grad.detach(), ord=2) for param in params]
+      ),
+      ord=2,
+    )
+  )

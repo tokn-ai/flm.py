@@ -189,6 +189,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       kind=optimizer.get("kind", "adamw"),
       learning_rate=float(optimizer.get("learning_rate", 3e-4)),
       weight_decay=float(optimizer.get("weight_decay", 0.1)),
+      max_grad_norm=_optional_float(optimizer.get("max_grad_norm", 1.0)),
     ),
     loop=LoopConfig(
       seed=int(loop.get("seed", 42)),
@@ -279,6 +280,12 @@ def _optional_int(value: Any) -> int | None:
   if value is None:
     return None
   return int(value)
+
+
+def _optional_float(value: Any) -> float | None:
+  if value is None:
+    return None
+  return float(value)
 
 
 def _optional_path(value: Any) -> Path | None:

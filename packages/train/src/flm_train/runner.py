@@ -97,7 +97,9 @@ class ExperimentRunner:
 
   def report_step(self, metrics: TrainStepMetrics, sink) -> None:
     sink.log_metrics(metrics.to_log_dict(), step=metrics.step)
-    self._log(f"step={metrics.step} loss={metrics.loss:.4f}")
+    self._log(
+      f"step={metrics.step} loss={metrics.loss:.4f} grad_norm={metrics.grad_norm:.4f}"
+    )
 
   def report_eval(self, metrics: EvalMetrics, sink) -> None:
     sink.log_metrics(metrics.to_log_dict(), step=metrics.step)

@@ -67,6 +67,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "kind": "adamw",
         "learning_rate": 1.0e-3,
         "weight_decay": 0.01,
+        "max_grad_norm": 0.5,
       },
       "loop": {
         "seed": 7,
@@ -160,6 +161,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.model.loss_chunk_size == 16
   assert train_config.optimizer.learning_rate == 1.0e-3
   assert train_config.optimizer.weight_decay == 0.01
+  assert train_config.optimizer.max_grad_norm == 0.5
   assert train_config.loop.seed == 7
   assert train_config.loop.device == "cpu"
   assert train_config.loop.dtype == "bfloat16"
@@ -482,6 +484,7 @@ def test_16m_repo_config_uses_sdpa_attention_backend() -> None:
   assert config.model.d_ff == 1024
   assert config.model.attention_backend == "torch"
   assert config.model.loss_backend == "cut_cross_entropy"
+  assert config.optimizer.max_grad_norm == 1.0
   assert config.loop.dtype == "bfloat16"
 
 
@@ -496,6 +499,7 @@ def test_100mib_4k_repo_config_uses_benchmarked_shape() -> None:
   assert config.model.d_ff == 1536
   assert config.model.attention_backend == "torch"
   assert config.model.loss_backend == "cut_cross_entropy"
+  assert config.optimizer.max_grad_norm == 1.0
   assert config.loop.dtype == "bfloat16"
   assert config.loop.batch_size == 2
   assert config.eval is not None

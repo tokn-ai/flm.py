@@ -58,6 +58,7 @@ def train_language_model(
     dataloader=dataset_bundle.dataloader,
     device=config.loop.device,
     steps=config.loop.steps,
+    max_grad_norm=config.optimizer.max_grad_norm,
     on_step=on_step,
     eval_every_steps=config.eval.every_steps if config.eval is not None else None,
     evaluate=None

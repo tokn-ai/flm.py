@@ -239,9 +239,11 @@ def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   assert all(metrics.learning_rate == 3e-4 for metrics in step_metrics)
   assert all(metrics.tokens == 16 for metrics in step_metrics)
   assert [metrics.tokens_seen for metrics in step_metrics] == [16, 32]
+  assert all(metrics.grad_norm > 0 for metrics in step_metrics)
   assert all(metrics.step_time_sec > 0 for metrics in step_metrics)
   assert all(metrics.tokens_per_sec > 0 for metrics in step_metrics)
   assert "train/loss" in step_metrics[0].to_log_dict()
+  assert "train/grad_norm" in step_metrics[0].to_log_dict()
   assert "train/tokens_seen" in step_metrics[0].to_log_dict()
 
 
