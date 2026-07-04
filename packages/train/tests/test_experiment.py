@@ -476,6 +476,10 @@ def test_16m_repo_config_uses_sdpa_attention_backend() -> None:
   config = load_experiment_config(Path("experiments/16m_repo.yaml"))
 
   assert config.data.encoding_name == "unitoken:.cache/tokenizers/repo_8192"
+  assert config.model.d_model == 256
+  assert config.model.n_layers == 12
+  assert config.model.n_heads == 16
+  assert config.model.d_ff == 1024
   assert config.model.attention_backend == "torch"
   assert config.model.loss_backend == "cut_cross_entropy"
   assert config.loop.dtype == "bfloat16"
