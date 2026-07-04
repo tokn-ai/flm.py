@@ -72,6 +72,41 @@ def test_tilelang_flash_attention_matches_torch_gradients(dtype: torch.dtype) ->
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+def test_tilelang_flash_attention_block_backward_matches_torch(
+  dtype: torch.dtype,
+) -> None:
+  pytest.importorskip("tilelang", reason="TileLang unavailable")
+  torch.manual_seed(123)
+  q = torch.randn(1, 2, 32, 16, device="cuda", dtype=dtype)
+  k = torch.randn_like(q)
+  v = torch.randn_like(q)
+  grad = torch.randn(1, 32, 2, 16, device="cuda", dtype=dtype)
+
+  expected_q = q.detach().clone().requires_grad_()
+  expected_k = k.detach().clone().requires_grad_()
+  expected_v = v.detach().clone().requires_grad_()
+  expected = F.scaled_dot_product_attention(
+    expected_q,
+    expected_k,
+    expected_v,
+    dropout_p=0.0,
+    is_causal=True,
+  ).transpose(1, 2)
+  expected.backward(grad)
+
+  actual_q = q.detach().clone().requires_grad_()
+  actual_k = k.detach().clone().requires_grad_()
+  actual_v = v.detach().clone().requires_grad_()
+  actual = tilelang_flash_attention(actual_q, actual_k, actual_v)
+  actual.backward(grad)
+
+  torch.testing.assert_close(actual_q.grad, expected_q.grad, rtol=3e-2, atol=3e-2)
+  torch.testing.assert_close(actual_k.grad, expected_k.grad, rtol=3e-2, atol=3e-2)
+  torch.testing.assert_close(actual_v.grad, expected_v.grad, rtol=3e-2, atol=3e-2)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
 def test_tilelang_flash_attention_block_forward_matches_torch(
   dtype: torch.dtype,
 ) -> None:

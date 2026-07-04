@@ -76,6 +76,29 @@ def _tilelang_flash_attention_backward(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
   batch_size, n_heads, seq_len, head_dim = q.shape
   dtype = str(q.dtype).removeprefix("torch.")
+  if (
+    dtype in {"float16", "bfloat16"}
+    and seq_len % _BLOCK_M == 0
+    and seq_len % _BLOCK_N == 0
+    and head_dim % 16 == 0
+  ):
+    dq_kernel = _get_tilelang_block_dq_kernel(
+      batch_size=batch_size,
+      n_heads=n_heads,
+      seq_len=seq_len,
+      head_dim=head_dim,
+      dtype=dtype,
+    )
+    dkv_kernel = _get_tilelang_block_dkv_kernel(
+      batch_size=batch_size,
+      n_heads=n_heads,
+      seq_len=seq_len,
+      head_dim=head_dim,
+      dtype=dtype,
+    )
+    dq = dq_kernel(q, k, v, out, lse, grad_out)
+    dk, dv = dkv_kernel(q, k, v, out, lse, grad_out)
+    return dq, dk, dv
   dq_kernel = _get_tilelang_dq_kernel(
     batch_size=batch_size,
     n_heads=n_heads,
@@ -234,7 +257,6 @@ def _get_tilelang_block_forward_kernel(
   block_m = _BLOCK_M
   block_n = _BLOCK_N
   q_blocks = seq_len // block_m
-  kv_blocks = seq_len // block_n
 
   @tilelang.jit(out_idx=[-2, -1], target="cuda")
   def flash_attention_kernel():
@@ -257,8 +279,9 @@ def _get_tilelang_block_forward_kernel(
         scores = T.alloc_fragment([block_m, block_n], "float32")
         scores_s = T.alloc_shared([block_m, block_n], "float32")
         probs = T.alloc_shared([block_m, block_n], dtype)
+        pv = T.alloc_fragment([block_m, head_dim], "float32")
+        pv_s = T.alloc_shared([block_m, head_dim], "float32")
         acc = T.alloc_local([block_m, head_dim], "float32")
-        pv = T.alloc_local([1], "float32")
         m = T.alloc_local([block_m], "float32")
         denom = T.alloc_local([block_m], "float32")
         m_new = T.alloc_local([block_m], "float32")
@@ -271,7 +294,7 @@ def _get_tilelang_block_forward_kernel(
           m[row] = -3.4028234663852886e38
           denom[row] = 0.0
 
-        for kv_block in T.serial(0, kv_blocks):
+        for kv_block in T.serial(0, (q_start + block_m - 1) // block_n + 1):
           kv_start = kv_block * block_n
           T.copy(k[batch, head, kv_start : kv_start + block_n, 0:head_dim], k_s)
           T.copy(v[batch, head, kv_start : kv_start + block_n, 0:head_dim], v_s)
@@ -290,9 +313,7 @@ def _get_tilelang_block_forward_kernel(
           for row in T.serial(0, block_m):
             for col in T.serial(0, block_n):
               if kv_start + col <= q_start + row:
-                probs[row, col] = T.cast(
-                  T.exp(scores_s[row, col] - m_new[row]), dtype
-                )
+                probs[row, col] = T.cast(T.exp(scores_s[row, col] - m_new[row]), dtype)
               else:
                 probs[row, col] = T.cast(0.0, dtype)
 
@@ -302,15 +323,13 @@ def _get_tilelang_block_forward_kernel(
             for col in T.serial(0, block_n):
               if kv_start + col <= q_start + row:
                 denom[row] += T.cast(probs[row, col], "float32")
+
+          T.gemm(probs, v_s, pv, clear_accum=True)
+          T.copy(pv, pv_s)
+
+          for row in T.serial(0, block_m):
             for dim in T.serial(0, head_dim):
-              pv[0] = 0.0
-              for col in T.serial(0, block_n):
-                if kv_start + col <= q_start + row:
-                  pv[0] += T.cast(probs[row, col], "float32") * T.cast(
-                    v_s[col, dim],
-                    "float32",
-                  )
-              acc[row, dim] = acc[row, dim] * alpha[row] + pv[0]
+              acc[row, dim] = acc[row, dim] * alpha[row] + pv_s[row, dim]
             m[row] = m_new[row]
 
         for row in T.serial(0, block_m):
@@ -324,6 +343,247 @@ def _get_tilelang_block_forward_kernel(
     return tilelang_flash_attention_block_forward_kernel
 
   return flash_attention_kernel()
+
+
+@lru_cache(maxsize=32)
+def _get_tilelang_block_dq_kernel(
+  batch_size: int,
+  n_heads: int,
+  seq_len: int,
+  head_dim: int,
+  dtype: str,
+):
+  try:
+    import tilelang
+    from tilelang import language as T
+  except ImportError as exc:
+    raise ImportError(
+      "TileLang attention backend requires the tilelang package"
+    ) from exc
+
+  scale = head_dim**-0.5
+  block_m = _BLOCK_M
+  block_n = _BLOCK_N
+  q_blocks = seq_len // block_m
+
+  @tilelang.jit(out_idx=[-1], target="cuda")
+  def dq_kernel():
+    @T.prim_func
+    def tilelang_flash_attention_block_dq_kernel(
+      q: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      k: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      v: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      out: T.Tensor([batch_size, seq_len, n_heads, head_dim], dtype),
+      lse: T.Tensor([batch_size, n_heads, seq_len], "float32"),
+      grad_out: T.Tensor([batch_size, seq_len, n_heads, head_dim], dtype),
+      dq: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+    ):
+      with T.Kernel(batch_size, n_heads, q_blocks, threads=32) as (
+        batch,
+        head,
+        q_block,
+      ):
+        q_s = T.alloc_shared([block_m, head_dim], dtype)
+        k_s = T.alloc_shared([block_n, head_dim], dtype)
+        v_s = T.alloc_shared([block_n, head_dim], dtype)
+        out_s = T.alloc_shared([block_m, head_dim], dtype)
+        grad_out_s = T.alloc_shared([block_m, head_dim], dtype)
+        scores = T.alloc_fragment([block_m, block_n], "float32")
+        scores_s = T.alloc_shared([block_m, block_n], "float32")
+        probs = T.alloc_shared([block_m, block_n], dtype)
+        dprob = T.alloc_fragment([block_m, block_n], "float32")
+        dprob_s = T.alloc_shared([block_m, block_n], "float32")
+        dscore = T.alloc_shared([block_m, block_n], dtype)
+        dq_tile = T.alloc_fragment([block_m, head_dim], "float32")
+        dq_tile_s = T.alloc_shared([block_m, head_dim], "float32")
+        dq_acc = T.alloc_local([block_m, head_dim], "float32")
+        delta = T.alloc_local([block_m], "float32")
+
+        q_start = q_block * block_m
+        T.copy(q[batch, head, q_start : q_start + block_m, 0:head_dim], q_s)
+        T.copy(out[batch, q_start : q_start + block_m, head, 0:head_dim], out_s)
+        T.copy(
+          grad_out[batch, q_start : q_start + block_m, head, 0:head_dim],
+          grad_out_s,
+        )
+        T.clear(dq_acc)
+
+        for row in T.serial(0, block_m):
+          delta[row] = 0.0
+          for dim in T.serial(0, head_dim):
+            delta[row] += T.cast(out_s[row, dim], "float32") * T.cast(
+              grad_out_s[row, dim], "float32"
+            )
+
+        for kv_block in T.serial(0, (q_start + block_m - 1) // block_n + 1):
+          kv_start = kv_block * block_n
+          T.copy(k[batch, head, kv_start : kv_start + block_n, 0:head_dim], k_s)
+          T.copy(v[batch, head, kv_start : kv_start + block_n, 0:head_dim], v_s)
+          T.gemm(q_s, k_s, scores, transpose_B=True, clear_accum=True)
+          T.copy(scores, scores_s)
+
+          for row in T.serial(0, block_m):
+            for col in T.serial(0, block_n):
+              if kv_start + col <= q_start + row:
+                probs[row, col] = T.cast(
+                  T.exp(scores_s[row, col] * scale - lse[batch, head, q_start + row]),
+                  dtype,
+                )
+              else:
+                probs[row, col] = T.cast(0.0, dtype)
+
+          T.gemm(grad_out_s, v_s, dprob, transpose_B=True, clear_accum=True)
+          T.copy(dprob, dprob_s)
+
+          for row in T.serial(0, block_m):
+            for col in T.serial(0, block_n):
+              dscore[row, col] = T.cast(
+                T.cast(probs[row, col], "float32")
+                * (dprob_s[row, col] - delta[row])
+                * scale,
+                dtype,
+              )
+
+          T.gemm(dscore, k_s, dq_tile, clear_accum=True)
+          T.copy(dq_tile, dq_tile_s)
+
+          for row in T.serial(0, block_m):
+            for dim in T.serial(0, head_dim):
+              dq_acc[row, dim] += dq_tile_s[row, dim]
+
+        for row in T.serial(0, block_m):
+          for dim in T.serial(0, head_dim):
+            dq[batch, head, q_start + row, dim] = T.cast(dq_acc[row, dim], dtype)
+
+    return tilelang_flash_attention_block_dq_kernel
+
+  return dq_kernel()
+
+
+@lru_cache(maxsize=32)
+def _get_tilelang_block_dkv_kernel(
+  batch_size: int,
+  n_heads: int,
+  seq_len: int,
+  head_dim: int,
+  dtype: str,
+):
+  try:
+    import tilelang
+    from tilelang import language as T
+  except ImportError as exc:
+    raise ImportError(
+      "TileLang attention backend requires the tilelang package"
+    ) from exc
+
+  scale = head_dim**-0.5
+  block_m = _BLOCK_M
+  block_n = _BLOCK_N
+  q_blocks = seq_len // block_m
+  kv_blocks = seq_len // block_n
+
+  @tilelang.jit(out_idx=[-2, -1], target="cuda")
+  def dkv_kernel():
+    @T.prim_func
+    def tilelang_flash_attention_block_dkv_kernel(
+      q: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      k: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      v: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      out: T.Tensor([batch_size, seq_len, n_heads, head_dim], dtype),
+      lse: T.Tensor([batch_size, n_heads, seq_len], "float32"),
+      grad_out: T.Tensor([batch_size, seq_len, n_heads, head_dim], dtype),
+      dk: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+      dv: T.Tensor([batch_size, n_heads, seq_len, head_dim], dtype),
+    ):
+      with T.Kernel(batch_size, n_heads, kv_blocks, threads=32) as (
+        batch,
+        head,
+        kv_block,
+      ):
+        q_s = T.alloc_shared([block_m, head_dim], dtype)
+        k_s = T.alloc_shared([block_n, head_dim], dtype)
+        v_s = T.alloc_shared([block_n, head_dim], dtype)
+        out_s = T.alloc_shared([block_m, head_dim], dtype)
+        grad_out_s = T.alloc_shared([block_m, head_dim], dtype)
+        scores = T.alloc_fragment([block_m, block_n], "float32")
+        scores_s = T.alloc_shared([block_m, block_n], "float32")
+        probs = T.alloc_shared([block_m, block_n], dtype)
+        dprob = T.alloc_fragment([block_m, block_n], "float32")
+        dprob_s = T.alloc_shared([block_m, block_n], "float32")
+        dscore = T.alloc_shared([block_m, block_n], dtype)
+        dk_tile = T.alloc_fragment([block_n, head_dim], "float32")
+        dk_tile_s = T.alloc_shared([block_n, head_dim], "float32")
+        dv_tile = T.alloc_fragment([block_n, head_dim], "float32")
+        dv_tile_s = T.alloc_shared([block_n, head_dim], "float32")
+        dk_acc = T.alloc_local([block_n, head_dim], "float32")
+        dv_acc = T.alloc_local([block_n, head_dim], "float32")
+        delta = T.alloc_local([block_m], "float32")
+
+        kv_start = kv_block * block_n
+        T.copy(k[batch, head, kv_start : kv_start + block_n, 0:head_dim], k_s)
+        T.copy(v[batch, head, kv_start : kv_start + block_n, 0:head_dim], v_s)
+        T.clear(dk_acc)
+        T.clear(dv_acc)
+
+        for q_block in T.serial(kv_block * block_n // block_m, q_blocks):
+          q_start = q_block * block_m
+          T.copy(q[batch, head, q_start : q_start + block_m, 0:head_dim], q_s)
+          T.copy(out[batch, q_start : q_start + block_m, head, 0:head_dim], out_s)
+          T.copy(
+            grad_out[batch, q_start : q_start + block_m, head, 0:head_dim],
+            grad_out_s,
+          )
+
+          for row in T.serial(0, block_m):
+            delta[row] = 0.0
+            for dim in T.serial(0, head_dim):
+              delta[row] += T.cast(out_s[row, dim], "float32") * T.cast(
+                grad_out_s[row, dim], "float32"
+              )
+
+          T.gemm(q_s, k_s, scores, transpose_B=True, clear_accum=True)
+          T.copy(scores, scores_s)
+
+          for row in T.serial(0, block_m):
+            for col in T.serial(0, block_n):
+              if kv_start + col <= q_start + row:
+                probs[row, col] = T.cast(
+                  T.exp(scores_s[row, col] * scale - lse[batch, head, q_start + row]),
+                  dtype,
+                )
+              else:
+                probs[row, col] = T.cast(0.0, dtype)
+
+          T.gemm(probs, grad_out_s, dv_tile, transpose_A=True, clear_accum=True)
+          T.copy(dv_tile, dv_tile_s)
+          T.gemm(grad_out_s, v_s, dprob, transpose_B=True, clear_accum=True)
+          T.copy(dprob, dprob_s)
+
+          for row in T.serial(0, block_m):
+            for col in T.serial(0, block_n):
+              dscore[row, col] = T.cast(
+                T.cast(probs[row, col], "float32")
+                * (dprob_s[row, col] - delta[row])
+                * scale,
+                dtype,
+              )
+
+          T.gemm(dscore, q_s, dk_tile, transpose_A=True, clear_accum=True)
+          T.copy(dk_tile, dk_tile_s)
+
+          for col in T.serial(0, block_n):
+            for dim in T.serial(0, head_dim):
+              dk_acc[col, dim] += dk_tile_s[col, dim]
+              dv_acc[col, dim] += dv_tile_s[col, dim]
+
+        for col in T.serial(0, block_n):
+          for dim in T.serial(0, head_dim):
+            dk[batch, head, kv_start + col, dim] = T.cast(dk_acc[col, dim], dtype)
+            dv[batch, head, kv_start + col, dim] = T.cast(dv_acc[col, dim], dtype)
+
+    return tilelang_flash_attention_block_dkv_kernel
+
+  return dkv_kernel()
 
 
 @lru_cache(maxsize=32)
