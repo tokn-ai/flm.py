@@ -8,16 +8,37 @@ from flm_modules.kernels.tilelang.flash_attention import tilelang_flash_attentio
 from torch.nn import functional as F
 
 
-def test_tilelang_flash_attention_16m_shape_is_not_catastrophic() -> None:
+@pytest.mark.parametrize(
+  (
+    "name",
+    "batch_size",
+    "n_heads",
+    "seq_len",
+    "head_dim",
+    "max_forward_ratio",
+    "max_backward_ratio",
+  ),
+  [
+    ("short", 4, 4, 128, 32, 1_000.0, 1_000.0),
+    ("repo_16m", 8, 2, 512, 64, 1_000.0, 1_000.0),
+    ("medium", 2, 4, 384, 64, 3_000.0, 1_000.0),
+    ("long_narrow", 1, 4, 768, 64, 1_000.0, 1_000.0),
+  ],
+)
+def test_tilelang_flash_attention_shapes_are_not_catastrophic(
+  name: str,
+  batch_size: int,
+  n_heads: int,
+  seq_len: int,
+  head_dim: int,
+  max_forward_ratio: float,
+  max_backward_ratio: float,
+) -> None:
   if not torch.cuda.is_available():
     pytest.skip("CUDA attention benchmark requires CUDA")
   pytest.importorskip("tilelang", reason="TileLang unavailable")
 
   torch.manual_seed(0)
-  batch_size = 8
-  n_heads = 2
-  seq_len = 512
-  head_dim = 64
   dtype = torch.bfloat16
   q = torch.randn(
     batch_size,
@@ -62,13 +83,14 @@ def test_tilelang_flash_attention_16m_shape_is_not_catastrophic() -> None:
   forward_ratio = tilelang_forward_ms / max(torch_forward_ms, 1.0e-12)
   backward_ratio = tilelang_backward_ms / max(torch_backward_ms, 1.0e-12)
   print(
-    "tilelang attention 16m shape: "
+    f"tilelang attention {name}: "
+    f"shape=({batch_size},{n_heads},{seq_len},{head_dim}) "
     f"forward={tilelang_forward_ms:.3f}ms torch_forward={torch_forward_ms:.3f}ms "
     f"forward_ratio={forward_ratio:.1f}x backward={tilelang_backward_ms:.3f}ms "
     f"torch_backward={torch_backward_ms:.3f}ms backward_ratio={backward_ratio:.1f}x"
   )
-  assert forward_ratio < 1_000.0
-  assert backward_ratio < 1_000.0
+  assert forward_ratio < max_forward_ratio
+  assert backward_ratio < max_backward_ratio
 
 
 def _measure_forward_ms(fn: Callable[[], torch.Tensor]) -> float:
