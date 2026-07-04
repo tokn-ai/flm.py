@@ -485,6 +485,27 @@ def test_16m_repo_config_uses_sdpa_attention_backend() -> None:
   assert config.loop.dtype == "bfloat16"
 
 
+def test_100mib_4k_repo_config_uses_benchmarked_shape() -> None:
+  config = load_experiment_config(Path("experiments/100mib_4k_repo.yaml"))
+
+  assert config.data.encoding_name == "unitoken:.cache/tokenizers/repo_8192"
+  assert config.data.seq_len == 4096
+  assert config.model.d_model == 384
+  assert config.model.n_layers == 20
+  assert config.model.n_heads == 24
+  assert config.model.d_ff == 1536
+  assert config.model.attention_backend == "torch"
+  assert config.model.loss_backend == "cut_cross_entropy"
+  assert config.loop.dtype == "bfloat16"
+  assert config.loop.batch_size == 2
+  assert config.eval is not None
+  assert config.eval.every_steps == 10
+  assert config.eval.max_batches == 4
+  assert config.rollout is not None
+  assert config.rollout.every_steps == 50
+  assert config.checkpoint.every_steps == 1000
+
+
 def test_parse_experiment_config_accepts_cut_cross_entropy_backend() -> None:
   config = parse_experiment_config(
     {
