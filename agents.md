@@ -98,6 +98,13 @@ Translations live under `blog/cn/` with the same filename, e.g.
 `blog/20260703-01-from-script-to-system.md` and
 `blog/cn/20260703-01-from-script-to-system.md`.
 
+Images and other assets live under `blog/assets/`, named with the blog id
+(`YYYYMMDD-NN`) as a prefix plus a short description of what the asset
+shows — not the blog's own slug — e.g.
+`blog/assets/20260705-01-loss-curves.png`. Reference them from a post with a
+relative path: `![](../assets/...)`. `runs/` (raw training data) is
+gitignored; commit the rendered asset so the link resolves.
+
 Chinese translations keep recurring technical entity names in English
 (Model, Dataset, Optimizer, Protocol, Registry, Config, loss, sink, run,
 trainer) so prose maps back to the code; code identifiers are never
