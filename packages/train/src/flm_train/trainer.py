@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from math import log
 from pathlib import Path
 from typing import Protocol
 
@@ -47,6 +48,7 @@ class TrainStepMetrics:
   tokens: int
   tokens_seen: int
   grad_norm: float
+  bits_per_byte: float
   step_time_sec: float
   tokens_per_sec: float
 
@@ -57,6 +59,7 @@ class TrainStepMetrics:
       "train/tokens": self.tokens,
       "train/tokens_seen": self.tokens_seen,
       "train/grad_norm": self.grad_norm,
+      "train/bpb": self.bits_per_byte,
       "system/step_time_sec": self.step_time_sec,
       "train/tokens_per_sec": self.tokens_per_sec,
     }
@@ -67,11 +70,13 @@ class EvalMetrics:
   step: int
   split: str
   loss: float
+  bits_per_byte: float
   tokens: int
 
   def to_log_dict(self) -> dict[str, float | int]:
     return {
       f"eval/{self.split}_loss": self.loss,
+      f"eval/{self.split}_bpb": self.bits_per_byte,
       f"eval/{self.split}_tokens": self.tokens,
     }
 
@@ -114,6 +119,7 @@ class LanguageModelTrainer:
     dataloader: DataLoader,
     device: str,
     steps: int,
+    bytes_per_token: float,
     max_grad_norm: float | None = 1.0,
     on_step: StepCallback | None = None,
     eval_every_steps: int | None = None,
@@ -133,6 +139,7 @@ class LanguageModelTrainer:
     self.dataloader = dataloader
     self.device = device
     self.steps = steps
+    self.bytes_per_token = bytes_per_token
     self.max_grad_norm = max_grad_norm
     self.on_step = on_step
     self.eval_every_steps = eval_every_steps
@@ -179,6 +186,10 @@ class LanguageModelTrainer:
         tokens=token_count,
         tokens_seen=tokens_seen,
         grad_norm=grad_norm,
+        bits_per_byte=_loss_to_bits_per_byte(
+          loss=float(loss.detach().cpu()),
+          bytes_per_token=self.bytes_per_token,
+        ),
         step_time_sec=step_time_sec,
         tokens_per_sec=token_count / max(step_time_sec, 1e-12),
       )
@@ -296,3 +307,9 @@ def _clip_or_measure_grad_norm(
       ord=2,
     )
   )
+
+
+def _loss_to_bits_per_byte(*, loss: float, bytes_per_token: float) -> float:
+  if bytes_per_token <= 0:
+    return 0.0
+  return loss / log(2.0) / bytes_per_token

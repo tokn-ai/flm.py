@@ -153,3 +153,4 @@ class TrainingResult:
   losses: list[float]
   token_count: int
   file_count: int
+  byte_count: int

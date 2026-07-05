@@ -61,11 +61,13 @@ def run_from_args(args: argparse.Namespace) -> None:
     print(f"version={info.version}")
     print(f"tokens={info.token_count}")
     print(f"files={info.file_count}")
+    print(f"bytes={info.byte_count}")
     print(f"unigram_entropy_nats_per_token={info.unigram_entropy_nats_per_token:.6f}")
     for split_name, split_info in info.splits.items():
       print(
         f"{split_name}_tokens={split_info['token_count']} "
-        f"{split_name}_files={split_info['file_count']}"
+        f"{split_name}_files={split_info['file_count']} "
+        f"{split_name}_bytes={split_info['byte_count']}"
       )
     return
   raise ValueError(f"unsupported command: {args.command}")

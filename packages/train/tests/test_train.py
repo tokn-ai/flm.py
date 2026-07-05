@@ -97,6 +97,9 @@ def test_publish_repo_source_dataset_writes_versioned_artifacts(tmp_path: Path) 
   assert set(manifest["splits"]) == {"train", "val", "test"}
   assert published.file_count == 1
   assert published.token_count > 0
+  assert published.byte_count > 0
+  assert manifest["byte_count"] == published.byte_count
+  assert manifest["splits"]["train"]["byte_count"] == published.byte_count
   assert (
     published.unigram_entropy_nats_per_token
     == manifest["unigram_entropy_nats_per_token"]
@@ -146,6 +149,7 @@ def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) ->
 
   assert published.version
   assert result.file_count == 1
+  assert result.byte_count > 0
   assert result.token_count > 0
   assert result.token_count <= published.token_count
   assert len(result.losses) == 1
@@ -178,8 +182,10 @@ def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
   output = capsys.readouterr().out
   assert "version=" in output
   assert "tokens=" in output
+  assert "bytes=" in output
   assert "unigram_entropy_nats_per_token=" in output
   assert "train_tokens=" in output
+  assert "train_bytes=" in output
   assert "val_tokens=" in output
   assert "test_tokens=" in output
   assert (dataset_root / "latest.json").is_file()
@@ -230,6 +236,7 @@ def test_data_cli_trains_unitoken_tokenizer_for_repo_sources(
   manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
   assert "tokens=" in output
+  assert "bytes=" in output
   assert "unigram_entropy_nats_per_token=" in output
   assert manifest["encoding_name"] == f"unitoken:{tokenizer_root / 'repo_300'}"
   assert manifest["unigram_entropy_nats_per_token"] > 0
@@ -259,9 +266,11 @@ def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   assert all(metrics.tokens == 16 for metrics in step_metrics)
   assert [metrics.tokens_seen for metrics in step_metrics] == [16, 32]
   assert all(metrics.grad_norm > 0 for metrics in step_metrics)
+  assert all(metrics.bits_per_byte > 0 for metrics in step_metrics)
   assert all(metrics.step_time_sec > 0 for metrics in step_metrics)
   assert all(metrics.tokens_per_sec > 0 for metrics in step_metrics)
   assert "train/loss" in step_metrics[0].to_log_dict()
+  assert "train/bpb" in step_metrics[0].to_log_dict()
   assert "train/grad_norm" in step_metrics[0].to_log_dict()
   assert "train/tokens_seen" in step_metrics[0].to_log_dict()
 

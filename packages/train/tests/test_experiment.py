@@ -552,6 +552,7 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   metrics_payload = json.loads(metrics_lines[0])
   assert metrics_payload["step"] == 1
   assert metrics_payload["train/loss"] > 0
+  assert metrics_payload["train/bpb"] > 0
   assert metrics_payload["train/lr"] == 3e-4
   assert metrics_payload["train/tokens"] == 16
   assert metrics_payload["train/tokens_seen"] == 16
@@ -567,6 +568,7 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   assert "gpus" in system_metrics_payload
   result_payload = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
   assert result_payload["file_count"] == 1
+  assert result_payload["byte_count"] > 0
   assert len(result_payload["losses"]) == 1
 
 
@@ -634,6 +636,7 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   ]
   assert [metrics["step"] for metrics in eval_metrics] == [1, 2]
   assert all(metrics["eval/test_loss"] > 0 for metrics in eval_metrics)
+  assert all(metrics["eval/test_bpb"] > 0 for metrics in eval_metrics)
   assert all("eval/test_perplexity" not in metrics for metrics in eval_metrics)
 
   rollout_path = run_dir / "rollouts" / "step-00000002.json"
@@ -818,7 +821,9 @@ def test_tensorboard_sink_logs_scalars_and_text(tmp_path: Path) -> None:
     }
   )
   sink.log_artifact(tmp_path / "checkpoint.pt")
-  sink.finish_run(TrainingResult(losses=[1.5], token_count=10, file_count=1))
+  sink.finish_run(
+    TrainingResult(losses=[1.5], token_count=10, file_count=1, byte_count=20)
+  )
   sink.close()
 
   assert ("train/loss", 1.5, 2) in writer.scalars
@@ -858,7 +863,9 @@ def test_mlflow_sink_logs_run_data(tmp_path: Path) -> None:
     }
   )
   sink.log_artifact(tmp_path / "artifact.txt", name="artifacts")
-  sink.finish_run(TrainingResult(losses=[1.25], token_count=10, file_count=1))
+  sink.finish_run(
+    TrainingResult(losses=[1.25], token_count=10, file_count=1, byte_count=20)
+  )
 
   assert client.tracking_uri == "file:mlruns"
   assert client.experiment_name == "mlflow"
@@ -912,7 +919,9 @@ def test_wandb_sink_logs_run_data(tmp_path: Path) -> None:
     }
   )
   sink.log_artifact(tmp_path / "artifact.txt")
-  sink.finish_run(TrainingResult(losses=[2.0], token_count=10, file_count=1))
+  sink.finish_run(
+    TrainingResult(losses=[2.0], token_count=10, file_count=1, byte_count=20)
+  )
 
   assert module.init_kwargs["project"] == "project"
   assert module.init_kwargs["entity"] == "entity"

@@ -121,7 +121,9 @@ class ExperimentRunner:
     self._log(f"step={step} checkpoint={path}")
 
   def report_result(self, result: TrainingResult) -> None:
-    self._log(f"tokens={result.token_count} files={result.file_count}")
+    self._log(
+      f"tokens={result.token_count} files={result.file_count} bytes={result.byte_count}"
+    )
 
   def _log(self, message: str) -> None:
     if self.log is not None:

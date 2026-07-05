@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -58,6 +59,10 @@ def train_language_model(
     dataloader=dataset_bundle.dataloader,
     device=config.loop.device,
     steps=config.loop.steps,
+    bytes_per_token=_bytes_per_token(
+      dataset_bundle.byte_count,
+      dataset_bundle.token_count,
+    ),
     max_grad_norm=config.optimizer.max_grad_norm,
     on_step=on_step,
     eval_every_steps=config.eval.every_steps if config.eval is not None else None,
@@ -68,6 +73,10 @@ def train_language_model(
       dataloader=eval_bundle.dataloader,
       device=config.loop.device,
       split=config.eval.split,
+      bytes_per_token=_bytes_per_token(
+        eval_bundle.byte_count,
+        eval_bundle.token_count,
+      ),
       max_batches=config.eval.max_batches,
       step=step,
     ),
@@ -97,6 +106,7 @@ def train_language_model(
     losses=[metrics.loss for metrics in step_metrics],
     token_count=dataset_bundle.token_count,
     file_count=dataset_bundle.file_count,
+    byte_count=dataset_bundle.byte_count,
   )
 
 
@@ -106,6 +116,7 @@ def evaluate_language_model(
   dataloader,
   device: str,
   split: str,
+  bytes_per_token: float,
   max_batches: int,
   step: int,
 ) -> EvalMetrics:
@@ -135,6 +146,7 @@ def evaluate_language_model(
     step=step,
     split=split,
     loss=loss,
+    bits_per_byte=_loss_to_bits_per_byte(loss=loss, bytes_per_token=bytes_per_token),
     tokens=total_tokens,
   )
 
@@ -147,6 +159,18 @@ def _torch_dtype(value: str) -> torch.dtype:
   if value == "bfloat16":
     return torch.bfloat16
   raise ValueError(f"unsupported torch dtype: {value}")
+
+
+def _bytes_per_token(byte_count: int, token_count: int) -> float:
+  if token_count <= 0:
+    return 0.0
+  return byte_count / token_count
+
+
+def _loss_to_bits_per_byte(*, loss: float, bytes_per_token: float) -> float:
+  if bytes_per_token <= 0:
+    return 0.0
+  return loss / math.log(2.0) / bytes_per_token
 
 
 def generate_rollouts(

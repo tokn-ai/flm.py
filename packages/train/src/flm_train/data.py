@@ -32,6 +32,7 @@ class RepoSourceDatasetBundle:
   dataloader: DataLoader
   token_count: int
   file_count: int
+  byte_count: int
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class PublishedDatasetInfo:
   split_paths: dict[str, Path]
   token_count: int
   file_count: int
+  byte_count: int
   unigram_entropy_nats_per_token: float
   splits: dict[str, dict[str, int]]
 
@@ -69,6 +71,7 @@ def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
     dataloader=dataloader,
     token_count=int(split_metadata["token_count"]),
     file_count=int(split_metadata["file_count"]),
+    byte_count=int(split_metadata["byte_count"]),
   )
 
 
@@ -161,6 +164,7 @@ def publish_repo_source_dataset(
         "tokens_file": split_paths[split_name].name,
         "token_count": len(tokens),
         "file_count": len(split_files),
+        "byte_count": sum(path.stat().st_size for path in split_files),
       }
     files_path.write_text(
       "\n".join(json.dumps(record, sort_keys=True) for record in file_records) + "\n",
@@ -179,6 +183,9 @@ def publish_repo_source_dataset(
           int(metadata["token_count"]) for metadata in split_metadata.values()
         ),
         "file_count": len(source_files),
+        "byte_count": sum(
+          int(metadata["byte_count"]) for metadata in split_metadata.values()
+        ),
         "unigram_entropy_nats_per_token": _token_entropy_nats_from_paths(
           split_paths.values()
         ),
@@ -195,6 +202,9 @@ def publish_repo_source_dataset(
       },
     )
   manifest = _read_json(manifest_path)
+  if _manifest_missing_byte_counts(manifest):
+    manifest = _manifest_with_byte_counts(manifest, file_records)
+    _write_json(manifest_path, manifest)
   unigram_entropy_nats_per_token = float(
     manifest.get(
       "unigram_entropy_nats_per_token",
@@ -216,11 +226,13 @@ def publish_repo_source_dataset(
     split_paths=split_paths,
     token_count=int(manifest["token_count"]),
     file_count=int(manifest["file_count"]),
+    byte_count=int(manifest["byte_count"]),
     unigram_entropy_nats_per_token=unigram_entropy_nats_per_token,
     splits={
       name: {
         "token_count": int(metadata["token_count"]),
         "file_count": int(metadata["file_count"]),
+        "byte_count": int(metadata["byte_count"]),
       }
       for name, metadata in manifest["splits"].items()
     },
@@ -292,6 +304,35 @@ def _token_entropy_nats_from_paths(paths) -> float:
     return 0.0
   probabilities = counts[counts > 0].astype(np.float64) / total
   return float(-np.sum(probabilities * np.log(probabilities)))
+
+
+def _manifest_missing_byte_counts(manifest: dict[str, Any]) -> bool:
+  if "byte_count" not in manifest:
+    return True
+  splits = manifest.get("splits")
+  if not isinstance(splits, dict):
+    return True
+  return any("byte_count" not in metadata for metadata in splits.values())
+
+
+def _manifest_with_byte_counts(
+  manifest: dict[str, Any],
+  file_records: list[dict[str, int | str]],
+) -> dict[str, Any]:
+  byte_counts = {"train": 0, "val": 0, "test": 0}
+  for record in file_records:
+    split = str(record["split"])
+    byte_counts[split] += int(record["size"])
+  manifest = dict(manifest)
+  manifest["byte_count"] = sum(byte_counts.values())
+  manifest["splits"] = {
+    name: {
+      **metadata,
+      "byte_count": byte_counts[name],
+    }
+    for name, metadata in manifest["splits"].items()
+  }
+  return manifest
 
 
 def train_unitoken_tokenizer(
