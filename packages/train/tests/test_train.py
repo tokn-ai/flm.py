@@ -5,7 +5,11 @@ from pathlib import Path
 import numpy as np
 import torch
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
-from flm_train.data import _token_entropy_nats_from_paths, publish_repo_source_dataset
+from flm_train.data import (
+  _token_entropy_nats_from_paths,
+  publish_fineweb2_dataset,
+  publish_repo_source_dataset,
+)
 from flm_train.data_cli import parse_args, run_from_args
 from flm_train.presets import train_language_model
 from flm_train.trainer import TrainStepMetrics
@@ -242,6 +246,89 @@ def test_data_cli_trains_unitoken_tokenizer_for_repo_sources(
   assert manifest["unigram_entropy_nats_per_token"] > 0
   assert (tokenizer_root / "vocab.repo_300[u8].json").is_file()
   assert (tokenizer_root / "merges.repo_300[u8].txt").is_file()
+
+
+def test_publish_fineweb2_dataset_streams_bounded_text_rows(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  rows = [
+    {"id": "train-doc", "text": "train text " * 12},
+    {"id": "val-doc", "text": "validation text " * 12},
+    {"id": "test-doc", "text": "test text " * 12},
+  ]
+
+  monkeypatch.setattr(
+    "flm_train.data._iter_hf_dataset_rows",
+    lambda **_: iter(rows),
+  )
+  monkeypatch.setattr(
+    "flm_train.data._assign_file_split",
+    lambda relative_path, **_: relative_path.removesuffix("-doc"),
+  )
+
+  published = publish_fineweb2_dataset(
+    dataset_root=tmp_path / "fineweb2",
+    config_name="eng_Latn",
+    max_train_bytes=1,
+    max_val_bytes=1,
+    max_test_bytes=1,
+  )
+  manifest = json.loads(published.manifest_path.read_text(encoding="utf-8"))
+
+  assert manifest["kind"] == "fineweb2"
+  assert manifest["dataset_name"] == "HuggingFaceFW/fineweb-2"
+  assert manifest["config_name"] == "eng_Latn"
+  assert manifest["split"]["strategy"] == "document_hash"
+  assert published.byte_count > 0
+  assert published.splits["train"]["file_count"] == 1
+  assert published.splits["val"]["file_count"] == 1
+  assert published.splits["test"]["file_count"] == 1
+  assert all(path.is_file() for path in published.split_paths.values())
+
+
+def test_data_cli_publishes_fineweb2_dataset(
+  tmp_path: Path, monkeypatch, capsys
+) -> None:
+  monkeypatch.setattr(
+    "flm_train.data._iter_hf_dataset_rows",
+    lambda **_: iter(
+      [
+        {"id": "train-doc", "text": "train text " * 12},
+        {"id": "val-doc", "text": "validation text " * 12},
+        {"id": "test-doc", "text": "test text " * 12},
+      ]
+    ),
+  )
+  monkeypatch.setattr(
+    "flm_train.data._assign_file_split",
+    lambda relative_path, **_: relative_path.removesuffix("-doc"),
+  )
+
+  args = parse_args(
+    [
+      "fineweb2",
+      "publish",
+      "--dataset-root",
+      str(tmp_path / "fineweb2"),
+      "--config-name",
+      "eng_Latn",
+      "--max-train-bytes",
+      "1",
+      "--max-val-bytes",
+      "1",
+      "--max-test-bytes",
+      "1",
+    ]
+  )
+  run_from_args(args)
+
+  output = capsys.readouterr().out
+  assert "dataset_root=" in output
+  assert "tokens=" in output
+  assert "bytes=" in output
+  assert "train_bytes=" in output
+  assert "unigram_entropy_nats_per_token=" in output
 
 
 def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:

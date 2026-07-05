@@ -239,6 +239,189 @@ def publish_repo_source_dataset(
   )
 
 
+def publish_fineweb2_dataset(
+  *,
+  dataset_root: Path,
+  config_name: str,
+  encoding_name: str = "cl100k_base",
+  dataset_name: str = "HuggingFaceFW/fineweb-2",
+  source_split: str = "train",
+  max_train_bytes: int = 50_000_000,
+  max_val_bytes: int = 2_000_000,
+  max_test_bytes: int = 2_000_000,
+  train_ratio: float = 0.98,
+  val_ratio: float = 0.01,
+  test_ratio: float = 0.01,
+  split_seed: int = 42,
+  text_column: str = "text",
+) -> PublishedDatasetInfo:
+  _validate_split_ratios(
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    test_ratio=test_ratio,
+  )
+  if max_train_bytes <= 0:
+    raise ValueError("max_train_bytes must be positive")
+  if max_val_bytes < 0 or max_test_bytes < 0:
+    raise ValueError("max_val_bytes and max_test_bytes must be non-negative")
+
+  split_byte_targets = {
+    "train": max_train_bytes,
+    "val": max_val_bytes,
+    "test": max_test_bytes,
+  }
+  version = _published_fineweb2_digest(
+    dataset_name=dataset_name,
+    config_name=config_name,
+    source_split=source_split,
+    encoding_name=encoding_name,
+    split_seed=split_seed,
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    test_ratio=test_ratio,
+    split_byte_targets=split_byte_targets,
+    text_column=text_column,
+  )
+  version_dir = dataset_root / "versions" / version
+  manifest_path = version_dir / "manifest.json"
+  files_path = version_dir / "files.jsonl"
+  split_paths = {
+    "train": version_dir / "train.npy",
+    "val": version_dir / "val.npy",
+    "test": version_dir / "test.npy",
+  }
+
+  if (
+    not manifest_path.exists()
+    or not files_path.exists()
+    or any(not path.exists() for path in split_paths.values())
+  ):
+    split_tokens: dict[str, list[int]] = {"train": [], "val": [], "test": []}
+    split_metadata = {
+      name: {
+        "tokens_file": split_paths[name].name,
+        "token_count": 0,
+        "file_count": 0,
+        "byte_count": 0,
+      }
+      for name in split_paths
+    }
+    records = []
+    for index, row in enumerate(
+      _iter_hf_dataset_rows(
+        dataset_name=dataset_name,
+        config_name=config_name,
+        split=source_split,
+      )
+    ):
+      text = str(row.get(text_column, ""))
+      if not text:
+        continue
+      doc_id = str(row.get("id") or row.get("url") or index)
+      split_name = _assign_file_split(
+        doc_id,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        split_seed=split_seed,
+      )
+      if split_metadata[split_name]["byte_count"] >= split_byte_targets[split_name]:
+        if _fineweb2_byte_targets_reached(split_metadata, split_byte_targets):
+          break
+        continue
+      byte_count = len(text.encode("utf-8"))
+      tokens = encode_text(text + "\n\n", encoding_name=encoding_name)
+      split_tokens[split_name].extend(tokens)
+      split_metadata[split_name]["token_count"] += len(tokens)
+      split_metadata[split_name]["file_count"] += 1
+      split_metadata[split_name]["byte_count"] += byte_count
+      records.append(
+        {
+          "index": index,
+          "id": doc_id,
+          "split": split_name,
+          "byte_count": byte_count,
+        }
+      )
+      if _fineweb2_byte_targets_reached(split_metadata, split_byte_targets):
+        break
+
+    version_dir.mkdir(parents=True, exist_ok=True)
+    for split_name, tokens in split_tokens.items():
+      np.save(split_paths[split_name], np.asarray(tokens, dtype=np.int32))
+    files_path.write_text(
+      "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
+      encoding="utf-8",
+    )
+    _write_json(
+      manifest_path,
+      {
+        "version": version,
+        "format_version": _PUBLISHED_DATASET_VERSION,
+        "kind": "fineweb2",
+        "dataset_name": dataset_name,
+        "config_name": config_name,
+        "source_split": source_split,
+        "encoding_name": encoding_name,
+        "dtype": _TOKEN_CACHE_DTYPE,
+        "token_count": sum(
+          int(metadata["token_count"]) for metadata in split_metadata.values()
+        ),
+        "file_count": sum(
+          int(metadata["file_count"]) for metadata in split_metadata.values()
+        ),
+        "byte_count": sum(
+          int(metadata["byte_count"]) for metadata in split_metadata.values()
+        ),
+        "unigram_entropy_nats_per_token": _token_entropy_nats_from_paths(
+          split_paths.values()
+        ),
+        "files_file": files_path.name,
+        "split": {
+          "strategy": "document_hash",
+          "seed": split_seed,
+          "train": train_ratio,
+          "val": val_ratio,
+          "test": test_ratio,
+        },
+        "limits": {
+          "train_bytes": max_train_bytes,
+          "val_bytes": max_val_bytes,
+          "test_bytes": max_test_bytes,
+        },
+        "splits": split_metadata,
+        "created_at": datetime.now(UTC).isoformat(),
+      },
+    )
+
+  manifest = _read_json(manifest_path)
+  _write_json(
+    dataset_root / "latest.json",
+    {
+      "version": version,
+      "manifest": f"versions/{version}/manifest.json",
+      "updated_at": datetime.now(UTC).isoformat(),
+    },
+  )
+  return PublishedDatasetInfo(
+    dataset_root=dataset_root,
+    version=version,
+    manifest_path=manifest_path,
+    split_paths=split_paths,
+    token_count=int(manifest["token_count"]),
+    file_count=int(manifest["file_count"]),
+    byte_count=int(manifest["byte_count"]),
+    unigram_entropy_nats_per_token=float(manifest["unigram_entropy_nats_per_token"]),
+    splits={
+      name: {
+        "token_count": int(metadata["token_count"]),
+        "file_count": int(metadata["file_count"]),
+        "byte_count": int(metadata["byte_count"]),
+      }
+      for name, metadata in manifest["splits"].items()
+    },
+  )
+
+
 def _source_file_records(
   *,
   root: Path,
@@ -287,6 +470,68 @@ def _published_dataset_digest(
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _published_fineweb2_digest(
+  *,
+  dataset_name: str,
+  config_name: str,
+  source_split: str,
+  encoding_name: str,
+  split_seed: int,
+  train_ratio: float,
+  val_ratio: float,
+  test_ratio: float,
+  split_byte_targets: dict[str, int],
+  text_column: str,
+) -> str:
+  manifest = {
+    "format_version": _PUBLISHED_DATASET_VERSION,
+    "kind": "fineweb2",
+    "dataset_name": dataset_name,
+    "config_name": config_name,
+    "source_split": source_split,
+    "encoding_name": encoding_name,
+    "split": {
+      "strategy": "document_hash",
+      "seed": split_seed,
+      "train": train_ratio,
+      "val": val_ratio,
+      "test": test_ratio,
+    },
+    "limits": split_byte_targets,
+    "text_column": text_column,
+  }
+  payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+  return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _iter_hf_dataset_rows(
+  *,
+  dataset_name: str,
+  config_name: str,
+  split: str,
+):
+  try:
+    from datasets import load_dataset
+  except ModuleNotFoundError as exc:
+    raise ImportError("FineWeb2 publishing requires the datasets package") from exc
+  return load_dataset(
+    dataset_name,
+    config_name,
+    split=split,
+    streaming=True,
+  )
+
+
+def _fineweb2_byte_targets_reached(
+  split_metadata: dict[str, dict[str, int | str]],
+  split_byte_targets: dict[str, int],
+) -> bool:
+  return all(
+    int(split_metadata[split]["byte_count"]) >= target
+    for split, target in split_byte_targets.items()
+  )
 
 
 def _token_entropy_nats_from_paths(paths) -> float:

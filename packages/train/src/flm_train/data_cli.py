@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from flm_train.data import publish_repo_source_dataset
+from flm_train.data import publish_fineweb2_dataset, publish_repo_source_dataset
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +35,26 @@ def build_parser() -> argparse.ArgumentParser:
   publish.add_argument("--test-ratio", type=float, default=0.01)
   publish.add_argument("--split-seed", type=int, default=42)
 
+  fineweb2 = subcommands.add_parser("fineweb2")
+  fineweb2_subcommands = fineweb2.add_subparsers(
+    dest="fineweb2_command",
+    required=True,
+  )
+  fineweb2_publish = fineweb2_subcommands.add_parser("publish")
+  fineweb2_publish.add_argument("--dataset-root", type=Path, required=True)
+  fineweb2_publish.add_argument("--config-name", required=True)
+  fineweb2_publish.add_argument("--dataset-name", default="HuggingFaceFW/fineweb-2")
+  fineweb2_publish.add_argument("--source-split", default="train")
+  fineweb2_publish.add_argument("--encoding-name", default="cl100k_base")
+  fineweb2_publish.add_argument("--max-train-bytes", type=int, default=50_000_000)
+  fineweb2_publish.add_argument("--max-val-bytes", type=int, default=2_000_000)
+  fineweb2_publish.add_argument("--max-test-bytes", type=int, default=2_000_000)
+  fineweb2_publish.add_argument("--train-ratio", type=float, default=0.98)
+  fineweb2_publish.add_argument("--val-ratio", type=float, default=0.01)
+  fineweb2_publish.add_argument("--test-ratio", type=float, default=0.01)
+  fineweb2_publish.add_argument("--split-seed", type=int, default=42)
+  fineweb2_publish.add_argument("--text-column", default="text")
+
   return parser
 
 
@@ -57,20 +77,42 @@ def run_from_args(args: argparse.Namespace) -> None:
       test_ratio=args.test_ratio,
       split_seed=args.split_seed,
     )
-    print(f"dataset_root={info.dataset_root}")
-    print(f"version={info.version}")
-    print(f"tokens={info.token_count}")
-    print(f"files={info.file_count}")
-    print(f"bytes={info.byte_count}")
-    print(f"unigram_entropy_nats_per_token={info.unigram_entropy_nats_per_token:.6f}")
-    for split_name, split_info in info.splits.items():
-      print(
-        f"{split_name}_tokens={split_info['token_count']} "
-        f"{split_name}_files={split_info['file_count']} "
-        f"{split_name}_bytes={split_info['byte_count']}"
-      )
+    _print_published_info(info)
+    return
+  if args.command == "fineweb2" and args.fineweb2_command == "publish":
+    info = publish_fineweb2_dataset(
+      dataset_root=args.dataset_root,
+      config_name=args.config_name,
+      encoding_name=args.encoding_name,
+      dataset_name=args.dataset_name,
+      source_split=args.source_split,
+      max_train_bytes=args.max_train_bytes,
+      max_val_bytes=args.max_val_bytes,
+      max_test_bytes=args.max_test_bytes,
+      train_ratio=args.train_ratio,
+      val_ratio=args.val_ratio,
+      test_ratio=args.test_ratio,
+      split_seed=args.split_seed,
+      text_column=args.text_column,
+    )
+    _print_published_info(info)
     return
   raise ValueError(f"unsupported command: {args.command}")
+
+
+def _print_published_info(info) -> None:
+  print(f"dataset_root={info.dataset_root}")
+  print(f"version={info.version}")
+  print(f"tokens={info.token_count}")
+  print(f"files={info.file_count}")
+  print(f"bytes={info.byte_count}")
+  print(f"unigram_entropy_nats_per_token={info.unigram_entropy_nats_per_token:.6f}")
+  for split_name, split_info in info.splits.items():
+    print(
+      f"{split_name}_tokens={split_info['token_count']} "
+      f"{split_name}_files={split_info['file_count']} "
+      f"{split_name}_bytes={split_info['byte_count']}"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:

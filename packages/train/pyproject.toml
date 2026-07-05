@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Training workflows package."
 requires-python = ">=3.12"
 dependencies = [
+  "datasets>=3.0",
   "flm-datasets",
   "flm-llm",
   "flm-modules",
