@@ -61,6 +61,7 @@ def run_from_args(args: argparse.Namespace) -> None:
     print(f"version={info.version}")
     print(f"tokens={info.token_count}")
     print(f"files={info.file_count}")
+    print(f"unigram_entropy_nats_per_token={info.unigram_entropy_nats_per_token:.6f}")
     for split_name, split_info in info.splits.items():
       print(
         f"{split_name}_tokens={split_info['token_count']} "

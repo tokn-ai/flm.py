@@ -1,10 +1,11 @@
 import json
+import math
 from pathlib import Path
 
 import numpy as np
 import torch
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
-from flm_train.data import publish_repo_source_dataset
+from flm_train.data import _token_entropy_nats_from_paths, publish_repo_source_dataset
 from flm_train.data_cli import parse_args, run_from_args
 from flm_train.presets import train_language_model
 from flm_train.trainer import TrainStepMetrics
@@ -92,9 +93,24 @@ def test_publish_repo_source_dataset_writes_versioned_artifacts(tmp_path: Path) 
   assert (published.manifest_path.parent / "files.jsonl").is_file()
   manifest = json.loads(published.manifest_path.read_text(encoding="utf-8"))
   assert manifest["split"]["strategy"] == "file_hash"
+  assert manifest["unigram_entropy_nats_per_token"] > 0
   assert set(manifest["splits"]) == {"train", "val", "test"}
   assert published.file_count == 1
   assert published.token_count > 0
+  assert (
+    published.unigram_entropy_nats_per_token
+    == manifest["unigram_entropy_nats_per_token"]
+  )
+
+
+def test_token_entropy_counts_emitted_token_ids_once(tmp_path: Path) -> None:
+  tokens_path = tmp_path / "tokens.npy"
+  np.save(tokens_path, np.asarray([1, 2, 2, 3], dtype=np.int32))
+
+  entropy = _token_entropy_nats_from_paths([tokens_path])
+
+  expected = -(0.25 * math.log(0.25) + 0.5 * math.log(0.5) + 0.25 * math.log(0.25))
+  assert entropy == expected
 
 
 def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) -> None:
@@ -162,6 +178,7 @@ def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
   output = capsys.readouterr().out
   assert "version=" in output
   assert "tokens=" in output
+  assert "unigram_entropy_nats_per_token=" in output
   assert "train_tokens=" in output
   assert "val_tokens=" in output
   assert "test_tokens=" in output
@@ -213,7 +230,9 @@ def test_data_cli_trains_unitoken_tokenizer_for_repo_sources(
   manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
   assert "tokens=" in output
+  assert "unigram_entropy_nats_per_token=" in output
   assert manifest["encoding_name"] == f"unitoken:{tokenizer_root / 'repo_300'}"
+  assert manifest["unigram_entropy_nats_per_token"] > 0
   assert (tokenizer_root / "vocab.repo_300[u8].json").is_file()
   assert (tokenizer_root / "merges.repo_300[u8].txt").is_file()
 

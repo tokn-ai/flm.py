@@ -42,6 +42,7 @@ class PublishedDatasetInfo:
   split_paths: dict[str, Path]
   token_count: int
   file_count: int
+  unigram_entropy_nats_per_token: float
   splits: dict[str, dict[str, int]]
 
 
@@ -178,6 +179,9 @@ def publish_repo_source_dataset(
           int(metadata["token_count"]) for metadata in split_metadata.values()
         ),
         "file_count": len(source_files),
+        "unigram_entropy_nats_per_token": _token_entropy_nats_from_paths(
+          split_paths.values()
+        ),
         "files_file": files_path.name,
         "split": {
           "strategy": "file_hash",
@@ -191,6 +195,12 @@ def publish_repo_source_dataset(
       },
     )
   manifest = _read_json(manifest_path)
+  unigram_entropy_nats_per_token = float(
+    manifest.get(
+      "unigram_entropy_nats_per_token",
+      _token_entropy_nats_from_paths(split_paths.values()),
+    )
+  )
   _write_json(
     dataset_root / "latest.json",
     {
@@ -206,6 +216,7 @@ def publish_repo_source_dataset(
     split_paths=split_paths,
     token_count=int(manifest["token_count"]),
     file_count=int(manifest["file_count"]),
+    unigram_entropy_nats_per_token=unigram_entropy_nats_per_token,
     splits={
       name: {
         "token_count": int(metadata["token_count"]),
@@ -264,6 +275,23 @@ def _published_dataset_digest(
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _token_entropy_nats_from_paths(paths) -> float:
+  counts = np.zeros(0, dtype=np.int64)
+  for path in paths:
+    tokens = np.load(path, allow_pickle=False)
+    if tokens.size == 0:
+      continue
+    token_counts = np.bincount(tokens.astype(np.int64, copy=False))
+    if token_counts.shape[0] > counts.shape[0]:
+      counts = np.pad(counts, (0, token_counts.shape[0] - counts.shape[0]))
+    counts[: token_counts.shape[0]] += token_counts
+  total = int(counts.sum())
+  if total == 0:
+    return 0.0
+  probabilities = counts[counts > 0].astype(np.float64) / total
+  return float(-np.sum(probabilities * np.log(probabilities)))
 
 
 def train_unitoken_tokenizer(
