@@ -11,7 +11,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.utils import filter_repo_objects
 
 DEFAULT_ROOT = Path("/mnt/m/Corpus/FineWeb2")
 
@@ -163,8 +164,20 @@ def print_plan(plans: Sequence[DownloadPlan]) -> None:
 
 
 def run_downloads(plans: Sequence[DownloadPlan], *, max_workers: int) -> None:
+  api = HfApi()
   for plan in plans:
+    missing_files = _missing_repo_files(api, plan)
     print(f"Downloading {plan.repo_id} to {plan.local_dir}")
+    print(f"missing_files={len(missing_files)}")
+    for batch in _chunks(missing_files, 500):
+      snapshot_download(
+        repo_id=plan.repo_id,
+        repo_type="dataset",
+        local_dir=plan.local_dir,
+        allow_patterns=batch,
+        max_workers=max_workers,
+      )
+    print("Checking existing files")
     snapshot_download(
       repo_id=plan.repo_id,
       repo_type="dataset",
@@ -172,6 +185,23 @@ def run_downloads(plans: Sequence[DownloadPlan], *, max_workers: int) -> None:
       allow_patterns=list(plan.allow_patterns),
       max_workers=max_workers,
     )
+
+
+def _missing_repo_files(api: HfApi, plan: DownloadPlan) -> list[str]:
+  repo_files = api.list_repo_files(plan.repo_id, repo_type="dataset")
+  expected_files = filter_repo_objects(
+    repo_files,
+    allow_patterns=list(plan.allow_patterns),
+  )
+  return [
+    filename
+    for filename in expected_files
+    if not (plan.local_dir / filename).is_file()
+  ]
+
+
+def _chunks(items: Sequence[str], size: int) -> Sequence[list[str]]:
+  return [list(items[index : index + size]) for index in range(0, len(items), size)]
 
 
 def main(argv: Sequence[str] | None = None) -> None:
