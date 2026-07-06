@@ -128,7 +128,9 @@ def test_checkpoint_ffn_down_svd_metrics_selects_key_layers(tmp_path: Path) -> N
   metadata = {}
   for layer in range(4):
     name = f"blocks.{layer}.ffn.down.weight"
-    tensor = torch.eye(4, dtype=torch.float32) * (layer + 1)
+    tensor = torch.diag(
+      torch.tensor([1.0] * (layer + 1) + [0.0] * (3 - layer))
+    )
     arrays[name] = tensor.numpy()
     metadata[name] = {
       "__tensor__": {
@@ -146,12 +148,14 @@ def test_checkpoint_ffn_down_svd_metrics_selects_key_layers(tmp_path: Path) -> N
 
   metrics = checkpoint_ffn_down_svd_metrics(checkpoint_path)
 
-  assert metrics["svd/ffn_down/first/layer"] == 0
-  assert metrics["svd/ffn_down/quarter/layer"] == 1
-  assert metrics["svd/ffn_down/last/layer"] == 3
-  assert metrics["svd/ffn_down/first/effective_rank"] == 4.0
-  assert metrics["svd/ffn_down/last/stable_rank"] == 4.0
-  assert metrics["svd/ffn_down/last/r95"] == 4
+  assert metrics["svd/ffn_down/effective_rank/layer_00"] == 1.0
+  assert metrics["svd/ffn_down/effective_rank/layer_01"] == 2.0
+  assert metrics["svd/ffn_down/stable_rank/layer_03"] == 4.0
+  assert metrics["svd/ffn_down/r95/layer_03"] == 4
+  assert metrics["svd/ffn_down/r95/min"] == 1.0
+  assert metrics["svd/ffn_down/r95/max"] == 4.0
+  assert metrics["svd/ffn_down/r95/mean"] == 2.5
+  assert math.isclose(metrics["svd/ffn_down/effective_rank/mean"], 2.5)
 
 
 def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) -> None:
