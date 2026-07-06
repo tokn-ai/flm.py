@@ -15,6 +15,7 @@ from flm_train.data import resolve_data_config
 from flm_train.presets import train_language_model
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import RunContext, build_run_sink
+from flm_train.svd import checkpoint_ffn_down_svd_metrics
 from flm_train.system_metrics import SystemMetricsSampler
 from flm_train.trainer import EvalMetrics, RolloutBatch, TrainStepMetrics
 from flm_train.types import TrainingResult
@@ -118,6 +119,9 @@ class ExperimentRunner:
 
   def report_checkpoint(self, path: Path, *, step: int, sink) -> None:
     sink.log_artifact(path, name=f"checkpoints/step-{step:08d}")
+    svd_metrics = checkpoint_ffn_down_svd_metrics(path)
+    if svd_metrics:
+      sink.log_metrics(svd_metrics, step=step)
     self._log(f"step={step} checkpoint={path}")
 
   def report_result(self, result: TrainingResult) -> None:

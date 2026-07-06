@@ -12,6 +12,7 @@ from flm_train.data import (
 )
 from flm_train.data_cli import parse_args, run_from_args
 from flm_train.presets import train_language_model
+from flm_train.svd import checkpoint_ffn_down_svd_metrics
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
   CheckpointConfig,
@@ -118,6 +119,39 @@ def test_token_entropy_counts_emitted_token_ids_once(tmp_path: Path) -> None:
 
   expected = -(0.25 * math.log(0.25) + 0.5 * math.log(0.5) + 0.25 * math.log(0.25))
   assert entropy == expected
+
+
+def test_checkpoint_ffn_down_svd_metrics_selects_key_layers(tmp_path: Path) -> None:
+  checkpoint_path = tmp_path / "checkpoint"
+  checkpoint_path.mkdir()
+  arrays = {}
+  metadata = {}
+  for layer in range(4):
+    name = f"blocks.{layer}.ffn.down.weight"
+    tensor = torch.eye(4, dtype=torch.float32) * (layer + 1)
+    arrays[name] = tensor.numpy()
+    metadata[name] = {
+      "__tensor__": {
+        "name": name,
+        "shape": list(tensor.shape),
+        "dtype": "torch.float32",
+        "device": "cpu",
+      }
+    }
+  np.savez(checkpoint_path / "model.npz", **arrays)
+  (checkpoint_path / "model_state.json").write_text(
+    json.dumps(metadata, sort_keys=True) + "\n",
+    encoding="utf-8",
+  )
+
+  metrics = checkpoint_ffn_down_svd_metrics(checkpoint_path)
+
+  assert metrics["svd/ffn_down/first/layer"] == 0
+  assert metrics["svd/ffn_down/quarter/layer"] == 1
+  assert metrics["svd/ffn_down/last/layer"] == 3
+  assert metrics["svd/ffn_down/first/effective_rank"] == 4.0
+  assert metrics["svd/ffn_down/last/stable_rank"] == 4.0
+  assert metrics["svd/ffn_down/last/r95"] == 4
 
 
 def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) -> None:
