@@ -70,6 +70,7 @@ def main() -> None:
     _plot_heatmap(
       [spectrum for spectrum in spectra if spectrum.view == view],
       outpath=args.outdir / f"svd_heatmap_{view}.png",
+      heatmap_vmin=args.heatmap_vmin,
     )
   print(f"checkpoint={checkpoint}")
   print(f"outdir={args.outdir}")
@@ -99,6 +100,14 @@ def _parse_args() -> argparse.Namespace:
     type=Path,
     default=Path(
       "runs/100mib_4k_repo_reference/20260704-160611-092c2a/svd"
+    ),
+  )
+  parser.add_argument(
+    "--heatmap-vmin",
+    type=float,
+    help=(
+      "minimum log10(s_i / s_0) color value. Defaults to each view's "
+      "1st percentile."
     ),
   )
   return parser.parse_args()
@@ -213,7 +222,11 @@ def _plot_energy(spectra: list[MatrixSpectrum], outpath: Path) -> None:
   plt.close(fig)
 
 
-def _plot_heatmap(spectra: list[MatrixSpectrum], outpath: Path) -> None:
+def _plot_heatmap(
+  spectra: list[MatrixSpectrum],
+  outpath: Path,
+  heatmap_vmin: float | None,
+) -> None:
   spectra = sorted(spectra, key=lambda spectrum: spectrum.layer)
   matrix = torch.stack(
     [
@@ -223,8 +236,9 @@ def _plot_heatmap(spectra: list[MatrixSpectrum], outpath: Path) -> None:
       for spectrum in spectra
     ]
   ).T.numpy()
+  vmin = float(np.quantile(matrix, 0.01)) if heatmap_vmin is None else heatmap_vmin
   fig, ax = plt.subplots(figsize=(8, 6), dpi=160)
-  image = ax.imshow(matrix, aspect="auto", origin="lower", vmin=-5, vmax=0)
+  image = ax.imshow(matrix, aspect="auto", origin="lower", vmin=vmin, vmax=0)
   ax.set_title(f"FFN {spectra[0].view} singular value spectrum")
   ax.set_xlabel("layer")
   ax.set_ylabel("singular index")
