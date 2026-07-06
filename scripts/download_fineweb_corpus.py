@@ -31,6 +31,7 @@ FINEWEB2_LANGUAGE_CONFIGS = {
 
 DEFAULT_LANGUAGES = ("en", "cjk", "fr", "de", "ru", "arb")
 DEFAULT_ENGLISH_DUMPS = ("CC-MAIN-2024-10",)
+DEFAULT_ENGLISH_SAMPLES = ("10BT",)
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,20 @@ def build_parser() -> argparse.ArgumentParser:
     help="download every FineWeb English dump instead of selected dumps",
   )
   parser.add_argument(
+    "--english-sample",
+    action="append",
+    dest="english_samples",
+    help=(
+      "FineWeb English sample size, repeatable. Defaults to 10BT. "
+      "Use --no-english-samples to skip samples."
+    ),
+  )
+  parser.add_argument(
+    "--no-english-samples",
+    action="store_true",
+    help="skip FineWeb English sample downloads",
+  )
+  parser.add_argument(
     "--splits",
     nargs="+",
     default=("train", "test"),
@@ -104,6 +119,9 @@ def build_plans(args: argparse.Namespace) -> list[DownloadPlan]:
         allow_patterns=_fineweb_allow_patterns(
           all_dumps=args.all_english_dumps,
           english_dumps=tuple(args.english_dumps or DEFAULT_ENGLISH_DUMPS),
+          english_samples=()
+          if args.no_english_samples
+          else tuple(args.english_samples or DEFAULT_ENGLISH_SAMPLES),
         ),
       )
     )
@@ -135,10 +153,13 @@ def _fineweb_allow_patterns(
   *,
   all_dumps: bool,
   english_dumps: tuple[str, ...],
+  english_samples: tuple[str, ...],
 ) -> tuple[str, ...]:
-  if all_dumps:
-    return ("data/*", "README.md")
-  return tuple(f"data/{dump}/*" for dump in english_dumps) + ("README.md",)
+  data_patterns = ("data/*",) if all_dumps else tuple(
+    f"data/{dump}/*" for dump in english_dumps
+  )
+  sample_patterns = tuple(f"sample/{sample}/*" for sample in english_samples)
+  return data_patterns + sample_patterns + ("README.md",)
 
 
 def _fineweb2_allow_patterns(
