@@ -787,6 +787,7 @@ version = "0.1.0"
 source = { editable = "packages/datasets" }
 dependencies = [
     { name = "tiktoken" },
+    { name = "tokenizers" },
     { name = "torch" },
     { name = "uni-tokenizer" },
 ]
@@ -794,6 +795,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "tiktoken", specifier = ">=0.8.0" },
+    { name = "tokenizers", specifier = ">=0.22.0" },
     { name = "torch", specifier = ">=2.5" },
     { name = "uni-tokenizer" },
 ]
