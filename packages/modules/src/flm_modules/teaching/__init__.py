@@ -1,5 +1,10 @@
 """Teaching-oriented module implementations."""
 
+from flm_modules.teaching.csa import (
+  DeepSeekV4CSACompressor,
+  DeepSeekV4Indexer,
+  DeepSeekV4IndexerScorer,
+)
 from flm_modules.teaching.dsa import (
   DeepSeekDSA,
   DeepSeekDSAIndexer,
@@ -10,4 +15,7 @@ __all__ = [
   "DeepSeekDSA",
   "DeepSeekDSAIndexer",
   "DeepSeekMLA",
+  "DeepSeekV4CSACompressor",
+  "DeepSeekV4Indexer",
+  "DeepSeekV4IndexerScorer",
 ]
