@@ -10,7 +10,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from flm_datasets.corpus import SourceCorpusConfig, iter_source_files
+from flm_datasets.corpus import (
+  SOURCE_CORPUS_SEPARATOR,
+  SourceCorpusConfig,
+  iter_source_files,
+  write_source_corpus_file,
+)
 from flm_datasets.tokenizer import unitoken_special_tokens
 
 
@@ -29,21 +34,34 @@ class TrainingResult:
 
 def main() -> None:
   args = _parse_args()
-  source_files = iter_source_files(SourceCorpusConfig(root=args.repo_root))
+  corpus_config = SourceCorpusConfig(root=args.repo_root)
+  source_files = iter_source_files(corpus_config)
   if args.max_files is not None:
     source_files = source_files[: args.max_files]
   special_tokens = unitoken_special_tokens(16)
 
   args.outdir.mkdir(parents=True, exist_ok=True)
+  corpus_path = args.outdir / "repo_sources.txt"
+  corpus_timings: dict[str, float] = {}
+  _time(
+    "write_corpus",
+    corpus_timings,
+    lambda: write_source_corpus_file(
+      corpus_path,
+      corpus_config,
+      paths=source_files,
+      separator=SOURCE_CORPUS_SEPARATOR,
+    ),
+  )
   unitoken_result = _train_unitoken(
-    source_files=source_files,
+    corpus_path=corpus_path,
     outdir=args.outdir / "unitoken",
     name=args.tokenizer_name,
     vocab_size=args.vocab_size,
     special_tokens=special_tokens,
   )
   hf_result = _train_hf(
-    source_files=source_files,
+    corpus_path=corpus_path,
     outdir=args.outdir / "hf",
     name=args.tokenizer_name,
     vocab_size=args.vocab_size,
@@ -52,6 +70,9 @@ def main() -> None:
 
   print(f"repo_root={args.repo_root.resolve()}")
   print(f"files={len(source_files)}")
+  print(f"corpus_file={corpus_path}")
+  for name, seconds in corpus_timings.items():
+    print(f"{name}_s={seconds:.3f}")
   print(f"vocab_size={args.vocab_size}")
   print()
   for result in [unitoken_result, hf_result]:
@@ -77,7 +98,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _train_unitoken(
   *,
-  source_files: list[Path],
+  corpus_path: Path,
   outdir: Path,
   name: str,
   vocab_size: int,
@@ -91,9 +112,8 @@ def _train_unitoken(
   words: dict[str, int] = {}
 
   def collect_words() -> None:
-    for path in source_files:
-      for word, count in pre_tokenizer.get_words_from_file(path).items():
-        words[word] = words.get(word, 0) + int(count)
+    for word, count in pre_tokenizer.get_words_from_file(corpus_path).items():
+      words[word] = words.get(word, 0) + int(count)
 
   _time("pretokenize", timings, collect_words)
   trainer = BpeTrainer(special_tokens)
@@ -111,7 +131,7 @@ def _train_unitoken(
 
 def _train_hf(
   *,
-  source_files: list[Path],
+  corpus_path: Path,
   outdir: Path,
   name: str,
   vocab_size: int,
@@ -132,8 +152,7 @@ def _train_hf(
     initial_alphabet=ByteLevel.alphabet(),
   )
 
-  files = [path.as_posix() for path in source_files]
-  _time("train", timings, lambda: tokenizer.train(files, trainer))
+  _time("train", timings, lambda: tokenizer.train([corpus_path.as_posix()], trainer))
   raw_vocab_path = outdir / "vocab.json"
   raw_merges_path = outdir / "merges.txt"
   _time("save", timings, lambda: tokenizer.model.save(str(outdir)))

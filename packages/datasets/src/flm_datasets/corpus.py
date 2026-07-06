@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+SOURCE_CORPUS_SEPARATOR = "<|endoftext|>"
 DEFAULT_SOURCE_SUFFIXES = frozenset(
   {
     ".cfg",
@@ -74,6 +75,25 @@ def read_source_corpus(
     chunks.append(f"<|file:{relative_path}|>\n{text}\n")
 
   return "\n".join(chunks)
+
+
+def write_source_corpus_file(
+  output_path: Path,
+  config: SourceCorpusConfig,
+  paths: Sequence[Path] | None = None,
+  separator: str = SOURCE_CORPUS_SEPARATOR,
+) -> None:
+  root = config.root.resolve()
+  output_path.parent.mkdir(parents=True, exist_ok=True)
+
+  with output_path.open("w", encoding="utf-8") as output:
+    source_paths = paths if paths is not None else iter_source_files(config)
+    for index, path in enumerate(source_paths):
+      if index > 0:
+        output.write(f"\n{separator}\n")
+      relative_path = path.relative_to(root).as_posix()
+      text = path.read_text(encoding="utf-8")
+      output.write(f"<|file:{relative_path}|>\n{text}\n")
 
 
 def _is_excluded(

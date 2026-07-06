@@ -18,6 +18,7 @@ from flm_datasets import (
   read_source_corpus,
   unitoken_encoding_name,
   unitoken_special_tokens,
+  write_source_corpus_file,
 )
 from torch.utils.data import DataLoader
 
@@ -119,6 +120,7 @@ def publish_repo_source_dataset(
     tokenizer_path = tokenizer_root / name
     train_unitoken_tokenizer(
       source_files=source_files,
+      corpus_config=corpus_config,
       tokenizer_path=tokenizer_path,
       vocab_size=unitoken_vocab_size,
       special_token_count=unitoken_special_token_count,
@@ -583,6 +585,7 @@ def _manifest_with_byte_counts(
 def train_unitoken_tokenizer(
   *,
   source_files: list[Path],
+  corpus_config: SourceCorpusConfig,
   tokenizer_path: Path,
   vocab_size: int,
   special_token_count: int = 16,
@@ -602,11 +605,12 @@ def train_unitoken_tokenizer(
   from uni_tokenizer import BpeTrainer, PreTokenizer
 
   tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
+  corpus_path = tokenizer_path.parent / f"corpus.{tokenizer_path.name}.txt"
+  write_source_corpus_file(corpus_path, corpus_config, paths=source_files)
   pre_tokenizer = PreTokenizer(special_tokens=special_tokens)
   words: dict[str, int] = {}
-  for path in source_files:
-    for word, count in pre_tokenizer.get_words_from_file(path).items():
-      words[word] = words.get(word, 0) + int(count)
+  for word, count in pre_tokenizer.get_words_from_file(corpus_path).items():
+    words[word] = words.get(word, 0) + int(count)
 
   trainer = BpeTrainer(special_tokens)
   trainer.add_words(words)
