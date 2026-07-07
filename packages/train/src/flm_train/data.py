@@ -487,11 +487,13 @@ def publish_fineweb_parquet_dataset(
     )
     encoding_name = unitoken_encoding_name(tokenizer_path)
   dataset_root = tokens_root / tokenizer_name / corpus_name
+  tokenizer_fingerprint = _tokenizer_fingerprint(encoding_name)
 
   version = _published_fineweb_parquet_digest(
     source_root=source_root,
     parquet_files=parquet_files,
     encoding_name=encoding_name,
+    tokenizer_fingerprint=tokenizer_fingerprint,
     split_seed=split_seed,
     train_ratio=train_ratio,
     val_ratio=val_ratio,
@@ -537,6 +539,7 @@ def publish_fineweb_parquet_dataset(
         "source_root": str(source_root),
         "corpus_name": corpus_name,
         "tokenizer_name": tokenizer_name,
+        "tokenizer_fingerprint": tokenizer_fingerprint,
         "encoding_name": encoding_name,
         "dtype": _TOKEN_CACHE_DTYPE,
         "token_count": sum(
@@ -1341,6 +1344,7 @@ def _published_fineweb_parquet_digest(
   source_root: Path,
   parquet_files: list[Path],
   encoding_name: str,
+  tokenizer_fingerprint: str,
   split_seed: int,
   train_ratio: float,
   val_ratio: float,
@@ -1360,6 +1364,7 @@ def _published_fineweb_parquet_digest(
     "format_version": _PUBLISHED_DATASET_VERSION,
     "kind": "fineweb_parquet",
     "encoding_name": encoding_name,
+    "tokenizer_fingerprint": tokenizer_fingerprint,
     "split": {
       "strategy": "document_hash",
       "seed": split_seed,
@@ -1430,6 +1435,18 @@ def _load_token_array(path: Path) -> np.ndarray:
   if token_array.ndim != 1:
     raise ValueError(f"token dataset must be a 1D array: {path}")
   return token_array
+
+
+def _tokenizer_fingerprint(encoding_name: str) -> str:
+  if encoding_name.startswith("unitoken:"):
+    tokenizer_path = Path(encoding_name.removeprefix("unitoken:"))
+    manifest_path = tokenizer_path / "manifest.json"
+    if manifest_path.exists():
+      manifest = _read_json(manifest_path)
+      fingerprint = manifest.get("fingerprint")
+      if isinstance(fingerprint, str) and fingerprint:
+        return fingerprint
+  return encoding_name
 
 
 def _split_token_paths(root: Path, split_metadata: dict[str, Any]) -> list[Path]:
