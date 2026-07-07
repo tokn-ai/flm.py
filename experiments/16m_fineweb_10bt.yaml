@@ -1,0 +1,61 @@
+name: 16m_fineweb_10bt_reference
+
+data:
+  kind: token_dataset
+  dataset_root: cache/tokens/fineweb_10bt_8192/fineweb_10bt
+  version: latest
+  split: train
+  encoding_name: unitoken:tokenizers/fineweb_10bt_8192
+  seq_len: 512
+
+model:
+  kind: reference
+  d_model: 256
+  n_layers: 12
+  n_heads: 16
+  d_ff: 1024
+  attention_backend: torch
+  loss_backend: cut_cross_entropy
+  loss_chunk_size: 256
+
+optimizer:
+  kind: adamw
+  learning_rate: 3.0e-4
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+loop:
+  seed: 42
+  device: cuda
+  dtype: bfloat16
+  batch_size: 8
+  steps: 1000
+
+eval:
+  split: test
+  every_steps: 10
+  max_batches: 8
+
+rollout:
+  every_steps: 50
+  max_new_tokens: 64
+  prompts:
+    - name: i_am
+      prompt: "I am"
+    - name: yesterday
+      prompt: "Yesterday,"
+    - name: capital
+      prompt: "The capital of"
+
+checkpoint:
+  enabled: true
+  every_steps: 100
+  keep_last: 3
+  resume: auto
+
+secrets:
+  env_file: .secret
+
+sinks:
+  - kind: files
+  - kind: tensorboard

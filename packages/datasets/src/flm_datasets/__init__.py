@@ -8,7 +8,11 @@ from flm_datasets.corpus import (
   read_source_corpus,
   write_source_corpus_file,
 )
-from flm_datasets.token_dataset import ShardedTokenDataset, TokenDataset
+from flm_datasets.token_dataset import (
+  RandomTokenWindowDataset,
+  ShardedTokenDataset,
+  TokenDataset,
+)
 from flm_datasets.tokenizer import (
   encode_text,
   get_tokenizer,
@@ -21,6 +25,7 @@ __all__ = [
   "CalcQA",
   "CalcQAConfig",
   "CalcQAExample",
+  "RandomTokenWindowDataset",
   "SOURCE_CORPUS_SEPARATOR",
   "SourceCorpusConfig",
   "ShardedTokenDataset",

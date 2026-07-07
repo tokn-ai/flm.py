@@ -62,3 +62,43 @@ class ShardedTokenDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     x = shard[local_index : local_index + self.seq_len].long()
     y = shard[local_index + 1 : local_index + self.seq_len + 1].long()
     return x, y
+
+
+class RandomTokenWindowDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
+  def __init__(
+    self,
+    source: Dataset[tuple[torch.Tensor, torch.Tensor]],
+    *,
+    num_samples: int,
+    seed: int = 0,
+  ) -> None:
+    if num_samples < 1:
+      raise ValueError("num_samples must be positive")
+    if len(source) < 1:
+      raise ValueError("source dataset must not be empty")
+    self.source = source
+    self.num_samples = num_samples
+    self.seed = seed
+
+  def __len__(self) -> int:
+    return self.num_samples
+
+  def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    if index < 0 or index >= self.num_samples:
+      raise IndexError(index)
+    sample_index = _sample_index(
+      index=index,
+      seed=self.seed,
+      limit=len(self.source),
+    )
+    return self.source[sample_index]
+
+
+def _sample_index(*, index: int, seed: int, limit: int) -> int:
+  value = (index + seed * 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
+  value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9
+  value &= 0xFFFFFFFFFFFFFFFF
+  value = (value ^ (value >> 27)) * 0x94D049BB133111EB
+  value &= 0xFFFFFFFFFFFFFFFF
+  value ^= value >> 31
+  return value % limit

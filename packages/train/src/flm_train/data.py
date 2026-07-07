@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 from flm_datasets import (
   SOURCE_CORPUS_SEPARATOR,
+  RandomTokenWindowDataset,
   ShardedTokenDataset,
   SourceCorpusConfig,
   TokenDataset,
@@ -70,10 +71,19 @@ def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
     if len(token_arrays) == 1
     else ShardedTokenDataset(token_arrays, seq_len=resolved_data.seq_len)
   )
+  if resolved_data.split == "train":
+    dataset = RandomTokenWindowDataset(
+      dataset,
+      num_samples=max(
+        config.loop.steps * config.loop.batch_size,
+        config.loop.batch_size,
+      ),
+      seed=config.loop.seed,
+    )
   dataloader = DataLoader(
     dataset,
     batch_size=config.loop.batch_size,
-    shuffle=True,
+    shuffle=False,
     drop_last=False,
   )
   split_metadata = _split_metadata(metadata, resolved_data.split)

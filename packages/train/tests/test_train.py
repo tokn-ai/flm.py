@@ -6,12 +6,14 @@ import flm_train.data_cli as data_cli
 import numpy as np
 import pytest
 import torch
+from flm_datasets import RandomTokenWindowDataset
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
 from flm_train.config import WorkspaceConfig
 from flm_train.data import (
   SOURCE_CORPUS_SEPARATOR,
   _token_entropy_nats_from_paths,
   _write_fineweb_parquet_token_shards,
+  build_training_dataset,
   publish_fineweb2_dataset,
   publish_fineweb_parquet_dataset,
   publish_repo_source_dataset,
@@ -199,6 +201,43 @@ def test_train_on_published_token_dataset_uses_latest_version(tmp_path: Path) ->
   assert result.token_count > 0
   assert result.token_count <= published.token_count
   assert len(result.losses) == 1
+
+
+def test_train_token_dataset_uses_random_windows_without_loader_shuffle(
+  tmp_path: Path,
+) -> None:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"x_{i} = {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+    train_ratio=1.0,
+    val_ratio=0.0,
+    test_ratio=0.0,
+  )
+
+  bundle = build_training_dataset(
+    TrainConfig(
+      data=DataConfig(
+        kind="token_dataset",
+        dataset_root=dataset_root,
+        version="latest",
+        split="train",
+        encoding_name="cl100k_base",
+        seq_len=8,
+      ),
+      loop=LoopConfig(batch_size=2, steps=3, seed=7),
+    )
+  )
+
+  assert isinstance(bundle.dataloader.dataset, RandomTokenWindowDataset)
+  assert len(bundle.dataloader.dataset) == 6
+  assert type(bundle.dataloader.sampler).__name__ == "SequentialSampler"
 
 
 def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
