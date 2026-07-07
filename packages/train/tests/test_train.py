@@ -490,6 +490,7 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
   assert manifest["split"]["val"] == 0.1
   assert manifest["split"]["test"] == 0.1
   assert manifest["document_separator"] == SOURCE_CORPUS_SEPARATOR
+  assert manifest["document_separator_encoding"] == "allowed_special"
   assert (
     manifest["encoding_name"]
     == f"unitoken:{tmp_path / 'tokenizers' / 'fineweb_10bt_300'}"
@@ -556,10 +557,10 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
 
   class FakeEncoding:
     def __init__(self) -> None:
-      self.calls: list[list[str]] = []
+      self.calls: list[tuple[list[str], set[str]]] = []
 
-    def encode_ordinary_batch(self, texts):
-      self.calls.append(list(texts))
+    def encode_batch(self, texts, *, allowed_special):
+      self.calls.append((list(texts), set(allowed_special)))
       return [[index + 1] for index, _ in enumerate(texts)]
 
   encoding = FakeEncoding()
@@ -594,12 +595,15 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
   )
 
   assert encoding.calls == [
-    [
-      f"alpha{SOURCE_CORPUS_SEPARATOR}",
-      f"gamma{SOURCE_CORPUS_SEPARATOR}",
-    ],
-    [f"beta{SOURCE_CORPUS_SEPARATOR}"],
-    [f"delta{SOURCE_CORPUS_SEPARATOR}"],
+    (
+      [
+        f"alpha{SOURCE_CORPUS_SEPARATOR}",
+        f"gamma{SOURCE_CORPUS_SEPARATOR}",
+      ],
+      {SOURCE_CORPUS_SEPARATOR},
+    ),
+    ([f"beta{SOURCE_CORPUS_SEPARATOR}"], {SOURCE_CORPUS_SEPARATOR}),
+    ([f"delta{SOURCE_CORPUS_SEPARATOR}"], {SOURCE_CORPUS_SEPARATOR}),
   ]
   assert metadata["train"]["token_count"] == 2
   assert metadata["val"]["token_count"] == 1

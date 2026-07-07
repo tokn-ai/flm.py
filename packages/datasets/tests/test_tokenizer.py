@@ -30,6 +30,19 @@ def test_encode_text_supports_unitoken_files(tmp_path) -> None:
   assert encoding.special_tokens_set == set(special_tokens)
 
 
+def test_encode_text_allows_special_tokens(tmp_path) -> None:
+  tokenizer_path = _train_tiny_unitoken(tmp_path)
+  encoding_name = unitoken_encoding_name(tokenizer_path)
+
+  tokens = encode_text(
+    "<|endoftext|>",
+    encoding_name=encoding_name,
+    allowed_special={"<|endoftext|>"},
+  )
+
+  assert tokens == [0]
+
+
 def test_repo_bpe_backends_match_unitoken_files(tmp_path) -> None:
   tokenizer_path = _train_tiny_unitoken(tmp_path)
   samples = [

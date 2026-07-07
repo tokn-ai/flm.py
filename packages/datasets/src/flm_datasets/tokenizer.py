@@ -28,6 +28,8 @@ class EncodingLike(Protocol):
 
   def encode_ordinary(self, text: str) -> list[int]: ...
 
+  def encode(self, text: str, *, allowed_special) -> list[int]: ...
+
   def decode(self, tokens: list[int]) -> str: ...
 
 
@@ -46,10 +48,17 @@ def get_tokenizer(name: str = "cl100k_base") -> EncodingLike:
   return tiktoken.get_encoding(name)
 
 
-def encode_text(text: str, encoding_name: str = "cl100k_base") -> list[int]:
+def encode_text(
+  text: str,
+  encoding_name: str = "cl100k_base",
+  *,
+  allowed_special=None,
+) -> list[int]:
   if not text:
     return []
   encoding = get_tokenizer(encoding_name)
+  if allowed_special is not None:
+    return encoding.encode(text, allowed_special=allowed_special)
   return encoding.encode_ordinary(text)
 
 

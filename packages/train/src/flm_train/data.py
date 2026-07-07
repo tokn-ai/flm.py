@@ -179,7 +179,11 @@ def publish_repo_source_dataset(
     version_dir.mkdir(parents=True, exist_ok=True)
     for split_name, split_files in split_source_files.items():
       corpus = read_source_corpus(corpus_config, paths=split_files)
-      tokens = encode_text(corpus, encoding_name=encoding_name)
+      tokens = encode_text(
+        corpus,
+        encoding_name=encoding_name,
+        allowed_special={SOURCE_CORPUS_SEPARATOR},
+      )
       np.save(split_paths[split_name], np.asarray(tokens, dtype=np.int32))
       split_metadata[split_name] = {
         "tokens_file": split_paths[split_name].name,
@@ -212,6 +216,7 @@ def publish_repo_source_dataset(
         ),
         "files_file": files_path.name,
         "document_separator": SOURCE_CORPUS_SEPARATOR,
+        "document_separator_encoding": "allowed_special",
         "split": {
           "strategy": "file_hash",
           "seed": split_seed,
@@ -566,6 +571,7 @@ def publish_fineweb_parquet_dataset(
         ),
         "files_file": files_path.name,
         "document_separator": SOURCE_CORPUS_SEPARATOR,
+        "document_separator_encoding": "allowed_special",
         "token_shard_size": _FINEWEB_TOKEN_SHARD_SIZE,
         "split": {
           "strategy": "document_hash",
@@ -649,6 +655,8 @@ def _published_dataset_digest(
   manifest = {
     "format_version": _PUBLISHED_DATASET_VERSION,
     "encoding_name": encoding_name,
+    "document_separator": SOURCE_CORPUS_SEPARATOR,
+    "document_separator_encoding": "allowed_special",
     "split": {
       "strategy": "file_hash",
       "seed": split_seed,
@@ -1208,8 +1216,9 @@ def _write_fineweb_parquet_token_shards(
       for split_name, records_for_split in split_records.items():
         if not records_for_split:
           continue
-        encoded_batch = encoding.encode_ordinary_batch(
-          [record["text"] + SOURCE_CORPUS_SEPARATOR for record in records_for_split]
+        encoded_batch = encoding.encode_batch(
+          [record["text"] + SOURCE_CORPUS_SEPARATOR for record in records_for_split],
+          allowed_special={SOURCE_CORPUS_SEPARATOR},
         )
         for record, tokens in zip(records_for_split, encoded_batch, strict=True):
           token_count = len(tokens)
@@ -1385,6 +1394,7 @@ def _published_fineweb_parquet_digest(
       "id": id_column,
     },
     "document_separator": SOURCE_CORPUS_SEPARATOR,
+    "document_separator_encoding": "allowed_special",
     "files": files,
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
