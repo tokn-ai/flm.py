@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1030,6 +1031,8 @@ def _scan_fineweb_parquet_tokens(
   }
   offsets = {"train": 0, "val": 0, "test": 0}
   encoding = get_tokenizer(encoding_name)
+  phase = "write" if split_paths is not None else "count"
+  record_count = 0
   files_handle = (
     files_path.open("w", encoding="utf-8") if files_path is not None else None
   )
@@ -1053,6 +1056,19 @@ def _scan_fineweb_parquet_tokens(
       metadata["token_count"] = int(metadata["token_count"]) + token_count
       metadata["file_count"] = int(metadata["file_count"]) + 1
       metadata["byte_count"] = int(metadata["byte_count"]) + int(record["byte_count"])
+      record_count += 1
+      if record_count % 100_000 == 0:
+        total_tokens = sum(
+          int(split["token_count"]) for split in split_metadata.values()
+        )
+        total_bytes = sum(int(split["byte_count"]) for split in split_metadata.values())
+        print(
+          "fineweb parquet "
+          f"{phase}: records={record_count} "
+          f"tokens={total_tokens} bytes={total_bytes}",
+          file=sys.stderr,
+          flush=True,
+        )
       if split_paths is not None:
         offset = offsets[split_name]
         split_paths[split_name][offset : offset + token_count] = tokens
