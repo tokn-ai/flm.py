@@ -323,8 +323,8 @@ def test_data_cli_trains_unitoken_tokenizer_for_repo_sources(
   assert "unigram_entropy_nats_per_token=" in output
   assert manifest["encoding_name"] == f"unitoken:{tokenizer_root / 'repo_300'}"
   assert manifest["unigram_entropy_nats_per_token"] > 0
-  assert (tokenizer_root / "vocab.repo_300[u8].json").is_file()
-  assert (tokenizer_root / "merges.repo_300[u8].txt").is_file()
+  assert (tokenizer_root / "repo_300" / "vocab.json").is_file()
+  assert (tokenizer_root / "repo_300" / "merges.txt").is_file()
 
 
 def test_publish_fineweb2_dataset_streams_bounded_text_rows(
@@ -431,7 +431,9 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
 
   published = publish_fineweb_parquet_dataset(
     source_root=source_root,
-    dataset_root=tmp_path / "cache" / "fineweb_10bt_300",
+    corpus_root=tmp_path / "cache" / "corpora",
+    corpus_name="fineweb_10bt",
+    tokens_root=tmp_path / "cache" / "tokens",
     unitoken_vocab_size=300,
     tokenizer_root=tmp_path / "tokenizers",
     tokenizer_name="fineweb_10bt_300",
@@ -452,9 +454,14 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
   )
   assert published.token_count > 0
   assert published.file_count == 80
+  assert published.dataset_root == (
+    tmp_path / "cache" / "tokens" / "fineweb_10bt_300" / "fineweb_10bt"
+  )
   assert all(path.is_file() for path in published.split_paths.values())
-  assert (tmp_path / "tokenizers" / "vocab.fineweb_10bt_300[u8].json").is_file()
-  assert not (tmp_path / "tokenizers" / "corpus.fineweb_10bt_300.txt").exists()
+  assert (tmp_path / "tokenizers" / "fineweb_10bt_300" / "vocab.json").is_file()
+  assert (tmp_path / "tokenizers" / "fineweb_10bt_300" / "merges.txt").is_file()
+  assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "corpus.txt").is_file()
+  assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "manifest.json").is_file()
 
 
 def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:

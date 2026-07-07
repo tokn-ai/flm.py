@@ -80,10 +80,15 @@ def _get_unitokenizer(model_path: str):
   special_tokens = {
     token: index for index, token in enumerate(unitoken_special_tokens(16))
   }
+  vocab_file = path / "vocab.json"
+  merges_file = path / "merges.txt"
+  if not vocab_file.exists() or not merges_file.exists():
+    vocab_file = path.parent / f"vocab.{path.name}[u8].json"
+    merges_file = path.parent / f"merges.{path.name}[u8].txt"
   return Encoding.from_files(
     path.name,
-    vocab_file=path.parent / f"vocab.{path.name}[u8].json",
-    merges_file=path.parent / f"merges.{path.name}[u8].txt",
+    vocab_file=vocab_file,
+    merges_file=merges_file,
     special_tokens=special_tokens,
   )
 

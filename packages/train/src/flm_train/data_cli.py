@@ -69,10 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
   fineweb_publish = fineweb_subcommands.add_parser("publish-local")
   fineweb_publish.add_argument("--source-root", type=Path, required=True)
   fineweb_publish.add_argument(
-    "--dataset-root",
+    "--corpus-root",
     type=Path,
-    default=Path("cache/fineweb_10bt_8192"),
+    default=Path("cache/corpora"),
   )
+  fineweb_publish.add_argument("--corpus-name", default="fineweb_10bt")
+  fineweb_publish.add_argument("--tokens-root", type=Path, default=Path("cache/tokens"))
   fineweb_publish.add_argument("--encoding-name", default="cl100k_base")
   fineweb_publish.add_argument("--unitoken-vocab-size", type=int)
   fineweb_publish.add_argument("--unitoken-special-token-count", type=int, default=16)
@@ -134,7 +136,9 @@ def run_from_args(args: argparse.Namespace) -> None:
   if args.command == "fineweb" and args.fineweb_command == "publish-local":
     info = publish_fineweb_parquet_dataset(
       source_root=_resolve_workspace_path(workspace, args.source_root),
-      dataset_root=_resolve_workspace_path(workspace, args.dataset_root),
+      corpus_root=_resolve_workspace_path(workspace, args.corpus_root),
+      corpus_name=args.corpus_name,
+      tokens_root=_resolve_workspace_path(workspace, args.tokens_root),
       encoding_name=args.encoding_name,
       unitoken_vocab_size=args.unitoken_vocab_size,
       unitoken_special_token_count=args.unitoken_special_token_count,

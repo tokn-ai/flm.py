@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -427,7 +428,9 @@ def publish_fineweb2_dataset(
 def publish_fineweb_parquet_dataset(
   *,
   source_root: Path,
-  dataset_root: Path,
+  corpus_root: Path = Path("cache/corpora"),
+  corpus_name: str = "fineweb_10bt",
+  tokens_root: Path = Path("cache/tokens"),
   encoding_name: str = "cl100k_base",
   unitoken_vocab_size: int | None = None,
   unitoken_special_token_count: int = 16,
@@ -449,14 +452,20 @@ def publish_fineweb_parquet_dataset(
   parquet_files = sorted(source_root.rglob("*.parquet"))
   if not parquet_files:
     raise ValueError(f"no parquet files found under: {source_root}")
+  tokenizer_name = tokenizer_name or (
+    f"{corpus_name}_{unitoken_vocab_size}"
+    if unitoken_vocab_size is not None
+    else "cl100k_base"
+  )
   if unitoken_vocab_size is not None:
     if unitoken_special_token_count != 16:
       raise ValueError("unitoken currently supports exactly 16 reserved special tokens")
-    name = tokenizer_name or f"fineweb_10bt_{unitoken_vocab_size}"
-    tokenizer_path = tokenizer_root / name
+    tokenizer_path = tokenizer_root / tokenizer_name
     train_unitoken_tokenizer_from_parquet(
       parquet_files=parquet_files,
       source_root=source_root,
+      corpus_root=corpus_root,
+      corpus_name=corpus_name,
       tokenizer_path=tokenizer_path,
       vocab_size=unitoken_vocab_size,
       special_token_count=unitoken_special_token_count,
@@ -468,6 +477,7 @@ def publish_fineweb_parquet_dataset(
       parquet_batch_size=parquet_batch_size,
     )
     encoding_name = unitoken_encoding_name(tokenizer_path)
+  dataset_root = tokens_root / tokenizer_name / corpus_name
 
   version = _published_fineweb_parquet_digest(
     source_root=source_root,
@@ -480,13 +490,12 @@ def publish_fineweb_parquet_dataset(
     text_column=text_column,
     id_column=id_column,
   )
-  version_dir = dataset_root / "versions" / version
-  manifest_path = version_dir / "manifest.json"
-  files_path = version_dir / "files.jsonl"
+  manifest_path = dataset_root / "manifest.json"
+  files_path = dataset_root / "files.jsonl"
   split_paths = {
-    "train": version_dir / "train.npy",
-    "val": version_dir / "val.npy",
-    "test": version_dir / "test.npy",
+    "train": dataset_root / "train.npy",
+    "val": dataset_root / "val.npy",
+    "test": dataset_root / "test.npy",
   }
 
   if (
@@ -507,7 +516,7 @@ def publish_fineweb_parquet_dataset(
       id_column=id_column,
       parquet_batch_size=parquet_batch_size,
     )
-    version_dir.mkdir(parents=True, exist_ok=True)
+    dataset_root.mkdir(parents=True, exist_ok=True)
     split_arrays = {
       name: np.lib.format.open_memmap(
         split_paths[name],
@@ -539,6 +548,8 @@ def publish_fineweb_parquet_dataset(
         "format_version": _PUBLISHED_DATASET_VERSION,
         "kind": "fineweb_parquet",
         "source_root": str(source_root),
+        "corpus_name": corpus_name,
+        "tokenizer_name": tokenizer_name,
         "encoding_name": encoding_name,
         "dtype": _TOKEN_CACHE_DTYPE,
         "token_count": sum(
@@ -575,7 +586,7 @@ def publish_fineweb_parquet_dataset(
     dataset_root / "latest.json",
     {
       "version": version,
-      "manifest": f"versions/{version}/manifest.json",
+      "manifest": "manifest.json",
       "updated_at": datetime.now(UTC).isoformat(),
     },
   )
@@ -772,15 +783,15 @@ def train_unitoken_tokenizer(
     raise ValueError(
       "unitoken vocab size must leave room for byte tokens and special tokens"
     )
-  vocab_path = tokenizer_path.parent / f"vocab.{tokenizer_path.name}[u8].json"
-  merges_path = tokenizer_path.parent / f"merges.{tokenizer_path.name}[u8].txt"
+  vocab_path = tokenizer_path / "vocab.json"
+  merges_path = tokenizer_path / "merges.txt"
   if vocab_path.exists() and merges_path.exists():
     return
 
   from uni_tokenizer import BpeTrainer, PreTokenizer
 
-  tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
-  corpus_path = tokenizer_path.parent / f"corpus.{tokenizer_path.name}.txt"
+  tokenizer_path.mkdir(parents=True, exist_ok=True)
+  corpus_path = tokenizer_path / "corpus.txt"
   write_source_corpus_file(corpus_path, corpus_config, paths=source_files)
   pre_tokenizer = PreTokenizer(special_tokens=special_tokens)
   words: dict[str, int] = {}
@@ -790,13 +801,16 @@ def train_unitoken_tokenizer(
   trainer = BpeTrainer(special_tokens)
   trainer.add_words(words)
   trainer.train(vocab_size=vocab_size)
-  trainer.save(tokenizer_path.name, outdir=tokenizer_path.parent)
+  _save_unitoken_tokenizer(trainer, tokenizer_path)
+  corpus_path.unlink(missing_ok=True)
 
 
 def train_unitoken_tokenizer_from_parquet(
   *,
   parquet_files: list[Path],
   source_root: Path,
+  corpus_root: Path,
+  corpus_name: str,
   tokenizer_path: Path,
   vocab_size: int,
   special_token_count: int,
@@ -814,16 +828,74 @@ def train_unitoken_tokenizer_from_parquet(
     raise ValueError(
       "unitoken vocab size must leave room for byte tokens and special tokens"
     )
-  vocab_path = tokenizer_path.parent / f"vocab.{tokenizer_path.name}[u8].json"
-  merges_path = tokenizer_path.parent / f"merges.{tokenizer_path.name}[u8].txt"
+  vocab_path = tokenizer_path / "vocab.json"
+  merges_path = tokenizer_path / "merges.txt"
   if vocab_path.exists() and merges_path.exists():
     return
 
   from uni_tokenizer import BpeTrainer, PreTokenizer
 
-  tokenizer_path.parent.mkdir(parents=True, exist_ok=True)
-  corpus_path = tokenizer_path.parent / f"corpus.{tokenizer_path.name}.txt"
-  with corpus_path.open("w", encoding="utf-8") as corpus_file:
+  tokenizer_path.mkdir(parents=True, exist_ok=True)
+  corpus_path = _build_fineweb_tokenizer_corpus(
+    parquet_files=parquet_files,
+    source_root=source_root,
+    corpus_root=corpus_root,
+    corpus_name=corpus_name,
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    split_seed=split_seed,
+    text_column=text_column,
+    id_column=id_column,
+    parquet_batch_size=parquet_batch_size,
+  )
+
+  pre_tokenizer = PreTokenizer(special_tokens=special_tokens)
+  words = {
+    word: int(count)
+    for word, count in pre_tokenizer.get_words_from_file(corpus_path).items()
+  }
+  trainer = BpeTrainer(special_tokens)
+  trainer.add_words(words)
+  trainer.train(vocab_size=vocab_size)
+  _save_unitoken_tokenizer(trainer, tokenizer_path)
+
+
+def _build_fineweb_tokenizer_corpus(
+  *,
+  parquet_files: list[Path],
+  source_root: Path,
+  corpus_root: Path,
+  corpus_name: str,
+  train_ratio: float,
+  val_ratio: float,
+  split_seed: int,
+  text_column: str,
+  id_column: str,
+  parquet_batch_size: int,
+) -> Path:
+  corpus_dir = corpus_root / corpus_name
+  corpus_path = corpus_dir / "corpus.txt"
+  manifest_path = corpus_dir / "manifest.json"
+  expected_manifest = _fineweb_tokenizer_corpus_manifest(
+    source_root=source_root,
+    parquet_files=parquet_files,
+    corpus_name=corpus_name,
+    train_ratio=train_ratio,
+    val_ratio=val_ratio,
+    split_seed=split_seed,
+    text_column=text_column,
+    id_column=id_column,
+  )
+  if corpus_path.exists() and manifest_path.exists():
+    manifest = _read_json(manifest_path)
+    if manifest.get("fingerprint") == expected_manifest["fingerprint"]:
+      return corpus_path
+
+  corpus_dir.mkdir(parents=True, exist_ok=True)
+  tmp_path = corpus_dir / "corpus.txt.tmp"
+  document_count = 0
+  byte_count = 0
+  with tmp_path.open("w", encoding="utf-8") as corpus_file:
     for record in _iter_fineweb_parquet_records(
       parquet_files=parquet_files,
       source_root=source_root,
@@ -843,17 +915,82 @@ def train_unitoken_tokenizer_from_parquet(
       corpus_file.write("\n")
       corpus_file.write(SOURCE_CORPUS_SEPARATOR)
       corpus_file.write("\n")
+      document_count += 1
+      byte_count += int(record["byte_count"])
+  os.replace(tmp_path, corpus_path)
+  _write_json(
+    manifest_path,
+    {
+      **expected_manifest,
+      "document_count": document_count,
+      "byte_count": byte_count,
+      "created_at": datetime.now(UTC).isoformat(),
+    },
+  )
+  return corpus_path
 
-  pre_tokenizer = PreTokenizer(special_tokens=special_tokens)
-  words = {
-    word: int(count)
-    for word, count in pre_tokenizer.get_words_from_file(corpus_path).items()
+
+def _fineweb_tokenizer_corpus_manifest(
+  *,
+  source_root: Path,
+  parquet_files: list[Path],
+  corpus_name: str,
+  train_ratio: float,
+  val_ratio: float,
+  split_seed: int,
+  text_column: str,
+  id_column: str,
+) -> dict[str, Any]:
+  files = [
+    {
+      "path": path.relative_to(source_root).as_posix(),
+      "size": path.stat().st_size,
+      "mtime_ns": path.stat().st_mtime_ns,
+    }
+    for path in parquet_files
+  ]
+  payload = {
+    "kind": "fineweb_tokenizer_corpus",
+    "corpus_name": corpus_name,
+    "source_root": str(source_root),
+    "separator": SOURCE_CORPUS_SEPARATOR,
+    "split": {
+      "strategy": "document_hash",
+      "seed": split_seed,
+      "train": train_ratio,
+      "val": val_ratio,
+      "test": 1.0 - train_ratio - val_ratio,
+      "included": "train",
+    },
+    "columns": {
+      "text": text_column,
+      "id": id_column,
+    },
+    "files": files,
   }
-  trainer = BpeTrainer(special_tokens)
-  trainer.add_words(words)
-  trainer.train(vocab_size=vocab_size)
-  trainer.save(tokenizer_path.name, outdir=tokenizer_path.parent)
-  corpus_path.unlink(missing_ok=True)
+  fingerprint = hashlib.sha256(
+    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+  ).hexdigest()[:16]
+  return {**payload, "fingerprint": fingerprint}
+
+
+def _save_unitoken_tokenizer(trainer, tokenizer_path: Path) -> None:
+  tokenizer_path.mkdir(parents=True, exist_ok=True)
+  trainer.save(tokenizer_path.name, outdir=tokenizer_path)
+  old_vocab_path = tokenizer_path / f"vocab.{tokenizer_path.name}[u8].json"
+  old_merges_path = tokenizer_path / f"merges.{tokenizer_path.name}[u8].txt"
+  os.replace(old_vocab_path, tokenizer_path / "vocab.json")
+  os.replace(old_merges_path, tokenizer_path / "merges.txt")
+  _write_json(
+    tokenizer_path / "manifest.json",
+    {
+      "kind": "unitoken",
+      "name": tokenizer_path.name,
+      "vocab_file": "vocab.json",
+      "merges_file": "merges.txt",
+      "created_at": datetime.now(UTC).isoformat(),
+    },
+  )
 
 
 def _scan_fineweb_parquet_tokens(
@@ -1041,11 +1178,7 @@ def _resolve_dataset_version(dataset_root: Path, version: str) -> str:
 
 
 def _load_dataset_manifest(config: DataConfig) -> dict[str, Any]:
-  resolved_version = config.resolved_version or _resolve_dataset_version(
-    config.dataset_root,
-    config.version,
-  )
-  manifest_path = config.dataset_root / "versions" / resolved_version / "manifest.json"
+  manifest_path = _dataset_manifest_path(config)
   manifest = _read_json(manifest_path)
   if manifest.get("format_version") != _PUBLISHED_DATASET_VERSION:
     raise ValueError(f"unsupported dataset format: {manifest_path}")
@@ -1063,17 +1196,9 @@ def _load_dataset_manifest(config: DataConfig) -> dict[str, Any]:
 
 
 def _load_dataset_tokens(config: DataConfig, manifest: dict[str, Any]) -> np.ndarray:
-  resolved_version = config.resolved_version or _resolve_dataset_version(
-    config.dataset_root,
-    config.version,
-  )
+  manifest_path = _dataset_manifest_path(config)
   split_metadata = _split_metadata(manifest, config.split)
-  tokens_path = (
-    config.dataset_root
-    / "versions"
-    / resolved_version
-    / str(split_metadata["tokens_file"])
-  )
+  tokens_path = manifest_path.parent / str(split_metadata["tokens_file"])
   token_array = np.load(tokens_path, allow_pickle=False, mmap_mode="c")
   if token_array.dtype != np.dtype(_TOKEN_CACHE_DTYPE):
     raise ValueError(f"unsupported token dtype: {tokens_path}")
@@ -1082,6 +1207,20 @@ def _load_dataset_tokens(config: DataConfig, manifest: dict[str, Any]) -> np.nda
   if int(split_metadata["token_count"]) != int(token_array.shape[0]):
     raise ValueError(f"token count mismatch: {tokens_path}")
   return token_array
+
+
+def _dataset_manifest_path(config: DataConfig) -> Path:
+  if config.version == "latest":
+    latest_path = config.dataset_root / "latest.json"
+    latest = _read_json(latest_path)
+    manifest = latest.get("manifest")
+    if isinstance(manifest, str) and manifest:
+      return config.dataset_root / manifest
+  resolved_version = config.resolved_version or _resolve_dataset_version(
+    config.dataset_root,
+    config.version,
+  )
+  return config.dataset_root / "versions" / resolved_version / "manifest.json"
 
 
 def _split_metadata(manifest: dict[str, Any], split: str) -> dict[str, Any]:
