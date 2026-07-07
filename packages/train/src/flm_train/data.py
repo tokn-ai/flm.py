@@ -201,6 +201,7 @@ def publish_repo_source_dataset(
           split_paths.values()
         ),
         "files_file": files_path.name,
+        "document_separator": SOURCE_CORPUS_SEPARATOR,
         "split": {
           "strategy": "file_hash",
           "seed": split_seed,
@@ -549,6 +550,7 @@ def publish_fineweb_parquet_dataset(
           _flatten_split_paths(dataset_root, written_metadata)
         ),
         "files_file": files_path.name,
+        "document_separator": SOURCE_CORPUS_SEPARATOR,
         "split": {
           "strategy": "document_hash",
           "seed": split_seed,
@@ -950,6 +952,7 @@ def _fineweb_tokenizer_corpus_manifest(
       "text": text_column,
       "id": id_column,
     },
+    "document_separator": SOURCE_CORPUS_SEPARATOR,
     "files": files,
   }
   fingerprint = hashlib.sha256(
@@ -1059,54 +1062,59 @@ def _write_fineweb_parquet_token_shards(
   )
   completed = False
   try:
-    for record in _iter_fineweb_parquet_records(
+    for records in _iter_fineweb_parquet_record_batches(
       parquet_files=parquet_files,
       source_root=source_root,
       text_column=text_column,
       id_column=id_column,
       batch_size=parquet_batch_size,
     ):
-      split_name = _assign_file_split(
-        record["split_key"],
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        split_seed=split_seed,
+      encoded_batch = encoding.encode_ordinary_batch(
+        [record["text"] + SOURCE_CORPUS_SEPARATOR for record in records]
       )
-      tokens = encoding.encode_ordinary(record["text"] + "\n\n")
-      token_count = len(tokens)
-      metadata = split_metadata[split_name]
-      metadata["token_count"] = int(metadata["token_count"]) + token_count
-      metadata["file_count"] = int(metadata["file_count"]) + 1
-      metadata["byte_count"] = int(metadata["byte_count"]) + int(record["byte_count"])
-      record_count += 1
-      if record_count % 100_000 == 0:
-        total_tokens = sum(
-          int(split["token_count"]) for split in split_metadata.values()
+      for record, tokens in zip(records, encoded_batch, strict=True):
+        split_name = _assign_file_split(
+          record["split_key"],
+          train_ratio=train_ratio,
+          val_ratio=val_ratio,
+          split_seed=split_seed,
         )
-        total_bytes = sum(int(split["byte_count"]) for split in split_metadata.values())
-        print(
-          "fineweb parquet "
-          f"{phase}: records={record_count} "
-          f"tokens={total_tokens} bytes={total_bytes}",
-          file=sys.stderr,
-          flush=True,
-        )
-      writers[split_name].append(tokens)
-      if files_handle is not None:
-        files_handle.write(
-          json.dumps(
-            {
-              "id": record["id"],
-              "source": record["source"],
-              "row": record["row"],
-              "split": split_name,
-              "byte_count": record["byte_count"],
-              "token_count": token_count,
-            },
-            sort_keys=True,
+        token_count = len(tokens)
+        metadata = split_metadata[split_name]
+        metadata["token_count"] = int(metadata["token_count"]) + token_count
+        metadata["file_count"] = int(metadata["file_count"]) + 1
+        metadata["byte_count"] = int(metadata["byte_count"]) + int(record["byte_count"])
+        record_count += 1
+        if record_count % 100_000 == 0:
+          total_tokens = sum(
+            int(split["token_count"]) for split in split_metadata.values()
           )
-          + "\n"
-        )
+          total_bytes = sum(
+            int(split["byte_count"]) for split in split_metadata.values()
+          )
+          print(
+            "fineweb parquet "
+            f"{phase}: records={record_count} "
+            f"tokens={total_tokens} bytes={total_bytes}",
+            file=sys.stderr,
+            flush=True,
+          )
+        writers[split_name].append(tokens)
+        if files_handle is not None:
+          files_handle.write(
+            json.dumps(
+              {
+                "id": record["id"],
+                "source": record["source"],
+                "row": record["row"],
+                "split": split_name,
+                "byte_count": record["byte_count"],
+                "token_count": token_count,
+              },
+              sort_keys=True,
+            )
+            + "\n"
+          )
     completed = True
   finally:
     if files_handle is not None:
@@ -1123,6 +1131,24 @@ def _write_fineweb_parquet_token_shards(
 
 
 def _iter_fineweb_parquet_records(
+  *,
+  parquet_files: list[Path],
+  source_root: Path,
+  text_column: str,
+  id_column: str,
+  batch_size: int,
+):
+  for records in _iter_fineweb_parquet_record_batches(
+    parquet_files=parquet_files,
+    source_root=source_root,
+    text_column=text_column,
+    id_column=id_column,
+    batch_size=batch_size,
+  ):
+    yield from records
+
+
+def _iter_fineweb_parquet_record_batches(
   *,
   parquet_files: list[Path],
   source_root: Path,
@@ -1150,6 +1176,7 @@ def _iter_fineweb_parquet_records(
       values = batch.to_pydict()
       texts = values[text_column]
       ids = values.get(id_column) if has_id else None
+      records = []
       for index, text in enumerate(texts):
         if not text:
           continue
@@ -1160,15 +1187,19 @@ def _iter_fineweb_parquet_records(
           else f"{relative_path}:{row}"
         )
         text_value = str(text)
-        yield {
-          "id": doc_id,
-          "split_key": doc_id,
-          "source": relative_path,
-          "row": row,
-          "text": text_value,
-          "byte_count": len(text_value.encode("utf-8")),
-        }
+        records.append(
+          {
+            "id": doc_id,
+            "split_key": doc_id,
+            "source": relative_path,
+            "row": row,
+            "text": text_value,
+            "byte_count": len(text_value.encode("utf-8")),
+          }
+        )
       row_offset += len(texts)
+      if records:
+        yield records
 
 
 def _published_fineweb_parquet_digest(
@@ -1206,6 +1237,7 @@ def _published_fineweb_parquet_digest(
       "text": text_column,
       "id": id_column,
     },
+    "document_separator": SOURCE_CORPUS_SEPARATOR,
     "files": files,
   }
   payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))

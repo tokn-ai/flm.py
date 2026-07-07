@@ -9,7 +9,9 @@ import torch
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
 from flm_train.config import WorkspaceConfig
 from flm_train.data import (
+  SOURCE_CORPUS_SEPARATOR,
   _token_entropy_nats_from_paths,
+  _write_fineweb_parquet_token_shards,
   publish_fineweb2_dataset,
   publish_fineweb_parquet_dataset,
   publish_repo_source_dataset,
@@ -448,6 +450,7 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
   assert manifest["split"]["train"] == 0.8
   assert manifest["split"]["val"] == 0.1
   assert manifest["split"]["test"] == 0.1
+  assert manifest["document_separator"] == SOURCE_CORPUS_SEPARATOR
   assert (
     manifest["encoding_name"]
     == f"unitoken:{tmp_path / 'tokenizers' / 'fineweb_10bt_300'}"
@@ -464,6 +467,65 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
   assert (tmp_path / "tokenizers" / "fineweb_10bt_300" / "merges.txt").is_file()
   assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "corpus.txt").is_file()
   assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "manifest.json").is_file()
+
+
+def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  pytest.importorskip("pyarrow")
+  import pyarrow as pa
+  import pyarrow.parquet as pq
+
+  source_root = tmp_path / "fineweb"
+  source_root.mkdir()
+  pq.write_table(
+    pa.table(
+      {
+        "id": ["a", "b", "c"],
+        "text": ["alpha", "beta", "gamma"],
+      }
+    ),
+    source_root / "sample.parquet",
+  )
+
+  class FakeEncoding:
+    def __init__(self) -> None:
+      self.calls: list[list[str]] = []
+
+    def encode_ordinary_batch(self, texts):
+      self.calls.append(list(texts))
+      return [[index + 1] for index, _ in enumerate(texts)]
+
+  encoding = FakeEncoding()
+  monkeypatch.setattr("flm_train.data.get_tokenizer", lambda _: encoding)
+
+  metadata = _write_fineweb_parquet_token_shards(
+    parquet_files=[source_root / "sample.parquet"],
+    source_root=source_root,
+    encoding_name="unitoken:test",
+    split_dirs={
+      "train": tmp_path / "train",
+      "val": tmp_path / "val",
+      "test": tmp_path / "test",
+    },
+    files_path=tmp_path / "files.jsonl",
+    train_ratio=1.0,
+    val_ratio=0.0,
+    split_seed=42,
+    text_column="text",
+    id_column="id",
+    parquet_batch_size=3,
+  )
+
+  assert encoding.calls == [
+    [
+      f"alpha{SOURCE_CORPUS_SEPARATOR}",
+      f"beta{SOURCE_CORPUS_SEPARATOR}",
+      f"gamma{SOURCE_CORPUS_SEPARATOR}",
+    ]
+  ]
+  assert metadata["train"]["token_count"] == 3
 
 
 def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
