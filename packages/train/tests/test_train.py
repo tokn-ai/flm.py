@@ -2,9 +2,11 @@ import json
 import math
 from pathlib import Path
 
+import flm_train.data_cli as data_cli
 import numpy as np
 import torch
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
+from flm_train.config import WorkspaceConfig
 from flm_train.data import (
   _token_entropy_nats_from_paths,
   publish_fineweb2_dataset,
@@ -128,9 +130,7 @@ def test_checkpoint_ffn_down_svd_metrics_selects_key_layers(tmp_path: Path) -> N
   metadata = {}
   for layer in range(4):
     name = f"blocks.{layer}.ffn.down.weight"
-    tensor = torch.diag(
-      torch.tensor([1.0] * (layer + 1) + [0.0] * (3 - layer))
-    )
+    tensor = torch.diag(torch.tensor([1.0] * (layer + 1) + [0.0] * (3 - layer)))
     arrays[name] = tensor.numpy()
     metadata[name] = {
       "__tensor__": {
@@ -231,6 +231,45 @@ def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
   assert "val_tokens=" in output
   assert "test_tokens=" in output
   assert (dataset_root / "latest.json").is_file()
+
+
+def test_data_cli_resolves_relative_paths_from_workspace(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  code_root = tmp_path / "code"
+  workspace_root = tmp_path / "workspace"
+  repo_root = code_root / "repo"
+  repo_root.mkdir(parents=True)
+  (repo_root / "model.py").write_text("x = 1\n", encoding="utf-8")
+  monkeypatch.setattr(
+    data_cli,
+    "load_workspace_config",
+    lambda path=None: WorkspaceConfig(
+      code_root=code_root,
+      workspace_root=workspace_root,
+    ),
+  )
+
+  args = parse_args(
+    [
+      "repo-sources",
+      "publish",
+      "--repo-root",
+      "repo",
+      "--dataset-root",
+      "cache/repo_sources_cl100k",
+      "--train-ratio",
+      "1.0",
+      "--val-ratio",
+      "0.0",
+      "--test-ratio",
+      "0.0",
+    ]
+  )
+  run_from_args(args)
+
+  assert (workspace_root / "cache" / "repo_sources_cl100k" / "latest.json").is_file()
 
 
 def test_data_cli_trains_unitoken_tokenizer_for_repo_sources(

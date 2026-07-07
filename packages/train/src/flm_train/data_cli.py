@@ -6,11 +6,13 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from flm_train.config import WorkspaceConfig, load_workspace_config
 from flm_train.data import publish_fineweb2_dataset, publish_repo_source_dataset
 
 
 def build_parser() -> argparse.ArgumentParser:
   parser = argparse.ArgumentParser()
+  parser.add_argument("--workspace-config", type=Path, default=None)
   subcommands = parser.add_subparsers(dest="command", required=True)
 
   repo_sources = subcommands.add_parser("repo-sources")
@@ -63,14 +65,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run_from_args(args: argparse.Namespace) -> None:
+  workspace = load_workspace_config(args.workspace_config)
   if args.command == "repo-sources" and args.repo_sources_command == "publish":
     info = publish_repo_source_dataset(
-      repo_root=args.repo_root,
-      dataset_root=args.dataset_root,
+      repo_root=_resolve_code_path(workspace, args.repo_root),
+      dataset_root=_resolve_workspace_path(workspace, args.dataset_root),
       encoding_name=args.encoding_name,
       unitoken_vocab_size=args.unitoken_vocab_size,
       unitoken_special_token_count=args.unitoken_special_token_count,
-      tokenizer_root=args.tokenizer_root,
+      tokenizer_root=_resolve_workspace_path(workspace, args.tokenizer_root),
       tokenizer_name=args.tokenizer_name,
       train_ratio=args.train_ratio,
       val_ratio=args.val_ratio,
@@ -81,7 +84,7 @@ def run_from_args(args: argparse.Namespace) -> None:
     return
   if args.command == "fineweb2" and args.fineweb2_command == "publish":
     info = publish_fineweb2_dataset(
-      dataset_root=args.dataset_root,
+      dataset_root=_resolve_workspace_path(workspace, args.dataset_root),
       config_name=args.config_name,
       encoding_name=args.encoding_name,
       dataset_name=args.dataset_name,
@@ -98,6 +101,18 @@ def run_from_args(args: argparse.Namespace) -> None:
     _print_published_info(info)
     return
   raise ValueError(f"unsupported command: {args.command}")
+
+
+def _resolve_code_path(workspace: WorkspaceConfig, path: Path) -> Path:
+  if path.is_absolute():
+    return path
+  return workspace.code_root / path
+
+
+def _resolve_workspace_path(workspace: WorkspaceConfig, path: Path) -> Path:
+  if path.is_absolute():
+    return path
+  return workspace.workspace_root / path
 
 
 def _print_published_info(info) -> None:
