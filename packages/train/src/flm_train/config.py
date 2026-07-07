@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,6 +33,23 @@ class SecretsConfig:
 @dataclass(frozen=True)
 class OutputConfig:
   root_dir: Path = Path("runs")
+
+
+@dataclass(frozen=True)
+class WorkspaceConfig:
+  project: str = "default"
+  code_dir: Path = Path(".")
+  work_dir: Path = Path(".")
+  output_root: Path = Path("runs")
+
+  def experiment_dir(self, experiment_name: str) -> Path:
+    return self.work_dir / self.output_root / self.project / experiment_name
+
+  def run_dir(self, experiment_name: str, run_id: str | None) -> Path:
+    experiment_dir = self.experiment_dir(experiment_name)
+    if run_id is None:
+      return experiment_dir
+    return experiment_dir / run_id
 
 
 @dataclass(frozen=True)
@@ -140,11 +157,47 @@ class ExperimentOverrides:
   seed: int | None = None
 
 
+@dataclass(frozen=True)
+class WorkspaceOverrides:
+  project: str | None = None
+  code_dir: Path | None = None
+  work_dir: Path | None = None
+  output_root: Path | None = None
+
+
 def load_experiment_config(path: Path) -> ExperimentConfig:
   raw = yaml.safe_load(path.read_text(encoding="utf-8"))
   if not isinstance(raw, dict):
     raise ValueError("experiment config must be a YAML mapping")
   return parse_experiment_config(raw)
+
+
+def load_workspace_config(path: Path | None = None) -> WorkspaceConfig:
+  if path is None:
+    return WorkspaceConfig()
+  raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+  if not isinstance(raw, dict):
+    raise ValueError("workspace config must be a YAML mapping")
+  return parse_workspace_config(raw)
+
+
+def parse_workspace_config(raw: dict[str, Any]) -> WorkspaceConfig:
+  allowed = {"project", "dirs", "output"}
+  unknown = set(raw) - allowed
+  if unknown:
+    raise ValueError(f"unknown workspace config keys: {sorted(unknown)}")
+  dirs = _section(raw, "dirs")
+  output = _section(raw, "output")
+  _reject_unknown(dirs, {"code_dir", "work_dir"}, "workspace dirs")
+  _reject_unknown(output, {"root", "root_dir", "output_root"}, "workspace output")
+  return WorkspaceConfig(
+    project=str(raw.get("project", "default")),
+    code_dir=Path(dirs.get("code_dir", ".")),
+    work_dir=Path(dirs.get("work_dir", ".")),
+    output_root=Path(
+      output.get("output_root", output.get("root", output.get("root_dir", "runs")))
+    ),
+  )
 
 
 def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
@@ -240,6 +293,55 @@ def apply_overrides(
   )
 
 
+def apply_workspace_overrides(
+  config: WorkspaceConfig,
+  overrides: WorkspaceOverrides,
+) -> WorkspaceConfig:
+  return WorkspaceConfig(
+    project=config.project if overrides.project is None else overrides.project,
+    code_dir=config.code_dir if overrides.code_dir is None else overrides.code_dir,
+    work_dir=config.work_dir if overrides.work_dir is None else overrides.work_dir,
+    output_root=config.output_root
+    if overrides.output_root is None
+    else overrides.output_root,
+  )
+
+
+def resolve_workspace_paths(
+  config: ExperimentConfig,
+  workspace: WorkspaceConfig,
+) -> ExperimentConfig:
+  work_dir = workspace.work_dir
+  return ExperimentConfig(
+    name=config.name,
+    data=replace(
+      config.data,
+      dataset_root=_resolve_against(work_dir, config.data.dataset_root),
+      encoding_name=_resolve_encoding_name(work_dir, config.data.encoding_name),
+    ),
+    model=config.model,
+    optimizer=config.optimizer,
+    loop=config.loop,
+    eval=config.eval,
+    rollout=config.rollout,
+    checkpoint=replace(
+      config.checkpoint,
+      resume=_resolve_checkpoint_resume(work_dir, config.checkpoint.resume),
+    ),
+    system_metrics=config.system_metrics,
+    run=config.run,
+    secrets=SecretsConfig(
+      env_file=None
+      if config.secrets.env_file is None
+      else _resolve_against(work_dir, config.secrets.env_file),
+    ),
+    output=OutputConfig(
+      root_dir=workspace.work_dir / workspace.output_root / workspace.project
+    ),
+    sinks=tuple(_resolve_sink_paths(work_dir, sink) for sink in config.sinks),
+  )
+
+
 def config_to_plain(value: Any) -> Any:
   if isinstance(value, Path):
     return str(value)
@@ -259,6 +361,63 @@ def write_yaml(path: Path, value: Any) -> None:
     yaml.safe_dump(value, sort_keys=False),
     encoding="utf-8",
   )
+
+
+def _reject_unknown(
+  value: dict[str, Any],
+  allowed: set[str],
+  section: str,
+) -> None:
+  unknown = set(value) - allowed
+  if unknown:
+    raise ValueError(f"unknown {section} config keys: {sorted(unknown)}")
+
+
+def _resolve_against(base: Path, path: Path) -> Path:
+  if path.is_absolute():
+    return path
+  return base / path
+
+
+def _resolve_encoding_name(base: Path, encoding_name: str) -> str:
+  for prefix in ("unitoken:", "repo_bpe:"):
+    if encoding_name.startswith(prefix):
+      path = Path(encoding_name.removeprefix(prefix))
+      return f"{prefix}{_resolve_against(base, path).as_posix()}"
+  repo_bpe_backend_prefix = "repo_bpe+"
+  if encoding_name.startswith(repo_bpe_backend_prefix):
+    backend, separator, path = encoding_name.removeprefix(
+      repo_bpe_backend_prefix
+    ).partition(":")
+    if separator == ":" and path:
+      resolved = _resolve_against(base, Path(path)).as_posix()
+      return f"{repo_bpe_backend_prefix}{backend}:{resolved}"
+  return encoding_name
+
+
+def _resolve_checkpoint_resume(base: Path, resume: str | None) -> str | None:
+  if resume is None or resume == "auto":
+    return resume
+  return str(_resolve_against(base, Path(resume)))
+
+
+def _resolve_sink_paths(base: Path, sink: SinkConfig) -> SinkConfig:
+  if isinstance(sink, FilesSinkConfig):
+    return replace(
+      sink,
+      run_dir=None if sink.run_dir is None else _resolve_against(base, sink.run_dir),
+    )
+  if isinstance(sink, TensorBoardSinkConfig):
+    return replace(
+      sink,
+      log_dir=None if sink.log_dir is None else _resolve_against(base, sink.log_dir),
+    )
+  if isinstance(sink, WandbSinkConfig):
+    return replace(
+      sink,
+      dir=None if sink.dir is None else _resolve_against(base, sink.dir),
+    )
+  return sink
 
 
 def _section(raw: dict[str, Any], name: str) -> dict[str, Any]:

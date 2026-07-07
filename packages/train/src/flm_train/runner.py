@@ -10,7 +10,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from flm_train.config import ExperimentConfig, RunConfig
+from flm_train.config import (
+  ExperimentConfig,
+  RunConfig,
+  WorkspaceConfig,
+  resolve_workspace_paths,
+)
 from flm_train.data import resolve_data_config
 from flm_train.presets import train_language_model
 from flm_train.secrets import apply_secret_env, load_secret_env
@@ -24,14 +29,20 @@ LogFn = Callable[[str], None]
 
 
 class ExperimentRunner:
-  def __init__(self, config: ExperimentConfig, log: LogFn | None = None) -> None:
+  def __init__(
+    self,
+    config: ExperimentConfig,
+    workspace: WorkspaceConfig | None = None,
+    log: LogFn | None = None,
+  ) -> None:
     self.config = config
+    self.workspace = workspace
     self.log = log
     self.run_dir = config.run_dir
 
   def run(self) -> TrainingResult:
-    apply_secret_env(load_secret_env(self.config.secrets.env_file))
     self.config = self.resolved_config()
+    apply_secret_env(load_secret_env(self.config.secrets.env_file))
     self.run_dir = self.config.run_dir
     sink = build_run_sink(self.config)
     context = RunContext(run_dir=self.run_dir)
@@ -80,20 +91,25 @@ class ExperimentRunner:
     )
 
   def resolved_config(self) -> ExperimentConfig:
+    resolved = (
+      self.config
+      if self.workspace is None
+      else resolve_workspace_paths(self.config, self.workspace)
+    )
     return ExperimentConfig(
-      name=self.config.name,
-      data=resolve_data_config(self.config.data),
-      model=self.config.model,
-      optimizer=self.config.optimizer,
-      loop=self.config.loop,
-      eval=self.config.eval,
-      rollout=self.config.rollout,
-      checkpoint=self.config.checkpoint,
-      system_metrics=self.config.system_metrics,
-      run=resolve_run_config(self.config.name, self.config.run),
-      secrets=self.config.secrets,
-      output=self.config.output,
-      sinks=self.config.sinks,
+      name=resolved.name,
+      data=resolve_data_config(resolved.data),
+      model=resolved.model,
+      optimizer=resolved.optimizer,
+      loop=resolved.loop,
+      eval=resolved.eval,
+      rollout=resolved.rollout,
+      checkpoint=resolved.checkpoint,
+      system_metrics=resolved.system_metrics,
+      run=resolve_run_config(resolved.name, resolved.run),
+      secrets=resolved.secrets,
+      output=resolved.output,
+      sinks=resolved.sinks,
     )
 
   def report_step(self, metrics: TrainStepMetrics, sink) -> None:
@@ -145,9 +161,10 @@ class ExperimentRunner:
 def run_experiment(
   config: ExperimentConfig,
   *,
+  workspace: WorkspaceConfig | None = None,
   log: LogFn | None = None,
 ) -> TrainingResult:
-  return ExperimentRunner(config, log=log).run()
+  return ExperimentRunner(config, workspace=workspace, log=log).run()
 
 
 def result_path(run_dir: Path) -> Path:

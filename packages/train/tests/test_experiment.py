@@ -3,6 +3,7 @@ import os
 import threading
 from pathlib import Path
 
+import flm_train.cli as train_cli
 import pytest
 from flm_train.cli import parse_args
 from flm_train.config import (
@@ -15,10 +16,15 @@ from flm_train.config import (
   SystemMetricsConfig,
   TensorBoardSinkConfig,
   WandbSinkConfig,
+  WorkspaceConfig,
+  WorkspaceOverrides,
   apply_overrides,
+  apply_workspace_overrides,
   config_to_plain,
   load_experiment_config,
+  load_workspace_config,
   parse_experiment_config,
+  parse_workspace_config,
 )
 from flm_train.data import publish_repo_source_dataset
 from flm_train.runner import resolve_run_config, run_experiment
@@ -233,6 +239,56 @@ def test_parse_experiment_config_rejects_output_run_dir() -> None:
     )
 
 
+def test_parse_workspace_config_reads_directory_policy() -> None:
+  config = parse_workspace_config(
+    {
+      "project": "course",
+      "dirs": {
+        "code_dir": "/repo/flm",
+        "work_dir": "/work/flm",
+      },
+      "output": {
+        "root": "runs",
+      },
+    }
+  )
+
+  assert config == WorkspaceConfig(
+    project="course",
+    code_dir=Path("/repo/flm"),
+    work_dir=Path("/work/flm"),
+    output_root=Path("runs"),
+  )
+  assert config.run_dir("experiment", "run-123") == (
+    Path("/work/flm") / "runs" / "course" / "experiment" / "run-123"
+  )
+
+
+def test_load_workspace_config_defaults_when_missing() -> None:
+  assert load_workspace_config() == WorkspaceConfig()
+
+
+def test_apply_workspace_overrides_preserves_unspecified_config() -> None:
+  config = WorkspaceConfig(
+    project="course",
+    code_dir=Path("/repo"),
+    work_dir=Path("/work"),
+    output_root=Path("runs"),
+  )
+
+  overridden = apply_workspace_overrides(
+    config,
+    WorkspaceOverrides(work_dir=Path("/mnt/work"), output_root=Path("outputs")),
+  )
+
+  assert overridden == WorkspaceConfig(
+    project="course",
+    code_dir=Path("/repo"),
+    work_dir=Path("/mnt/work"),
+    output_root=Path("outputs"),
+  )
+
+
 def test_parse_experiment_config_accepts_null_optional_sections() -> None:
   config = parse_experiment_config(
     {
@@ -374,6 +430,16 @@ def test_parse_args_accepts_cli_overrides() -> None:
       "3",
       "--root-dir",
       "/tmp/runs",
+      "--workspace-config",
+      "flm.yaml",
+      "--project",
+      "course",
+      "--code-dir",
+      "/repo/flm",
+      "--work-dir",
+      "/work/flm",
+      "--output-root",
+      "outputs",
       "--seed",
       "99",
     ]
@@ -383,7 +449,55 @@ def test_parse_args_accepts_cli_overrides() -> None:
   assert args.device == "cpu"
   assert args.steps == 3
   assert args.root_dir == Path("/tmp/runs")
+  assert args.workspace_config == Path("flm.yaml")
+  assert args.project == "course"
+  assert args.code_dir == Path("/repo/flm")
+  assert args.work_dir == Path("/work/flm")
+  assert args.output_root == Path("outputs")
   assert args.seed == 99
+
+
+def test_run_from_args_loads_experiment_relative_to_code_dir(
+  monkeypatch,
+  tmp_path: Path,
+) -> None:
+  calls = {}
+  config = ExperimentConfig(name="cli_test")
+
+  def fake_load_experiment_config(path: Path) -> ExperimentConfig:
+    calls["config_path"] = path
+    return config
+
+  def fake_run_experiment(config, *, workspace, log) -> None:
+    calls["config"] = config
+    calls["workspace"] = workspace
+    calls["log"] = log
+
+  monkeypatch.setattr(train_cli, "load_experiment_config", fake_load_experiment_config)
+  monkeypatch.setattr(train_cli, "run_experiment", fake_run_experiment)
+
+  train_cli.run_from_args(
+    parse_args(
+      [
+        "experiments/16m_repo.yaml",
+        "--code-dir",
+        str(tmp_path / "repo"),
+        "--work-dir",
+        str(tmp_path / "work"),
+        "--project",
+        "course",
+      ]
+    )
+  )
+
+  assert calls["config_path"] == tmp_path / "repo" / "experiments/16m_repo.yaml"
+  assert calls["config"] == config
+  assert calls["workspace"] == WorkspaceConfig(
+    project="course",
+    code_dir=tmp_path / "repo",
+    work_dir=tmp_path / "work",
+  )
+  assert calls["log"] is print
 
 
 def test_apply_overrides_preserves_unspecified_config() -> None:
@@ -570,6 +684,42 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   assert result_payload["file_count"] == 1
   assert result_payload["byte_count"] > 0
   assert len(result_payload["losses"]) == 1
+
+
+def test_run_experiment_uses_workspace_directory_policy(tmp_path: Path) -> None:
+  work_dir = tmp_path / "work"
+  repo_root = tmp_path / "repo"
+  dataset_root = work_dir / ".cache" / "data" / "repo_sources"
+  run_dir = (
+    work_dir
+    / "runs"
+    / "course"
+    / "workspace_test"
+    / "run-123"
+  )
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"def f_{index}(): return {index}" for index in range(80)),
+    encoding="utf-8",
+  )
+  publish_repo_source_dataset(repo_root=repo_root, dataset_root=dataset_root)
+
+  run_experiment(
+    ExperimentConfig(
+      name="workspace_test",
+      run=RunConfig(id="run-123"),
+      data=DataConfig(dataset_root=Path(".cache/data/repo_sources"), seq_len=8),
+      model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
+      loop=LoopConfig(batch_size=2, steps=1),
+      checkpoint=CheckpointConfig(resume="checkpoints/manual"),
+    ),
+    workspace=WorkspaceConfig(project="course", work_dir=work_dir),
+  )
+
+  assert (run_dir / "config.json").is_file()
+  resolved = (run_dir / "config.resolved.yaml").read_text(encoding="utf-8")
+  assert f"dataset_root: {dataset_root}" in resolved
+  assert f"resume: {work_dir / 'checkpoints' / 'manual'}" in resolved
 
 
 def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:

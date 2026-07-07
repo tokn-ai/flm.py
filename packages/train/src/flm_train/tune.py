@@ -19,9 +19,13 @@ from flm_train.config import (
   ExperimentOverrides,
   FilesSinkConfig,
   RunConfig,
+  WorkspaceConfig,
+  WorkspaceOverrides,
   apply_overrides,
+  apply_workspace_overrides,
   config_to_plain,
   load_experiment_config,
+  load_workspace_config,
   write_yaml,
 )
 from flm_train.runner import ExperimentRunner, generate_run_id, run_experiment
@@ -31,6 +35,11 @@ from flm_train.types import CheckpointConfig
 def build_parser() -> argparse.ArgumentParser:
   parser = argparse.ArgumentParser()
   parser.add_argument("config", type=Path)
+  parser.add_argument("--workspace-config", type=Path, default=None)
+  parser.add_argument("--project", default=None)
+  parser.add_argument("--code-dir", type=Path, default=None)
+  parser.add_argument("--work-dir", type=Path, default=None)
+  parser.add_argument("--output-root", type=Path, default=None)
   parser.add_argument("--device", default=None)
   parser.add_argument("--steps", type=int, default=3)
   parser.add_argument("--root-dir", type=Path, default=None)
@@ -62,18 +71,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run_from_args(args: argparse.Namespace) -> None:
-  config = load_experiment_config(args.config)
+  workspace = load_workspace_config(args.workspace_config)
+  workspace = apply_workspace_overrides(
+    workspace,
+    WorkspaceOverrides(
+      project=args.project,
+      code_dir=args.code_dir,
+      work_dir=args.work_dir,
+      output_root=args.output_root or args.root_dir,
+    ),
+  )
+  config = load_experiment_config(_resolve_code_path(workspace.code_dir, args.config))
   config = apply_overrides(
     config,
     ExperimentOverrides(
       device=args.device,
       steps=args.steps,
-      root_dir=args.root_dir,
       seed=args.seed,
     ),
   )
   config = prepare_tune_config(
     config,
+    workspace=workspace,
     include_eval=args.include_eval,
     include_rollout=args.include_rollout,
     include_checkpoint=args.include_checkpoint,
@@ -86,6 +105,12 @@ def run_from_args(args: argparse.Namespace) -> None:
   if "nsys" in profilers:
     run_nsys_profile(config, trace=args.nsys_trace, log=print)
     return
+
+
+def _resolve_code_path(code_dir: Path, path: Path) -> Path:
+  if path.is_absolute():
+    return path
+  return code_dir / path
 
 
 def parse_profilers(value: str) -> tuple[str, ...]:
@@ -107,9 +132,10 @@ def prepare_tune_config(
   include_eval: bool,
   include_rollout: bool,
   include_checkpoint: bool,
+  workspace: WorkspaceConfig | None = None,
 ) -> ExperimentConfig:
   config = _with_tune_run_id(config)
-  resolved = ExperimentRunner(config).resolved_config()
+  resolved = ExperimentRunner(config, workspace=workspace).resolved_config()
   return ExperimentConfig(
     name=resolved.name,
     data=resolved.data,

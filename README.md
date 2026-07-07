@@ -26,6 +26,27 @@ Run an experiment from a YAML config:
 uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
+Workspace-specific directories can live outside the experiment config:
+
+```yaml
+# flm.workspace.yaml
+project: repo_reference
+dirs:
+  code_dir: .
+  work_dir: .
+output:
+  root: runs
+```
+
+```sh
+uv run flm-train-experiment experiments/16m_repo.yaml \
+  --workspace-config flm.workspace.yaml
+```
+
+Relative data, tokenizer, sink, and secret paths resolve from `work_dir`.
+Relative experiment config paths passed to the CLI resolve from `code_dir`.
+Run artifacts are written to `work_dir/output.root/project/experiment/run_id`.
+
 ## Setup
 
 ```sh

@@ -36,6 +36,16 @@ def test_parse_args_accepts_tune_options() -> None:
       "cuda",
       "--root-dir",
       "/tmp/runs",
+      "--workspace-config",
+      "flm.yaml",
+      "--project",
+      "course",
+      "--code-dir",
+      "/repo/flm",
+      "--work-dir",
+      "/work/flm",
+      "--output-root",
+      "outputs",
       "--profiler",
       "nsys,torch",
       "--nsys-trace",
@@ -48,6 +58,11 @@ def test_parse_args_accepts_tune_options() -> None:
   assert args.steps == 2
   assert args.device == "cuda"
   assert args.root_dir == Path("/tmp/runs")
+  assert args.workspace_config == Path("flm.yaml")
+  assert args.project == "course"
+  assert args.code_dir == Path("/repo/flm")
+  assert args.work_dir == Path("/work/flm")
+  assert args.output_root == Path("outputs")
   assert args.profiler == "nsys,torch"
   assert args.memory_trace is True
   assert args.nsys_trace == "cuda,nvtx"
