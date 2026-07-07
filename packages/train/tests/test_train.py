@@ -516,6 +516,7 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
     text_column="text",
     id_column="id",
     parquet_batch_size=3,
+    shard_size=8,
   )
 
   assert encoding.calls == [

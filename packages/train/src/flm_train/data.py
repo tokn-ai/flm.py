@@ -31,7 +31,7 @@ from flm_train.types import DataConfig, TrainConfig
 
 _PUBLISHED_DATASET_VERSION = 1
 _TOKEN_CACHE_DTYPE = "int32"
-_FINEWEB_TOKEN_SHARD_SIZE = 8_388_608
+_FINEWEB_TOKEN_SHARD_SIZE = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -510,9 +510,10 @@ def publish_fineweb_parquet_dataset(
   if (
     not manifest_path.exists()
     or not files_path.exists()
-    or not _fineweb_parquet_shards_exist(manifest_path, dataset_root)
+    or not _fineweb_parquet_shards_exist(manifest_path, dataset_root, version)
   ):
     dataset_root.mkdir(parents=True, exist_ok=True)
+    _prepare_fineweb_split_dirs(split_dirs)
     written_metadata = _write_fineweb_parquet_token_shards(
       parquet_files=parquet_files,
       source_root=source_root,
@@ -525,6 +526,7 @@ def publish_fineweb_parquet_dataset(
       text_column=text_column,
       id_column=id_column,
       parquet_batch_size=parquet_batch_size,
+      shard_size=_FINEWEB_TOKEN_SHARD_SIZE,
     )
     _write_json(
       manifest_path,
@@ -551,6 +553,7 @@ def publish_fineweb_parquet_dataset(
         ),
         "files_file": files_path.name,
         "document_separator": SOURCE_CORPUS_SEPARATOR,
+        "token_shard_size": _FINEWEB_TOKEN_SHARD_SIZE,
         "split": {
           "strategy": "document_hash",
           "seed": split_seed,
@@ -953,6 +956,7 @@ def _fineweb_tokenizer_corpus_manifest(
       "id": id_column,
     },
     "document_separator": SOURCE_CORPUS_SEPARATOR,
+    "token_shard_size": _FINEWEB_TOKEN_SHARD_SIZE,
     "files": files,
   }
   fingerprint = hashlib.sha256(
@@ -985,31 +989,104 @@ class _NpyTokenShardWriter:
     self.split_dir = split_dir
     self.split_name = split_name
     self.shard_size = shard_size
-    self.tokens: list[int] = []
     self.paths: list[Path] = []
+    self.current_path: Path | None = None
+    self.current_tmp_path: Path | None = None
+    self.current_array: np.memmap | None = None
+    self.offset = 0
 
   def append(self, tokens: list[int]) -> None:
-    if self.tokens and len(self.tokens) + len(tokens) > self.shard_size:
-      self.flush()
-    self.tokens.extend(tokens)
-    if len(self.tokens) >= self.shard_size:
-      self.flush()
+    array = np.asarray(tokens, dtype=np.dtype(_TOKEN_CACHE_DTYPE))
+    position = 0
+    while position < len(array):
+      if self.current_array is None:
+        self._open_shard()
+      assert self.current_array is not None
+      remaining = self.shard_size - self.offset
+      count = min(remaining, len(array) - position)
+      self.current_array[self.offset : self.offset + count] = array[
+        position : position + count
+      ]
+      self.offset += count
+      position += count
+      if self.offset == self.shard_size:
+        self._finish_full_shard()
 
   def close(self) -> list[Path]:
-    if self.tokens or not self.paths:
-      self.flush()
+    if self.current_array is not None:
+      self._finish_partial_shard()
+    elif not self.paths:
+      self.split_dir.mkdir(parents=True, exist_ok=True)
+      path = self._next_path()
+      tmp_path = self._tmp_path(path)
+      with tmp_path.open("wb") as handle:
+        np.save(handle, np.asarray([], dtype=np.dtype(_TOKEN_CACHE_DTYPE)))
+      os.replace(tmp_path, path)
+      self.paths.append(path)
     return self.paths
 
-  def flush(self) -> None:
+  def _open_shard(self) -> None:
     self.split_dir.mkdir(parents=True, exist_ok=True)
-    path = self.split_dir / f"{self.split_name}-{len(self.paths):06d}.npy"
-    tmp_path = path.with_suffix(".npy.tmp")
-    array = np.asarray(self.tokens, dtype=np.dtype(_TOKEN_CACHE_DTYPE))
-    with tmp_path.open("wb") as handle:
-      np.save(handle, array, allow_pickle=False)
-    os.replace(tmp_path, path)
-    self.paths.append(path)
-    self.tokens = []
+    path = self._next_path()
+    tmp_path = self._tmp_path(path)
+    self.current_path = path
+    self.current_tmp_path = tmp_path
+    self.current_array = np.lib.format.open_memmap(
+      tmp_path,
+      mode="w+",
+      dtype=np.dtype(_TOKEN_CACHE_DTYPE),
+      shape=(self.shard_size,),
+    )
+    self.offset = 0
+
+  def _finish_full_shard(self) -> None:
+    assert self.current_array is not None
+    assert self.current_path is not None
+    assert self.current_tmp_path is not None
+    self.current_array.flush()
+    del self.current_array
+    os.replace(self.current_tmp_path, self.current_path)
+    self.paths.append(self.current_path)
+    self.current_path = None
+    self.current_tmp_path = None
+    self.current_array = None
+    self.offset = 0
+
+  def _finish_partial_shard(self) -> None:
+    assert self.current_array is not None
+    assert self.current_path is not None
+    assert self.current_tmp_path is not None
+    final_tmp_path = self._final_tmp_path(self.current_path)
+    final_array = np.lib.format.open_memmap(
+      final_tmp_path,
+      mode="w+",
+      dtype=np.dtype(_TOKEN_CACHE_DTYPE),
+      shape=(self.offset,),
+    )
+    if self.offset:
+      final_array[:] = self.current_array[: self.offset]
+    final_array.flush()
+    self.current_array.flush()
+    del final_array
+    del self.current_array
+    self.current_tmp_path.unlink(missing_ok=True)
+    os.replace(final_tmp_path, self.current_path)
+    self.paths.append(self.current_path)
+    self.current_path = None
+    self.current_tmp_path = None
+    self.current_array = None
+    self.offset = 0
+
+  def _next_path(self) -> Path:
+    return self.split_dir / f"{self.split_name}-{len(self.paths):06d}.npy"
+
+  @staticmethod
+  def _tmp_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.tmp")
+
+  @staticmethod
+  def _final_tmp_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.final.tmp")
 
 
 def _write_fineweb_parquet_token_shards(
@@ -1025,6 +1102,7 @@ def _write_fineweb_parquet_token_shards(
   text_column: str,
   id_column: str,
   parquet_batch_size: int,
+  shard_size: int,
 ) -> dict[str, dict[str, Any]]:
   split_metadata: dict[str, dict[str, int | list[str]]] = {
     "train": {
@@ -1050,7 +1128,7 @@ def _write_fineweb_parquet_token_shards(
     name: _NpyTokenShardWriter(
       split_dir=split_dirs[name],
       split_name=name,
-      shard_size=_FINEWEB_TOKEN_SHARD_SIZE,
+      shard_size=shard_size,
     )
     for name in split_metadata
   }
@@ -1128,6 +1206,16 @@ def _write_fineweb_parquet_token_shards(
           for path in writer.close()
         ]
   return split_metadata
+
+
+def _prepare_fineweb_split_dirs(split_dirs: dict[str, Path]) -> None:
+  for split_dir in split_dirs.values():
+    split_dir.mkdir(parents=True, exist_ok=True)
+    for path in split_dir.iterdir():
+      if path.is_file() and (
+        path.suffix == ".npy" or path.name.endswith((".npy.tmp", ".npy.final.tmp"))
+      ):
+        path.unlink()
 
 
 def _iter_fineweb_parquet_records(
@@ -1319,10 +1407,16 @@ def _manifest_split_paths(
   }
 
 
-def _fineweb_parquet_shards_exist(manifest_path: Path, dataset_root: Path) -> bool:
+def _fineweb_parquet_shards_exist(
+  manifest_path: Path,
+  dataset_root: Path,
+  version: str,
+) -> bool:
   if not manifest_path.exists():
     return False
   manifest = _read_json(manifest_path)
+  if manifest.get("version") != version:
+    return False
   splits = manifest.get("splits")
   if not isinstance(splits, dict):
     return False
