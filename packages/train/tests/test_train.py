@@ -468,6 +468,32 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
   assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "corpus.txt").is_file()
   assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "manifest.json").is_file()
 
+  tokenizer_manifest_path = (
+    tmp_path / "tokenizers" / "fineweb_10bt_300" / "manifest.json"
+  )
+  tokenizer_manifest = json.loads(tokenizer_manifest_path.read_text(encoding="utf-8"))
+  assert "fingerprint" in tokenizer_manifest
+  tokenizer_manifest.pop("fingerprint")
+  tokenizer_manifest_path.write_text(
+    json.dumps(tokenizer_manifest, sort_keys=True),
+    encoding="utf-8",
+  )
+
+  publish_fineweb_parquet_dataset(
+    source_root=source_root,
+    corpus_root=tmp_path / "cache" / "corpora",
+    corpus_name="fineweb_10bt",
+    tokens_root=tmp_path / "cache" / "tokens",
+    unitoken_vocab_size=300,
+    tokenizer_root=tmp_path / "tokenizers",
+    tokenizer_name="fineweb_10bt_300",
+    train_ratio=0.8,
+    val_ratio=0.1,
+    test_ratio=0.1,
+  )
+  tokenizer_manifest = json.loads(tokenizer_manifest_path.read_text(encoding="utf-8"))
+  assert "fingerprint" in tokenizer_manifest
+
 
 def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
   tmp_path: Path,

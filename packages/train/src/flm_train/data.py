@@ -818,8 +818,6 @@ def train_unitoken_tokenizer_from_parquet(
     )
   vocab_path = tokenizer_path / "vocab.json"
   merges_path = tokenizer_path / "merges.txt"
-  if vocab_path.exists() and merges_path.exists():
-    return
 
   from uni_tokenizer import BpeTrainer, PreTokenizer
 
