@@ -1147,52 +1147,64 @@ def _write_fineweb_parquet_token_shards(
       id_column=id_column,
       batch_size=parquet_batch_size,
     ):
-      encoded_batch = encoding.encode_ordinary_batch(
-        [record["text"] + SOURCE_CORPUS_SEPARATOR for record in records]
-      )
-      for record, tokens in zip(records, encoded_batch, strict=True):
+      split_records: dict[str, list[dict[str, Any]]] = {
+        "train": [],
+        "val": [],
+        "test": [],
+      }
+      for record in records:
         split_name = _assign_file_split(
           record["split_key"],
           train_ratio=train_ratio,
           val_ratio=val_ratio,
           split_seed=split_seed,
         )
-        token_count = len(tokens)
-        metadata = split_metadata[split_name]
-        metadata["token_count"] = int(metadata["token_count"]) + token_count
-        metadata["file_count"] = int(metadata["file_count"]) + 1
-        metadata["byte_count"] = int(metadata["byte_count"]) + int(record["byte_count"])
-        record_count += 1
-        if record_count % 100_000 == 0:
-          total_tokens = sum(
-            int(split["token_count"]) for split in split_metadata.values()
+        split_records[split_name].append(record)
+      for split_name, records_for_split in split_records.items():
+        if not records_for_split:
+          continue
+        encoded_batch = encoding.encode_ordinary_batch(
+          [record["text"] + SOURCE_CORPUS_SEPARATOR for record in records_for_split]
+        )
+        for record, tokens in zip(records_for_split, encoded_batch, strict=True):
+          token_count = len(tokens)
+          metadata = split_metadata[split_name]
+          metadata["token_count"] = int(metadata["token_count"]) + token_count
+          metadata["file_count"] = int(metadata["file_count"]) + 1
+          metadata["byte_count"] = int(metadata["byte_count"]) + int(
+            record["byte_count"]
           )
-          total_bytes = sum(
-            int(split["byte_count"]) for split in split_metadata.values()
-          )
-          print(
-            "fineweb parquet "
-            f"{phase}: records={record_count} "
-            f"tokens={total_tokens} bytes={total_bytes}",
-            file=sys.stderr,
-            flush=True,
-          )
-        writers[split_name].append(tokens)
-        if files_handle is not None:
-          files_handle.write(
-            json.dumps(
-              {
-                "id": record["id"],
-                "source": record["source"],
-                "row": record["row"],
-                "split": split_name,
-                "byte_count": record["byte_count"],
-                "token_count": token_count,
-              },
-              sort_keys=True,
+          record_count += 1
+          if record_count % 100_000 == 0:
+            total_tokens = sum(
+              int(split["token_count"]) for split in split_metadata.values()
             )
-            + "\n"
-          )
+            total_bytes = sum(
+              int(split["byte_count"]) for split in split_metadata.values()
+            )
+            print(
+              "fineweb parquet "
+              f"{phase}: records={record_count} "
+              f"tokens={total_tokens} bytes={total_bytes}",
+              file=sys.stderr,
+              flush=True,
+            )
+          writers[split_name].append(tokens)
+          if files_handle is not None:
+            files_handle.write(
+              json.dumps(
+                {
+                  "id": record["id"],
+                  "source": record["source"],
+                  "row": record["row"],
+                  "split": split_name,
+                  "byte_count": record["byte_count"],
+                  "token_count": token_count,
+                },
+                sort_keys=True,
+              )
+              + "\n"
+            )
     completed = True
   finally:
     if files_handle is not None:

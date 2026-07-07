@@ -482,8 +482,8 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
   pq.write_table(
     pa.table(
       {
-        "id": ["a", "b", "c"],
-        "text": ["alpha", "beta", "gamma"],
+        "id": ["a", "b", "c", "d"],
+        "text": ["alpha", "beta", "gamma", "delta"],
       }
     ),
     source_root / "sample.parquet",
@@ -499,6 +499,15 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
 
   encoding = FakeEncoding()
   monkeypatch.setattr("flm_train.data.get_tokenizer", lambda _: encoding)
+  monkeypatch.setattr(
+    "flm_train.data._assign_file_split",
+    lambda split_key, **_: {
+      "a": "train",
+      "b": "val",
+      "c": "train",
+      "d": "test",
+    }[split_key],
+  )
 
   metadata = _write_fineweb_parquet_token_shards(
     parquet_files=[source_root / "sample.parquet"],
@@ -510,7 +519,7 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
       "test": tmp_path / "test",
     },
     files_path=tmp_path / "files.jsonl",
-    train_ratio=1.0,
+    train_ratio=0.5,
     val_ratio=0.0,
     split_seed=42,
     text_column="text",
@@ -522,11 +531,14 @@ def test_fineweb_parquet_shard_writer_batches_tokenizer_calls(
   assert encoding.calls == [
     [
       f"alpha{SOURCE_CORPUS_SEPARATOR}",
-      f"beta{SOURCE_CORPUS_SEPARATOR}",
       f"gamma{SOURCE_CORPUS_SEPARATOR}",
-    ]
+    ],
+    [f"beta{SOURCE_CORPUS_SEPARATOR}"],
+    [f"delta{SOURCE_CORPUS_SEPARATOR}"],
   ]
-  assert metadata["train"]["token_count"] == 3
+  assert metadata["train"]["token_count"] == 2
+  assert metadata["val"]["token_count"] == 1
+  assert metadata["test"]["token_count"] == 1
 
 
 def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
