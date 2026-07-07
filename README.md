@@ -26,7 +26,9 @@ Run an experiment from a YAML config:
 uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
-Workspace-specific directories can live outside the experiment config:
+Workspace-specific directories can live outside the experiment config. A local
+`flm.workspace.yaml` in the current directory or one of its parents is loaded
+automatically and is ignored by git:
 
 ```yaml
 # flm.workspace.yaml
@@ -39,8 +41,7 @@ output:
 ```
 
 ```sh
-uv run flm-train-experiment experiments/16m_repo.yaml \
-  --workspace-config flm.workspace.yaml
+uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
 Relative data, tokenizer, sink, and secret paths resolve from `work_dir`.

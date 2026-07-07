@@ -24,6 +24,8 @@ from flm_train.types import (
   TrainConfig,
 )
 
+WORKSPACE_CONFIG_NAME = "flm.workspace.yaml"
+
 
 @dataclass(frozen=True)
 class SecretsConfig:
@@ -174,11 +176,24 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
 
 def load_workspace_config(path: Path | None = None) -> WorkspaceConfig:
   if path is None:
+    path = discover_workspace_config()
+  if path is None:
     return WorkspaceConfig()
   raw = yaml.safe_load(path.read_text(encoding="utf-8"))
   if not isinstance(raw, dict):
     raise ValueError("workspace config must be a YAML mapping")
   return parse_workspace_config(raw)
+
+
+def discover_workspace_config(start: Path | None = None) -> Path | None:
+  current = (start or Path.cwd()).resolve()
+  if current.is_file():
+    current = current.parent
+  for directory in (current, *current.parents):
+    path = directory / WORKSPACE_CONFIG_NAME
+    if path.is_file():
+      return path
+  return None
 
 
 def parse_workspace_config(raw: dict[str, Any]) -> WorkspaceConfig:

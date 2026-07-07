@@ -9,6 +9,7 @@ from flm_train.config import (
   RunConfig,
   TensorBoardSinkConfig,
 )
+from flm_train.data import publish_repo_source_dataset
 from flm_train.tune import (
   build_nsys_command,
   parse_args,
@@ -19,6 +20,7 @@ from flm_train.tune import (
 )
 from flm_train.types import (
   CheckpointConfig,
+  DataConfig,
   EvalConfig,
   LoopConfig,
   RolloutConfig,
@@ -83,10 +85,12 @@ def test_parse_profilers_accepts_all_and_lists() -> None:
   assert parse_profilers("torch") == ("torch",)
 
 
-def test_prepare_tune_config_disables_noisy_workflows() -> None:
+def test_prepare_tune_config_disables_noisy_workflows(tmp_path: Path) -> None:
+  dataset_root = publish_fixture_dataset(tmp_path)
   config = prepare_tune_config(
     ExperimentConfig(
       name="tune",
+      data=DataConfig(dataset_root=dataset_root, seq_len=8),
       run=RunConfig(id="run-123"),
       loop=LoopConfig(steps=3),
       eval=EvalConfig(every_steps=1),
@@ -113,10 +117,12 @@ def test_prepare_tune_config_disables_noisy_workflows() -> None:
   assert config.sinks == (FilesSinkConfig(),)
 
 
-def test_prepare_tune_config_marks_generated_run_id() -> None:
+def test_prepare_tune_config_marks_generated_run_id(tmp_path: Path) -> None:
+  dataset_root = publish_fixture_dataset(tmp_path)
   config = prepare_tune_config(
     ExperimentConfig(
       name="tune",
+      data=DataConfig(dataset_root=dataset_root, seq_len=8),
       loop=LoopConfig(steps=3),
       output=OutputConfig(root_dir=Path("runs")),
       sinks=(TensorBoardSinkConfig(),),
@@ -130,6 +136,24 @@ def test_prepare_tune_config_marks_generated_run_id() -> None:
   assert config.run.id.startswith("tune-")
   assert config.run_dir == Path("runs") / "tune" / config.run.id
   assert config.sinks == (FilesSinkConfig(),)
+
+
+def publish_fixture_dataset(tmp_path: Path) -> Path:
+  repo_root = tmp_path / "repo"
+  dataset_root = tmp_path / "datasets" / "repo_sources"
+  repo_root.mkdir()
+  (repo_root / "model.py").write_text(
+    "\n".join(f"def f_{index}(): return {index}" for index in range(80)),
+    encoding="utf-8",
+  )
+  publish_repo_source_dataset(
+    repo_root=repo_root,
+    dataset_root=dataset_root,
+    train_ratio=1.0,
+    val_ratio=0.0,
+    test_ratio=0.0,
+  )
+  return dataset_root
 
 
 def test_build_nsys_command_uses_resolved_config_path() -> None:

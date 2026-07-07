@@ -21,6 +21,7 @@ from flm_train.config import (
   apply_overrides,
   apply_workspace_overrides,
   config_to_plain,
+  discover_workspace_config,
   load_experiment_config,
   load_workspace_config,
   parse_experiment_config,
@@ -264,8 +265,43 @@ def test_parse_workspace_config_reads_directory_policy() -> None:
   )
 
 
-def test_load_workspace_config_defaults_when_missing() -> None:
+def test_load_workspace_config_defaults_when_missing(
+  monkeypatch,
+  tmp_path: Path,
+) -> None:
+  monkeypatch.chdir(tmp_path)
+
+  assert discover_workspace_config() is None
   assert load_workspace_config() == WorkspaceConfig()
+
+
+def test_load_workspace_config_discovers_parent_workspace_file(
+  monkeypatch,
+  tmp_path: Path,
+) -> None:
+  workspace_path = tmp_path / "flm.workspace.yaml"
+  workspace_path.write_text(
+    """
+project: course
+dirs:
+  code_dir: /repo/flm
+  work_dir: /work/flm
+output:
+  root: runs
+""",
+    encoding="utf-8",
+  )
+  nested = tmp_path / "packages" / "train"
+  nested.mkdir(parents=True)
+  monkeypatch.chdir(nested)
+
+  assert discover_workspace_config() == workspace_path
+  assert load_workspace_config() == WorkspaceConfig(
+    project="course",
+    code_dir=Path("/repo/flm"),
+    work_dir=Path("/work/flm"),
+    output_root=Path("runs"),
+  )
 
 
 def test_apply_workspace_overrides_preserves_unspecified_config() -> None:
@@ -474,6 +510,11 @@ def test_run_from_args_loads_experiment_relative_to_code_dir(
     calls["log"] = log
 
   monkeypatch.setattr(train_cli, "load_experiment_config", fake_load_experiment_config)
+  monkeypatch.setattr(
+    train_cli,
+    "load_workspace_config",
+    lambda path=None: WorkspaceConfig(),
+  )
   monkeypatch.setattr(train_cli, "run_experiment", fake_run_experiment)
 
   train_cli.run_from_args(
@@ -690,13 +731,7 @@ def test_run_experiment_uses_workspace_directory_policy(tmp_path: Path) -> None:
   work_dir = tmp_path / "work"
   repo_root = tmp_path / "repo"
   dataset_root = work_dir / ".cache" / "data" / "repo_sources"
-  run_dir = (
-    work_dir
-    / "runs"
-    / "course"
-    / "workspace_test"
-    / "run-123"
-  )
+  run_dir = work_dir / "runs" / "course" / "workspace_test" / "run-123"
   repo_root.mkdir()
   (repo_root / "model.py").write_text(
     "\n".join(f"def f_{index}(): return {index}" for index in range(80)),
