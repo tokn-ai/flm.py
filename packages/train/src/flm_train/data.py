@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 from flm_datasets import (
   SOURCE_CORPUS_SEPARATOR,
+  ShardedTokenDataset,
   SourceCorpusConfig,
   TokenDataset,
   encode_text,
@@ -30,6 +31,7 @@ from flm_train.types import DataConfig, TrainConfig
 
 _PUBLISHED_DATASET_VERSION = 1
 _TOKEN_CACHE_DTYPE = "int32"
+_FINEWEB_TOKEN_SHARD_SIZE = 8_388_608
 
 
 @dataclass(frozen=True)
@@ -45,7 +47,7 @@ class PublishedDatasetInfo:
   dataset_root: Path
   version: str
   manifest_path: Path
-  split_paths: dict[str, Path]
+  split_paths: dict[str, Path | list[Path]]
   token_count: int
   file_count: int
   byte_count: int
@@ -62,8 +64,12 @@ def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
 def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   resolved_data = resolve_data_config(config.data)
   metadata = _load_dataset_manifest(resolved_data)
-  token_array = _load_dataset_tokens(resolved_data, metadata)
-  dataset = TokenDataset(token_array, seq_len=resolved_data.seq_len)
+  token_arrays = _load_dataset_token_arrays(resolved_data, metadata)
+  dataset = (
+    TokenDataset(token_arrays[0], seq_len=resolved_data.seq_len)
+    if len(token_arrays) == 1
+    else ShardedTokenDataset(token_arrays, seq_len=resolved_data.seq_len)
+  )
   dataloader = DataLoader(
     dataset,
     batch_size=config.loop.batch_size,
@@ -494,45 +500,23 @@ def publish_fineweb_parquet_dataset(
   )
   manifest_path = dataset_root / "manifest.json"
   files_path = dataset_root / "files.jsonl"
-  split_paths = {
-    "train": dataset_root / "train.npy",
-    "val": dataset_root / "val.npy",
-    "test": dataset_root / "test.npy",
+  split_dirs = {
+    "train": dataset_root / "train",
+    "val": dataset_root / "val",
+    "test": dataset_root / "test",
   }
 
   if (
     not manifest_path.exists()
     or not files_path.exists()
-    or any(not path.exists() for path in split_paths.values())
+    or not _fineweb_parquet_shards_exist(manifest_path, dataset_root)
   ):
-    split_metadata = _scan_fineweb_parquet_tokens(
-      parquet_files=parquet_files,
-      source_root=source_root,
-      encoding_name=encoding_name,
-      split_paths=None,
-      files_path=None,
-      train_ratio=train_ratio,
-      val_ratio=val_ratio,
-      split_seed=split_seed,
-      text_column=text_column,
-      id_column=id_column,
-      parquet_batch_size=parquet_batch_size,
-    )
     dataset_root.mkdir(parents=True, exist_ok=True)
-    split_arrays = {
-      name: np.lib.format.open_memmap(
-        split_paths[name],
-        mode="w+",
-        dtype=np.dtype(_TOKEN_CACHE_DTYPE),
-        shape=(int(metadata["token_count"]),),
-      )
-      for name, metadata in split_metadata.items()
-    }
-    written_metadata = _scan_fineweb_parquet_tokens(
+    written_metadata = _write_fineweb_parquet_token_shards(
       parquet_files=parquet_files,
       source_root=source_root,
       encoding_name=encoding_name,
-      split_paths=split_arrays,
+      split_dirs=split_dirs,
       files_path=files_path,
       train_ratio=train_ratio,
       val_ratio=val_ratio,
@@ -541,8 +525,6 @@ def publish_fineweb_parquet_dataset(
       id_column=id_column,
       parquet_batch_size=parquet_batch_size,
     )
-    for array in split_arrays.values():
-      array.flush()
     _write_json(
       manifest_path,
       {
@@ -564,7 +546,7 @@ def publish_fineweb_parquet_dataset(
           int(metadata["byte_count"]) for metadata in written_metadata.values()
         ),
         "unigram_entropy_nats_per_token": _token_entropy_nats_from_paths(
-          split_paths.values()
+          _flatten_split_paths(dataset_root, written_metadata)
         ),
         "files_file": files_path.name,
         "split": {
@@ -596,7 +578,7 @@ def publish_fineweb_parquet_dataset(
     dataset_root=dataset_root,
     version=version,
     manifest_path=manifest_path,
-    split_paths=split_paths,
+    split_paths=_manifest_split_paths(dataset_root, manifest),
     token_count=int(manifest["token_count"]),
     file_count=int(manifest["file_count"]),
     byte_count=int(manifest["byte_count"]),
@@ -995,12 +977,44 @@ def _save_unitoken_tokenizer(trainer, tokenizer_path: Path) -> None:
   )
 
 
-def _scan_fineweb_parquet_tokens(
+class _NpyTokenShardWriter:
+  def __init__(self, split_dir: Path, split_name: str, shard_size: int) -> None:
+    self.split_dir = split_dir
+    self.split_name = split_name
+    self.shard_size = shard_size
+    self.tokens: list[int] = []
+    self.paths: list[Path] = []
+
+  def append(self, tokens: list[int]) -> None:
+    if self.tokens and len(self.tokens) + len(tokens) > self.shard_size:
+      self.flush()
+    self.tokens.extend(tokens)
+    if len(self.tokens) >= self.shard_size:
+      self.flush()
+
+  def close(self) -> list[Path]:
+    if self.tokens or not self.paths:
+      self.flush()
+    return self.paths
+
+  def flush(self) -> None:
+    self.split_dir.mkdir(parents=True, exist_ok=True)
+    path = self.split_dir / f"{self.split_name}-{len(self.paths):06d}.npy"
+    tmp_path = path.with_suffix(".npy.tmp")
+    array = np.asarray(self.tokens, dtype=np.dtype(_TOKEN_CACHE_DTYPE))
+    with tmp_path.open("wb") as handle:
+      np.save(handle, array, allow_pickle=False)
+    os.replace(tmp_path, path)
+    self.paths.append(path)
+    self.tokens = []
+
+
+def _write_fineweb_parquet_token_shards(
   *,
   parquet_files: list[Path],
   source_root: Path,
   encoding_name: str,
-  split_paths: dict[str, np.ndarray] | None,
+  split_dirs: dict[str, Path],
   files_path: Path | None,
   train_ratio: float,
   val_ratio: float,
@@ -1008,34 +1022,42 @@ def _scan_fineweb_parquet_tokens(
   text_column: str,
   id_column: str,
   parquet_batch_size: int,
-) -> dict[str, dict[str, int | str]]:
-  split_metadata: dict[str, dict[str, int | str]] = {
+) -> dict[str, dict[str, Any]]:
+  split_metadata: dict[str, dict[str, int | list[str]]] = {
     "train": {
-      "tokens_file": "train.npy",
+      "tokens_files": [],
       "token_count": 0,
       "file_count": 0,
       "byte_count": 0,
     },
     "val": {
-      "tokens_file": "val.npy",
+      "tokens_files": [],
       "token_count": 0,
       "file_count": 0,
       "byte_count": 0,
     },
     "test": {
-      "tokens_file": "test.npy",
+      "tokens_files": [],
       "token_count": 0,
       "file_count": 0,
       "byte_count": 0,
     },
   }
-  offsets = {"train": 0, "val": 0, "test": 0}
+  writers = {
+    name: _NpyTokenShardWriter(
+      split_dir=split_dirs[name],
+      split_name=name,
+      shard_size=_FINEWEB_TOKEN_SHARD_SIZE,
+    )
+    for name in split_metadata
+  }
   encoding = get_tokenizer(encoding_name)
-  phase = "write" if split_paths is not None else "count"
+  phase = "write"
   record_count = 0
   files_handle = (
     files_path.open("w", encoding="utf-8") if files_path is not None else None
   )
+  completed = False
   try:
     for record in _iter_fineweb_parquet_records(
       parquet_files=parquet_files,
@@ -1069,10 +1091,7 @@ def _scan_fineweb_parquet_tokens(
           file=sys.stderr,
           flush=True,
         )
-      if split_paths is not None:
-        offset = offsets[split_name]
-        split_paths[split_name][offset : offset + token_count] = tokens
-        offsets[split_name] = offset + token_count
+      writers[split_name].append(tokens)
       if files_handle is not None:
         files_handle.write(
           json.dumps(
@@ -1088,9 +1107,18 @@ def _scan_fineweb_parquet_tokens(
           )
           + "\n"
         )
+    completed = True
   finally:
     if files_handle is not None:
       files_handle.close()
+    if completed:
+      for split_name, writer in writers.items():
+        split_metadata[split_name]["tokens_files"] = [
+          path.relative_to(files_path.parent).as_posix()
+          if files_path is not None
+          else path.name
+          for path in writer.close()
+        ]
   return split_metadata
 
 
@@ -1208,23 +1236,89 @@ def _load_dataset_manifest(config: DataConfig) -> dict[str, Any]:
       f"config encoding {config.encoding_name}"
     )
   split_metadata = _split_metadata(manifest, config.split)
-  if not isinstance(split_metadata.get("tokens_file"), str):
+  tokens_file = split_metadata.get("tokens_file")
+  tokens_files = split_metadata.get("tokens_files")
+  if not isinstance(tokens_file, str) and not _is_string_list(tokens_files):
     raise ValueError(f"invalid dataset manifest: {manifest_path}")
   return manifest
 
 
-def _load_dataset_tokens(config: DataConfig, manifest: dict[str, Any]) -> np.ndarray:
+def _load_dataset_token_arrays(
+  config: DataConfig,
+  manifest: dict[str, Any],
+) -> list[np.ndarray]:
   manifest_path = _dataset_manifest_path(config)
   split_metadata = _split_metadata(manifest, config.split)
-  tokens_path = manifest_path.parent / str(split_metadata["tokens_file"])
-  token_array = np.load(tokens_path, allow_pickle=False, mmap_mode="c")
+  token_paths = _split_token_paths(manifest_path.parent, split_metadata)
+  token_arrays = [_load_token_array(path) for path in token_paths]
+  token_count = sum(int(array.shape[0]) for array in token_arrays)
+  if int(split_metadata["token_count"]) != token_count:
+    raise ValueError(f"token count mismatch: {manifest_path}")
+  return token_arrays
+
+
+def _load_token_array(path: Path) -> np.ndarray:
+  token_array = np.load(path, allow_pickle=False, mmap_mode="c")
   if token_array.dtype != np.dtype(_TOKEN_CACHE_DTYPE):
-    raise ValueError(f"unsupported token dtype: {tokens_path}")
+    raise ValueError(f"unsupported token dtype: {path}")
   if token_array.ndim != 1:
-    raise ValueError(f"token dataset must be a 1D array: {tokens_path}")
-  if int(split_metadata["token_count"]) != int(token_array.shape[0]):
-    raise ValueError(f"token count mismatch: {tokens_path}")
+    raise ValueError(f"token dataset must be a 1D array: {path}")
   return token_array
+
+
+def _split_token_paths(root: Path, split_metadata: dict[str, Any]) -> list[Path]:
+  tokens_file = split_metadata.get("tokens_file")
+  if isinstance(tokens_file, str):
+    return [root / tokens_file]
+  tokens_files = split_metadata.get("tokens_files")
+  if _is_string_list(tokens_files):
+    return [root / name for name in tokens_files]
+  raise ValueError("dataset split does not define token files")
+
+
+def _manifest_split_paths(
+  dataset_root: Path,
+  manifest: dict[str, Any],
+) -> dict[str, Path | list[Path]]:
+  return {
+    name: paths[0] if len(paths) == 1 else paths
+    for name, metadata in manifest["splits"].items()
+    for paths in [_split_token_paths(dataset_root, metadata)]
+  }
+
+
+def _fineweb_parquet_shards_exist(manifest_path: Path, dataset_root: Path) -> bool:
+  if not manifest_path.exists():
+    return False
+  manifest = _read_json(manifest_path)
+  splits = manifest.get("splits")
+  if not isinstance(splits, dict):
+    return False
+  try:
+    paths = [
+      path
+      for metadata in splits.values()
+      for path in _split_token_paths(dataset_root, metadata)
+    ]
+  except ValueError:
+    return False
+  return bool(paths) and all(path.exists() for path in paths)
+
+
+def _flatten_split_paths(
+  dataset_root: Path,
+  metadata: dict[str, dict[str, Any]],
+) -> list[Path]:
+  paths: list[Path] = []
+  for split_metadata in metadata.values():
+    tokens_files = split_metadata.get("tokens_files")
+    if _is_string_list(tokens_files):
+      paths.extend(dataset_root / name for name in tokens_files)
+  return paths
+
+
+def _is_string_list(value: object) -> bool:
+  return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def _dataset_manifest_path(config: DataConfig) -> Path:

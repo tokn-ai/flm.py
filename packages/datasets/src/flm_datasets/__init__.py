@@ -8,7 +8,7 @@ from flm_datasets.corpus import (
   read_source_corpus,
   write_source_corpus_file,
 )
-from flm_datasets.token_dataset import TokenDataset
+from flm_datasets.token_dataset import ShardedTokenDataset, TokenDataset
 from flm_datasets.tokenizer import (
   encode_text,
   get_tokenizer,
@@ -23,6 +23,7 @@ __all__ = [
   "CalcQAExample",
   "SOURCE_CORPUS_SEPARATOR",
   "SourceCorpusConfig",
+  "ShardedTokenDataset",
   "TokenDataset",
   "encode_text",
   "get_tokenizer",

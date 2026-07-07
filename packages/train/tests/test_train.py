@@ -458,6 +458,8 @@ def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
     tmp_path / "cache" / "tokens" / "fineweb_10bt_300" / "fineweb_10bt"
   )
   assert all(path.is_file() for path in published.split_paths.values())
+  assert "tokens_files" in manifest["splits"]["train"]
+  assert "tokens_file" not in manifest["splits"]["train"]
   assert (tmp_path / "tokenizers" / "fineweb_10bt_300" / "vocab.json").is_file()
   assert (tmp_path / "tokenizers" / "fineweb_10bt_300" / "merges.txt").is_file()
   assert (tmp_path / "cache" / "corpora" / "fineweb_10bt" / "corpus.txt").is_file()
