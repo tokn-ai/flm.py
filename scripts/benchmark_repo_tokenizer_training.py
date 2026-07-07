@@ -89,7 +89,7 @@ def main() -> None:
 def _parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
   parser.add_argument("--repo-root", type=Path, default=Path("."))
-  parser.add_argument("--outdir", type=Path, default=Path(".cache/tokenizer_bench"))
+  parser.add_argument("--outdir", type=Path, default=Path("cache/tokenizer_bench"))
   parser.add_argument("--tokenizer-name", default="repo_bench")
   parser.add_argument("--vocab-size", type=int, default=8192)
   parser.add_argument("--max-files", type=int)

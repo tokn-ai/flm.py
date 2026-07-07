@@ -243,25 +243,31 @@ def test_parse_experiment_config_rejects_output_run_dir() -> None:
 def test_parse_workspace_config_reads_directory_policy() -> None:
   config = parse_workspace_config(
     {
-      "project": "course",
       "dirs": {
-        "code_dir": "/repo/flm",
-        "work_dir": "/work/flm",
+        "code_root": "/repo/flm",
+        "workspace_root": "/work/flm",
       },
-      "output": {
-        "root": "runs",
+      "workspace": {
+        "runs_dir": "runs",
+        "data_dir": "data",
+        "tokenizers_dir": "tokenizers",
+        "models_dir": "models",
+        "cache_dir": "cache",
       },
     }
   )
 
   assert config == WorkspaceConfig(
-    project="course",
-    code_dir=Path("/repo/flm"),
-    work_dir=Path("/work/flm"),
-    output_root=Path("runs"),
+    code_root=Path("/repo/flm"),
+    workspace_root=Path("/work/flm"),
+    runs_dir=Path("runs"),
+    data_dir=Path("data"),
+    tokenizers_dir=Path("tokenizers"),
+    models_dir=Path("models"),
+    cache_dir=Path("cache"),
   )
   assert config.run_dir("experiment", "run-123") == (
-    Path("/work/flm") / "runs" / "course" / "experiment" / "run-123"
+    Path("/work/flm") / "runs" / "experiment" / "run-123"
   )
 
 
@@ -282,12 +288,11 @@ def test_load_workspace_config_discovers_parent_workspace_file(
   workspace_path = tmp_path / "flm.workspace.yaml"
   workspace_path.write_text(
     """
-project: course
 dirs:
-  code_dir: /repo/flm
-  work_dir: /work/flm
-output:
-  root: runs
+  code_root: /repo/flm
+  workspace_root: /work/flm
+workspace:
+  runs_dir: runs
 """,
     encoding="utf-8",
   )
@@ -297,31 +302,36 @@ output:
 
   assert discover_workspace_config() == workspace_path
   assert load_workspace_config() == WorkspaceConfig(
-    project="course",
-    code_dir=Path("/repo/flm"),
-    work_dir=Path("/work/flm"),
-    output_root=Path("runs"),
+    code_root=Path("/repo/flm"),
+    workspace_root=Path("/work/flm"),
+    runs_dir=Path("runs"),
   )
 
 
 def test_apply_workspace_overrides_preserves_unspecified_config() -> None:
   config = WorkspaceConfig(
-    project="course",
-    code_dir=Path("/repo"),
-    work_dir=Path("/work"),
-    output_root=Path("runs"),
+    code_root=Path("/repo"),
+    workspace_root=Path("/work"),
+    runs_dir=Path("runs"),
+    data_dir=Path("data"),
+    tokenizers_dir=Path("tokenizers"),
+    models_dir=Path("models"),
+    cache_dir=Path("cache"),
   )
 
   overridden = apply_workspace_overrides(
     config,
-    WorkspaceOverrides(work_dir=Path("/mnt/work"), output_root=Path("outputs")),
+    WorkspaceOverrides(workspace_root=Path("/mnt/work"), runs_dir=Path("outputs")),
   )
 
   assert overridden == WorkspaceConfig(
-    project="course",
-    code_dir=Path("/repo"),
-    work_dir=Path("/mnt/work"),
-    output_root=Path("outputs"),
+    code_root=Path("/repo"),
+    workspace_root=Path("/mnt/work"),
+    runs_dir=Path("outputs"),
+    data_dir=Path("data"),
+    tokenizers_dir=Path("tokenizers"),
+    models_dir=Path("models"),
+    cache_dir=Path("cache"),
   )
 
 
@@ -440,7 +450,7 @@ def test_parse_experiment_config_reads_token_dataset_config() -> None:
       "name": "prepared",
       "data": {
         "kind": "token_dataset",
-        "dataset_root": ".cache/data/repo_sources",
+        "dataset_root": "cache/repo_sources_cl100k",
         "version": "latest",
         "split": "val",
         "encoding_name": "cl100k_base",
@@ -450,7 +460,7 @@ def test_parse_experiment_config_reads_token_dataset_config() -> None:
   )
 
   assert config.data.kind == "token_dataset"
-  assert config.data.dataset_root == Path(".cache/data/repo_sources")
+  assert config.data.dataset_root == Path("cache/repo_sources_cl100k")
   assert config.data.version == "latest"
   assert config.data.split == "val"
   assert config.data.seq_len == 512
@@ -464,18 +474,22 @@ def test_parse_args_accepts_cli_overrides() -> None:
       "cpu",
       "--steps",
       "3",
-      "--root-dir",
-      "/tmp/runs",
       "--workspace-config",
       "flm.yaml",
-      "--project",
-      "course",
-      "--code-dir",
+      "--code-root",
       "/repo/flm",
-      "--work-dir",
+      "--workspace-root",
       "/work/flm",
-      "--output-root",
+      "--runs-dir",
       "outputs",
+      "--data-dir",
+      "data",
+      "--tokenizers-dir",
+      "tokenizers",
+      "--models-dir",
+      "models",
+      "--cache-dir",
+      "cache",
       "--seed",
       "99",
     ]
@@ -484,16 +498,18 @@ def test_parse_args_accepts_cli_overrides() -> None:
   assert args.config == Path("experiments/16m_repo.yaml")
   assert args.device == "cpu"
   assert args.steps == 3
-  assert args.root_dir == Path("/tmp/runs")
   assert args.workspace_config == Path("flm.yaml")
-  assert args.project == "course"
-  assert args.code_dir == Path("/repo/flm")
-  assert args.work_dir == Path("/work/flm")
-  assert args.output_root == Path("outputs")
+  assert args.code_root == Path("/repo/flm")
+  assert args.workspace_root == Path("/work/flm")
+  assert args.runs_dir == Path("outputs")
+  assert args.data_dir == Path("data")
+  assert args.tokenizers_dir == Path("tokenizers")
+  assert args.models_dir == Path("models")
+  assert args.cache_dir == Path("cache")
   assert args.seed == 99
 
 
-def test_run_from_args_loads_experiment_relative_to_code_dir(
+def test_run_from_args_loads_experiment_relative_to_code_root(
   monkeypatch,
   tmp_path: Path,
 ) -> None:
@@ -521,12 +537,10 @@ def test_run_from_args_loads_experiment_relative_to_code_dir(
     parse_args(
       [
         "experiments/16m_repo.yaml",
-        "--code-dir",
+        "--code-root",
         str(tmp_path / "repo"),
-        "--work-dir",
+        "--workspace-root",
         str(tmp_path / "work"),
-        "--project",
-        "course",
       ]
     )
   )
@@ -534,9 +548,8 @@ def test_run_from_args_loads_experiment_relative_to_code_dir(
   assert calls["config_path"] == tmp_path / "repo" / "experiments/16m_repo.yaml"
   assert calls["config"] == config
   assert calls["workspace"] == WorkspaceConfig(
-    project="course",
-    code_dir=tmp_path / "repo",
-    work_dir=tmp_path / "work",
+    code_root=tmp_path / "repo",
+    workspace_root=tmp_path / "work",
   )
   assert calls["log"] is print
 
@@ -632,7 +645,7 @@ def test_reference_model_config_excludes_other_model_fields() -> None:
 def test_16m_repo_config_uses_sdpa_attention_backend() -> None:
   config = load_experiment_config(Path("experiments/16m_repo.yaml"))
 
-  assert config.data.encoding_name == "unitoken:.cache/tokenizers/repo_8192"
+  assert config.data.encoding_name == "unitoken:tokenizers/repo_8192"
   assert config.model.d_model == 256
   assert config.model.n_layers == 12
   assert config.model.n_heads == 16
@@ -646,7 +659,7 @@ def test_16m_repo_config_uses_sdpa_attention_backend() -> None:
 def test_100mib_4k_repo_config_uses_benchmarked_shape() -> None:
   config = load_experiment_config(Path("experiments/100mib_4k_repo.yaml"))
 
-  assert config.data.encoding_name == "unitoken:.cache/tokenizers/repo_8192"
+  assert config.data.encoding_name == "unitoken:tokenizers/repo_8192"
   assert config.data.seq_len == 4096
   assert config.model.d_model == 384
   assert config.model.n_layers == 20
@@ -728,10 +741,10 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
 
 
 def test_run_experiment_uses_workspace_directory_policy(tmp_path: Path) -> None:
-  work_dir = tmp_path / "work"
+  workspace_root = tmp_path / "work"
   repo_root = tmp_path / "repo"
-  dataset_root = work_dir / ".cache" / "data" / "repo_sources"
-  run_dir = work_dir / "runs" / "course" / "workspace_test" / "run-123"
+  dataset_root = workspace_root / "cache" / "repo_sources_repo_8192"
+  run_dir = workspace_root / "runs" / "workspace_test" / "run-123"
   repo_root.mkdir()
   (repo_root / "model.py").write_text(
     "\n".join(f"def f_{index}(): return {index}" for index in range(80)),
@@ -743,18 +756,18 @@ def test_run_experiment_uses_workspace_directory_policy(tmp_path: Path) -> None:
     ExperimentConfig(
       name="workspace_test",
       run=RunConfig(id="run-123"),
-      data=DataConfig(dataset_root=Path(".cache/data/repo_sources"), seq_len=8),
+      data=DataConfig(dataset_root=Path("cache/repo_sources_repo_8192"), seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
       loop=LoopConfig(batch_size=2, steps=1),
       checkpoint=CheckpointConfig(resume="checkpoints/manual"),
     ),
-    workspace=WorkspaceConfig(project="course", work_dir=work_dir),
+    workspace=WorkspaceConfig(workspace_root=workspace_root),
   )
 
   assert (run_dir / "config.json").is_file()
   resolved = (run_dir / "config.resolved.yaml").read_text(encoding="utf-8")
   assert f"dataset_root: {dataset_root}" in resolved
-  assert f"resume: {work_dir / 'checkpoints' / 'manual'}" in resolved
+  assert f"resume: {workspace_root / 'checkpoints' / 'manual'}" in resolved
 
 
 def test_run_experiment_resolves_latest_dataset_version(tmp_path: Path) -> None:

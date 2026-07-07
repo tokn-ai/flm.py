@@ -58,7 +58,7 @@ def main() -> None:
 def _parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
   parser.add_argument("--repo-root", type=Path, default=Path("."))
-  parser.add_argument("--tokenizer-root", type=Path, default=Path(".cache/tokenizers"))
+  parser.add_argument("--tokenizer-root", type=Path, default=Path("tokenizers"))
   parser.add_argument("--tokenizer-name", default="repo_8192")
   parser.add_argument("--max-chars", type=int, default=1_000_000)
   parser.add_argument("--rounds", type=int, default=7)
@@ -122,8 +122,7 @@ def _print_encode_parity(samples: list[str], encodings) -> None:
       f"unitoken=={backend}:{matches}" for backend, matches in parity.items()
     )
     print(
-      f"  sample={index} chars={len(sample)} tokens={len(baseline_ids)} "
-      f"{parity_text}"
+      f"  sample={index} chars={len(sample)} tokens={len(baseline_ids)} {parity_text}"
     )
 
 

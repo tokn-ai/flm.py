@@ -2,10 +2,10 @@ name: 100mib_4k_repo_reference
 
 data:
   kind: token_dataset
-  dataset_root: .cache/data/repo_sources
+  dataset_root: cache/repo_sources_repo_8192
   version: latest
   split: train
-  encoding_name: unitoken:.cache/tokenizers/repo_8192
+  encoding_name: unitoken:tokenizers/repo_8192
   seq_len: 4096
 
 model:

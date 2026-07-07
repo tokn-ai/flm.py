@@ -36,18 +36,22 @@ def test_parse_args_accepts_tune_options() -> None:
       "2",
       "--device",
       "cuda",
-      "--root-dir",
-      "/tmp/runs",
       "--workspace-config",
       "flm.yaml",
-      "--project",
-      "course",
-      "--code-dir",
+      "--code-root",
       "/repo/flm",
-      "--work-dir",
+      "--workspace-root",
       "/work/flm",
-      "--output-root",
+      "--runs-dir",
       "outputs",
+      "--data-dir",
+      "data",
+      "--tokenizers-dir",
+      "tokenizers",
+      "--models-dir",
+      "models",
+      "--cache-dir",
+      "cache",
       "--profiler",
       "nsys,torch",
       "--nsys-trace",
@@ -59,12 +63,14 @@ def test_parse_args_accepts_tune_options() -> None:
   assert args.config == Path("experiments/16m_repo.yaml")
   assert args.steps == 2
   assert args.device == "cuda"
-  assert args.root_dir == Path("/tmp/runs")
   assert args.workspace_config == Path("flm.yaml")
-  assert args.project == "course"
-  assert args.code_dir == Path("/repo/flm")
-  assert args.work_dir == Path("/work/flm")
-  assert args.output_root == Path("outputs")
+  assert args.code_root == Path("/repo/flm")
+  assert args.workspace_root == Path("/work/flm")
+  assert args.runs_dir == Path("outputs")
+  assert args.data_dir == Path("data")
+  assert args.tokenizers_dir == Path("tokenizers")
+  assert args.models_dir == Path("models")
+  assert args.cache_dir == Path("cache")
   assert args.profiler == "nsys,torch"
   assert args.memory_trace is True
   assert args.nsys_trace == "cuda,nvtx"

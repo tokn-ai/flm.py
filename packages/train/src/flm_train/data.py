@@ -98,7 +98,7 @@ def publish_repo_source_dataset(
   encoding_name: str = "cl100k_base",
   unitoken_vocab_size: int | None = None,
   unitoken_special_token_count: int = 16,
-  tokenizer_root: Path = Path(".cache/tokenizers"),
+  tokenizer_root: Path = Path("tokenizers"),
   tokenizer_name: str | None = None,
   train_ratio: float = 0.98,
   val_ratio: float = 0.01,

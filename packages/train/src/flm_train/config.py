@@ -39,13 +39,36 @@ class OutputConfig:
 
 @dataclass(frozen=True)
 class WorkspaceConfig:
-  project: str = "default"
-  code_dir: Path = Path(".")
-  work_dir: Path = Path(".")
-  output_root: Path = Path("runs")
+  code_root: Path = Path(".")
+  workspace_root: Path = Path(".")
+  runs_dir: Path = Path("runs")
+  data_dir: Path = Path("data")
+  tokenizers_dir: Path = Path("tokenizers")
+  models_dir: Path = Path("models")
+  cache_dir: Path = Path("cache")
+
+  @property
+  def runs_path(self) -> Path:
+    return self.workspace_root / self.runs_dir
+
+  @property
+  def data_path(self) -> Path:
+    return self.workspace_root / self.data_dir
+
+  @property
+  def tokenizers_path(self) -> Path:
+    return self.workspace_root / self.tokenizers_dir
+
+  @property
+  def models_path(self) -> Path:
+    return self.workspace_root / self.models_dir
+
+  @property
+  def cache_path(self) -> Path:
+    return self.workspace_root / self.cache_dir
 
   def experiment_dir(self, experiment_name: str) -> Path:
-    return self.work_dir / self.output_root / self.project / experiment_name
+    return self.runs_path / experiment_name
 
   def run_dir(self, experiment_name: str, run_id: str | None) -> Path:
     experiment_dir = self.experiment_dir(experiment_name)
@@ -161,10 +184,13 @@ class ExperimentOverrides:
 
 @dataclass(frozen=True)
 class WorkspaceOverrides:
-  project: str | None = None
-  code_dir: Path | None = None
-  work_dir: Path | None = None
-  output_root: Path | None = None
+  code_root: Path | None = None
+  workspace_root: Path | None = None
+  runs_dir: Path | None = None
+  data_dir: Path | None = None
+  tokenizers_dir: Path | None = None
+  models_dir: Path | None = None
+  cache_dir: Path | None = None
 
 
 def load_experiment_config(path: Path) -> ExperimentConfig:
@@ -197,21 +223,34 @@ def discover_workspace_config(start: Path | None = None) -> Path | None:
 
 
 def parse_workspace_config(raw: dict[str, Any]) -> WorkspaceConfig:
-  allowed = {"project", "dirs", "output"}
+  allowed = {"dirs", "workspace"}
   unknown = set(raw) - allowed
   if unknown:
     raise ValueError(f"unknown workspace config keys: {sorted(unknown)}")
   dirs = _section(raw, "dirs")
-  output = _section(raw, "output")
-  _reject_unknown(dirs, {"code_dir", "work_dir"}, "workspace dirs")
-  _reject_unknown(output, {"root", "root_dir", "output_root"}, "workspace output")
+  workspace = _section(raw, "workspace")
+  _reject_unknown(dirs, {"code_root", "workspace_root"}, "workspace dirs")
+  _reject_unknown(
+    workspace,
+    {
+      "runs_dir",
+      "data_dir",
+      "tokenizers_dir",
+      "models_dir",
+      "cache_dir",
+    },
+    "workspace",
+  )
+  if "code_root" not in dirs or "workspace_root" not in dirs:
+    raise ValueError("workspace dirs must include code_root and workspace_root")
   return WorkspaceConfig(
-    project=str(raw.get("project", "default")),
-    code_dir=Path(dirs.get("code_dir", ".")),
-    work_dir=Path(dirs.get("work_dir", ".")),
-    output_root=Path(
-      output.get("output_root", output.get("root", output.get("root_dir", "runs")))
-    ),
+    code_root=Path(dirs["code_root"]),
+    workspace_root=Path(dirs["workspace_root"]),
+    runs_dir=Path(workspace.get("runs_dir", "runs")),
+    data_dir=Path(workspace.get("data_dir", "data")),
+    tokenizers_dir=Path(workspace.get("tokenizers_dir", "tokenizers")),
+    models_dir=Path(workspace.get("models_dir", "models")),
+    cache_dir=Path(workspace.get("cache_dir", "cache")),
   )
 
 
@@ -313,12 +352,19 @@ def apply_workspace_overrides(
   overrides: WorkspaceOverrides,
 ) -> WorkspaceConfig:
   return WorkspaceConfig(
-    project=config.project if overrides.project is None else overrides.project,
-    code_dir=config.code_dir if overrides.code_dir is None else overrides.code_dir,
-    work_dir=config.work_dir if overrides.work_dir is None else overrides.work_dir,
-    output_root=config.output_root
-    if overrides.output_root is None
-    else overrides.output_root,
+    code_root=config.code_root if overrides.code_root is None else overrides.code_root,
+    workspace_root=config.workspace_root
+    if overrides.workspace_root is None
+    else overrides.workspace_root,
+    runs_dir=config.runs_dir if overrides.runs_dir is None else overrides.runs_dir,
+    data_dir=config.data_dir if overrides.data_dir is None else overrides.data_dir,
+    tokenizers_dir=config.tokenizers_dir
+    if overrides.tokenizers_dir is None
+    else overrides.tokenizers_dir,
+    models_dir=config.models_dir
+    if overrides.models_dir is None
+    else overrides.models_dir,
+    cache_dir=config.cache_dir if overrides.cache_dir is None else overrides.cache_dir,
   )
 
 
@@ -326,13 +372,13 @@ def resolve_workspace_paths(
   config: ExperimentConfig,
   workspace: WorkspaceConfig,
 ) -> ExperimentConfig:
-  work_dir = workspace.work_dir
+  workspace_root = workspace.workspace_root
   return ExperimentConfig(
     name=config.name,
     data=replace(
       config.data,
-      dataset_root=_resolve_against(work_dir, config.data.dataset_root),
-      encoding_name=_resolve_encoding_name(work_dir, config.data.encoding_name),
+      dataset_root=_resolve_against(workspace_root, config.data.dataset_root),
+      encoding_name=_resolve_encoding_name(workspace_root, config.data.encoding_name),
     ),
     model=config.model,
     optimizer=config.optimizer,
@@ -341,19 +387,17 @@ def resolve_workspace_paths(
     rollout=config.rollout,
     checkpoint=replace(
       config.checkpoint,
-      resume=_resolve_checkpoint_resume(work_dir, config.checkpoint.resume),
+      resume=_resolve_checkpoint_resume(workspace_root, config.checkpoint.resume),
     ),
     system_metrics=config.system_metrics,
     run=config.run,
     secrets=SecretsConfig(
       env_file=None
       if config.secrets.env_file is None
-      else _resolve_against(work_dir, config.secrets.env_file),
+      else _resolve_against(workspace_root, config.secrets.env_file),
     ),
-    output=OutputConfig(
-      root_dir=workspace.work_dir / workspace.output_root / workspace.project
-    ),
-    sinks=tuple(_resolve_sink_paths(work_dir, sink) for sink in config.sinks),
+    output=OutputConfig(root_dir=workspace.runs_path),
+    sinks=tuple(_resolve_sink_paths(workspace_root, sink) for sink in config.sinks),
   )
 
 
@@ -491,7 +535,7 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     kind=kind,
     encoding_name=str(value.get("encoding_name", "cl100k_base")),
     seq_len=int(value.get("seq_len", 128)),
-    dataset_root=Path(value.get("dataset_root", ".cache/data/repo_sources")),
+    dataset_root=Path(value.get("dataset_root", "cache/repo_sources_cl100k")),
     version=str(value.get("version", "latest")),
     split=split,
     resolved_version=value.get("resolved_version"),

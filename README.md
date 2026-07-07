@@ -32,21 +32,24 @@ automatically and is ignored by git:
 
 ```yaml
 # flm.workspace.yaml
-project: repo_reference
 dirs:
-  code_dir: .
-  work_dir: .
-output:
-  root: runs
+  code_root: .
+  workspace_root: .
+workspace:
+  runs_dir: runs
+  data_dir: data
+  tokenizers_dir: tokenizers
+  models_dir: models
+  cache_dir: cache
 ```
 
 ```sh
 uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
-Relative data, tokenizer, sink, and secret paths resolve from `work_dir`.
-Relative experiment config paths passed to the CLI resolve from `code_dir`.
-Run artifacts are written to `work_dir/output.root/project/experiment/run_id`.
+Relative data, tokenizer, sink, and secret paths resolve from `workspace_root`.
+Relative experiment config paths passed to the CLI resolve from `code_root`.
+Run artifacts are written to `workspace_root/workspace.runs_dir/experiment/run_id`.
 
 ## Setup
 

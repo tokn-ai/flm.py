@@ -68,7 +68,7 @@ def main() -> None:
 def _parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
   parser.add_argument("--parquet-path", type=Path, required=True)
-  parser.add_argument("--tokenizer-root", type=Path, default=Path(".cache/tokenizers"))
+  parser.add_argument("--tokenizer-root", type=Path, default=Path("tokenizers"))
   parser.add_argument("--tokenizer-name", required=True)
   parser.add_argument("--vocab-size", type=int, default=8192)
   parser.add_argument("--text-column", default="text")

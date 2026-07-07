@@ -23,12 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
   publish.add_argument(
     "--dataset-root",
     type=Path,
-    default=Path(".cache/data/repo_sources"),
+    default=Path("cache/repo_sources_cl100k"),
   )
   publish.add_argument("--encoding-name", default="cl100k_base")
   publish.add_argument("--unitoken-vocab-size", type=int)
   publish.add_argument("--unitoken-special-token-count", type=int, default=16)
-  publish.add_argument("--tokenizer-root", type=Path, default=Path(".cache/tokenizers"))
+  publish.add_argument("--tokenizer-root", type=Path, default=Path("tokenizers"))
   publish.add_argument("--tokenizer-name")
   publish.add_argument("--train-ratio", type=float, default=0.98)
   publish.add_argument("--val-ratio", type=float, default=0.01)

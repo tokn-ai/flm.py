@@ -21,13 +21,15 @@ def build_parser() -> argparse.ArgumentParser:
   parser = argparse.ArgumentParser()
   parser.add_argument("config", type=Path)
   parser.add_argument("--workspace-config", type=Path, default=None)
-  parser.add_argument("--project", default=None)
-  parser.add_argument("--code-dir", type=Path, default=None)
-  parser.add_argument("--work-dir", type=Path, default=None)
-  parser.add_argument("--output-root", type=Path, default=None)
+  parser.add_argument("--code-root", type=Path, default=None)
+  parser.add_argument("--workspace-root", type=Path, default=None)
+  parser.add_argument("--runs-dir", type=Path, default=None)
+  parser.add_argument("--data-dir", type=Path, default=None)
+  parser.add_argument("--tokenizers-dir", type=Path, default=None)
+  parser.add_argument("--models-dir", type=Path, default=None)
+  parser.add_argument("--cache-dir", type=Path, default=None)
   parser.add_argument("--device", default=None)
   parser.add_argument("--steps", type=int, default=None)
-  parser.add_argument("--root-dir", type=Path, default=None)
   parser.add_argument("--seed", type=int, default=None)
   return parser
 
@@ -41,13 +43,16 @@ def run_from_args(args: argparse.Namespace) -> None:
   workspace = apply_workspace_overrides(
     workspace,
     WorkspaceOverrides(
-      project=args.project,
-      code_dir=args.code_dir,
-      work_dir=args.work_dir,
-      output_root=args.output_root or args.root_dir,
+      code_root=args.code_root,
+      workspace_root=args.workspace_root,
+      runs_dir=args.runs_dir,
+      data_dir=args.data_dir,
+      tokenizers_dir=args.tokenizers_dir,
+      models_dir=args.models_dir,
+      cache_dir=args.cache_dir,
     ),
   )
-  config = load_experiment_config(_resolve_code_path(workspace.code_dir, args.config))
+  config = load_experiment_config(_resolve_code_path(workspace.code_root, args.config))
   config = apply_overrides(
     config,
     ExperimentOverrides(
@@ -59,10 +64,10 @@ def run_from_args(args: argparse.Namespace) -> None:
   run_experiment(config, workspace=workspace, log=print)
 
 
-def _resolve_code_path(code_dir: Path, path: Path) -> Path:
+def _resolve_code_path(code_root: Path, path: Path) -> Path:
   if path.is_absolute():
     return path
-  return code_dir / path
+  return code_root / path
 
 
 def main(argv: Sequence[str] | None = None) -> None:
