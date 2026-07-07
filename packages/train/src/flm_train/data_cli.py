@@ -7,7 +7,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from flm_train.config import WorkspaceConfig, load_workspace_config
-from flm_train.data import publish_fineweb2_dataset, publish_repo_source_dataset
+from flm_train.data import (
+  publish_fineweb2_dataset,
+  publish_fineweb_parquet_dataset,
+  publish_repo_source_dataset,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +61,33 @@ def build_parser() -> argparse.ArgumentParser:
   fineweb2_publish.add_argument("--split-seed", type=int, default=42)
   fineweb2_publish.add_argument("--text-column", default="text")
 
+  fineweb = subcommands.add_parser("fineweb")
+  fineweb_subcommands = fineweb.add_subparsers(
+    dest="fineweb_command",
+    required=True,
+  )
+  fineweb_publish = fineweb_subcommands.add_parser("publish-local")
+  fineweb_publish.add_argument("--source-root", type=Path, required=True)
+  fineweb_publish.add_argument(
+    "--dataset-root",
+    type=Path,
+    default=Path("cache/fineweb_10bt_8192"),
+  )
+  fineweb_publish.add_argument("--encoding-name", default="cl100k_base")
+  fineweb_publish.add_argument("--unitoken-vocab-size", type=int)
+  fineweb_publish.add_argument("--unitoken-special-token-count", type=int, default=16)
+  fineweb_publish.add_argument(
+    "--tokenizer-root", type=Path, default=Path("tokenizers")
+  )
+  fineweb_publish.add_argument("--tokenizer-name")
+  fineweb_publish.add_argument("--train-ratio", type=float, default=0.8)
+  fineweb_publish.add_argument("--val-ratio", type=float, default=0.1)
+  fineweb_publish.add_argument("--test-ratio", type=float, default=0.1)
+  fineweb_publish.add_argument("--split-seed", type=int, default=42)
+  fineweb_publish.add_argument("--text-column", default="text")
+  fineweb_publish.add_argument("--id-column", default="id")
+  fineweb_publish.add_argument("--parquet-batch-size", type=int, default=1024)
+
   return parser
 
 
@@ -97,6 +128,25 @@ def run_from_args(args: argparse.Namespace) -> None:
       test_ratio=args.test_ratio,
       split_seed=args.split_seed,
       text_column=args.text_column,
+    )
+    _print_published_info(info)
+    return
+  if args.command == "fineweb" and args.fineweb_command == "publish-local":
+    info = publish_fineweb_parquet_dataset(
+      source_root=_resolve_workspace_path(workspace, args.source_root),
+      dataset_root=_resolve_workspace_path(workspace, args.dataset_root),
+      encoding_name=args.encoding_name,
+      unitoken_vocab_size=args.unitoken_vocab_size,
+      unitoken_special_token_count=args.unitoken_special_token_count,
+      tokenizer_root=_resolve_workspace_path(workspace, args.tokenizer_root),
+      tokenizer_name=args.tokenizer_name,
+      train_ratio=args.train_ratio,
+      val_ratio=args.val_ratio,
+      test_ratio=args.test_ratio,
+      split_seed=args.split_seed,
+      text_column=args.text_column,
+      id_column=args.id_column,
+      parquet_batch_size=args.parquet_batch_size,
     )
     _print_published_info(info)
     return

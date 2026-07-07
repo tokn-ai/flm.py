@@ -3457,16 +3457,16 @@ wheels = [
 
 [[package]]
 name = "uni-tokenizer"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/6d/6d/37af07eb2a40020a601eff4afaa988c841d2348fcb75b5abec5d90942b52/uni_tokenizer-0.1.2.tar.gz", hash = "sha256:3df97f873594c9ad1345c52eec02608734ade8e070857dd8039d82e567586101", size = 70712 }
+sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/49/2a/9e4c3901548e2fb8e9b0993ac4e32c578c06629db61e42f4c556a96bea4d/uni_tokenizer-0.1.3.tar.gz", hash = "sha256:8dc043c3353801da6a1d3e5df4300917b1500afc403860ce363e3bfcba98280a", size = 81426 }
 wheels = [
-    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/b0/5a/4b94d00cd76dc5361316057a060710fb3be362b07c898cabc2e749d25c72/uni_tokenizer-0.1.2-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:8ca9bb3a001ed6c6ec14081e2fda34e19e869c69d8734813f60fea3f5836f957", size = 1330166 },
-    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/7d/f1/56ce1a5ac9bc13d07b22a0927ab56225dc6bf0a2202b784b62ab43a624bb/uni_tokenizer-0.1.2-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f13e38537ecb881b08bc1a9c68eb782259721609729dd9987ef63514287ca91a", size = 1505195 },
-    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/c5/e3/de4d8f323b797af880d4dc8c33903b662dc6d5ea0b53bd4b959102d5badc/uni_tokenizer-0.1.2-cp38-abi3-win_amd64.whl", hash = "sha256:1aba045bf1b2054325e508c37050c72cfef0e9102fbe6c7bdb752408763f1f53", size = 1380323 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/f2/53/0125f1c8b6a0ce2811c15d8bde4e7f0055d7e9f28e5d3b24f33c6c25942a/uni_tokenizer-0.1.3-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:edd554ae56c50f6bcb316c33aca12435cb11dd08546029c59e6c60b39547a5e4", size = 1341305 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/ac/9c/15f433ec72a0d5ecc8c6de836581d8b91d9c4f7a94364f2f73176f91b856/uni_tokenizer-0.1.3-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7d0bbe24d371a99f46e373acd3722d87029dbce2ba9dfc4b4529bd814176a6fb", size = 1520569 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/3e/df/4bf8454ca6cdb9f4b0b3957295fce9a9a70ff1aac592d6ffaaf62f9684a6/uni_tokenizer-0.1.3-cp38-abi3-win_amd64.whl", hash = "sha256:2a0143677b95a7d30dd7708b07cd4137c1021739f801d5940ebe903734617c90", size = 1392795 },
 ]
 
 [[package]]

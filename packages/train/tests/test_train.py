@@ -4,12 +4,14 @@ from pathlib import Path
 
 import flm_train.data_cli as data_cli
 import numpy as np
+import pytest
 import torch
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
 from flm_train.config import WorkspaceConfig
 from flm_train.data import (
   _token_entropy_nats_from_paths,
   publish_fineweb2_dataset,
+  publish_fineweb_parquet_dataset,
   publish_repo_source_dataset,
 )
 from flm_train.data_cli import parse_args, run_from_args
@@ -406,6 +408,53 @@ def test_data_cli_publishes_fineweb2_dataset(
   assert "bytes=" in output
   assert "train_bytes=" in output
   assert "unigram_entropy_nats_per_token=" in output
+
+
+def test_publish_fineweb_parquet_dataset_trains_unitoken_on_local_files(
+  tmp_path: Path,
+) -> None:
+  pytest.importorskip("pyarrow")
+  import pyarrow as pa
+  import pyarrow.parquet as pq
+
+  source_root = tmp_path / "fineweb" / "sample" / "10BT"
+  source_root.mkdir(parents=True)
+  table = pa.table(
+    {
+      "id": [f"doc-{index}" for index in range(80)],
+      "text": [
+        " ".join(f"token_{index}_{word}" for word in range(24)) for index in range(80)
+      ],
+    }
+  )
+  pq.write_table(table, source_root / "000_00000.parquet")
+
+  published = publish_fineweb_parquet_dataset(
+    source_root=source_root,
+    dataset_root=tmp_path / "cache" / "fineweb_10bt_300",
+    unitoken_vocab_size=300,
+    tokenizer_root=tmp_path / "tokenizers",
+    tokenizer_name="fineweb_10bt_300",
+    train_ratio=0.8,
+    val_ratio=0.1,
+    test_ratio=0.1,
+  )
+
+  manifest = json.loads(published.manifest_path.read_text(encoding="utf-8"))
+  assert manifest["kind"] == "fineweb_parquet"
+  assert manifest["split"]["strategy"] == "document_hash"
+  assert manifest["split"]["train"] == 0.8
+  assert manifest["split"]["val"] == 0.1
+  assert manifest["split"]["test"] == 0.1
+  assert (
+    manifest["encoding_name"]
+    == f"unitoken:{tmp_path / 'tokenizers' / 'fineweb_10bt_300'}"
+  )
+  assert published.token_count > 0
+  assert published.file_count == 80
+  assert all(path.is_file() for path in published.split_paths.values())
+  assert (tmp_path / "tokenizers" / "vocab.fineweb_10bt_300[u8].json").is_file()
+  assert not (tmp_path / "tokenizers" / "corpus.fineweb_10bt_300.txt").exists()
 
 
 def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
