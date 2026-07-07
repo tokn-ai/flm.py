@@ -772,10 +772,6 @@ def train_unitoken_tokenizer(
     raise ValueError(
       "unitoken vocab size must leave room for byte tokens and special tokens"
     )
-  vocab_path = tokenizer_path / "vocab.json"
-  merges_path = tokenizer_path / "merges.txt"
-  if vocab_path.exists() and merges_path.exists():
-    return
 
   from uni_tokenizer import BpeTrainer, PreTokenizer
 
@@ -837,6 +833,18 @@ def train_unitoken_tokenizer_from_parquet(
     id_column=id_column,
     parquet_batch_size=parquet_batch_size,
   )
+  corpus_manifest = _read_json(corpus_path.parent / "manifest.json")
+  expected_manifest = _unitoken_tokenizer_manifest(
+    tokenizer_name=tokenizer_path.name,
+    vocab_size=vocab_size,
+    special_token_count=special_token_count,
+    corpus_fingerprint=str(corpus_manifest["fingerprint"]),
+  )
+  manifest_path = tokenizer_path / "manifest.json"
+  if vocab_path.exists() and merges_path.exists() and manifest_path.exists():
+    manifest = _read_json(manifest_path)
+    if manifest.get("fingerprint") == expected_manifest["fingerprint"]:
+      return
 
   pre_tokenizer = PreTokenizer(special_tokens=special_tokens)
   words = {
@@ -846,7 +854,7 @@ def train_unitoken_tokenizer_from_parquet(
   trainer = BpeTrainer(special_tokens)
   trainer.add_words(words)
   trainer.train(vocab_size=vocab_size)
-  _save_unitoken_tokenizer(trainer, tokenizer_path)
+  _save_unitoken_tokenizer(trainer, tokenizer_path, manifest=expected_manifest)
 
 
 def _build_fineweb_tokenizer_corpus(
@@ -901,9 +909,7 @@ def _build_fineweb_tokenizer_corpus(
       if split_name != "train":
         continue
       corpus_file.write(record["text"])
-      corpus_file.write("\n")
       corpus_file.write(SOURCE_CORPUS_SEPARATOR)
-      corpus_file.write("\n")
       document_count += 1
       byte_count += int(record["byte_count"])
   os.replace(tmp_path, corpus_path)
@@ -943,6 +949,7 @@ def _fineweb_tokenizer_corpus_manifest(
     "corpus_name": corpus_name,
     "source_root": str(source_root),
     "separator": SOURCE_CORPUS_SEPARATOR,
+    "document_format": "text+separator",
     "split": {
       "strategy": "document_hash",
       "seed": split_seed,
@@ -965,18 +972,45 @@ def _fineweb_tokenizer_corpus_manifest(
   return {**payload, "fingerprint": fingerprint}
 
 
-def _save_unitoken_tokenizer(trainer, tokenizer_path: Path) -> None:
+def _unitoken_tokenizer_manifest(
+  *,
+  tokenizer_name: str,
+  vocab_size: int,
+  special_token_count: int,
+  corpus_fingerprint: str,
+) -> dict[str, Any]:
+  payload = {
+    "kind": "unitoken",
+    "name": tokenizer_name,
+    "vocab_size": vocab_size,
+    "special_token_count": special_token_count,
+    "corpus_fingerprint": corpus_fingerprint,
+  }
+  fingerprint = hashlib.sha256(
+    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+  ).hexdigest()[:16]
+  return {**payload, "fingerprint": fingerprint}
+
+
+def _save_unitoken_tokenizer(
+  trainer,
+  tokenizer_path: Path,
+  manifest: dict[str, Any] | None = None,
+) -> None:
   tokenizer_path.mkdir(parents=True, exist_ok=True)
   trainer.save(tokenizer_path.name, outdir=tokenizer_path)
   old_vocab_path = tokenizer_path / f"vocab.{tokenizer_path.name}[u8].json"
   old_merges_path = tokenizer_path / f"merges.{tokenizer_path.name}[u8].txt"
   os.replace(old_vocab_path, tokenizer_path / "vocab.json")
   os.replace(old_merges_path, tokenizer_path / "merges.txt")
+  payload = manifest or {
+    "kind": "unitoken",
+    "name": tokenizer_path.name,
+  }
   _write_json(
     tokenizer_path / "manifest.json",
     {
-      "kind": "unitoken",
-      "name": tokenizer_path.name,
+      **payload,
       "vocab_file": "vocab.json",
       "merges_file": "merges.txt",
       "created_at": datetime.now(UTC).isoformat(),
