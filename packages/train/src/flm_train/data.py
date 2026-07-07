@@ -16,6 +16,7 @@ from flm_datasets import (
   SourceCorpusConfig,
   TokenDataset,
   encode_text,
+  get_tokenizer,
   iter_source_files,
   read_source_corpus,
   unitoken_encoding_name,
@@ -1028,6 +1029,7 @@ def _scan_fineweb_parquet_tokens(
     },
   }
   offsets = {"train": 0, "val": 0, "test": 0}
+  encoding = get_tokenizer(encoding_name)
   files_handle = (
     files_path.open("w", encoding="utf-8") if files_path is not None else None
   )
@@ -1045,7 +1047,7 @@ def _scan_fineweb_parquet_tokens(
         val_ratio=val_ratio,
         split_seed=split_seed,
       )
-      tokens = encode_text(record["text"] + "\n\n", encoding_name=encoding_name)
+      tokens = encoding.encode_ordinary(record["text"] + "\n\n")
       token_count = len(tokens)
       metadata = split_metadata[split_name]
       metadata["token_count"] = int(metadata["token_count"]) + token_count

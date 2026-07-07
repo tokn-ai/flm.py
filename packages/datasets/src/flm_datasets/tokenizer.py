@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -30,6 +31,7 @@ class EncodingLike(Protocol):
   def decode(self, tokens: list[int]) -> str: ...
 
 
+@cache
 def get_tokenizer(name: str = "cl100k_base") -> EncodingLike:
   if name.startswith(UNITOKEN_PREFIX):
     return _get_unitokenizer(name.removeprefix(UNITOKEN_PREFIX))
