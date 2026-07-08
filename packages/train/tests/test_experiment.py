@@ -85,6 +85,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "device": "cpu",
         "dtype": "bfloat16",
         "batch_size": 2,
+        "batch_size_vram_fraction": 0.75,
         "steps": 5,
       },
       "eval": {
@@ -162,6 +163,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.data.dataset_root == Path("datasets/src")
   assert train_config.data.seq_len == 16
   assert train_config.loop.batch_size == 2
+  assert train_config.loop.batch_size_vram_fraction == 0.75
   assert train_config.loop.steps == 5
   assert train_config.model.d_model == 32
   assert train_config.model.n_layers == 3
@@ -242,6 +244,21 @@ def test_parse_experiment_config_rejects_output_run_dir() -> None:
         },
       }
     )
+
+
+def test_parse_experiment_config_accepts_auto_batch_size() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "auto",
+      "loop": {
+        "batch_size": "auto",
+        "batch_size_vram_fraction": 0.9,
+      },
+    }
+  )
+
+  assert config.loop.batch_size == "auto"
+  assert config.loop.batch_size_vram_fraction == 0.9
 
 
 def test_parse_workspace_config_reads_directory_policy() -> None:

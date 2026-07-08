@@ -30,11 +30,23 @@ def train_language_model(
   on_step: Callable[[TrainStepMetrics], None] | None = None,
   on_eval: Callable[[EvalMetrics], None] | None = None,
   on_rollout: Callable[[RolloutBatch], None] | None = None,
+  on_batch_size_resolved: Callable[[int], None] | None = None,
   checkpoint_dir: Path | None = None,
   on_checkpoint: Callable[[Path, int], None] | None = None,
 ) -> TrainingResult:
   torch.manual_seed(config.loop.seed)
 
+  encoding = get_tokenizer(config.data.encoding_name)
+  model = build_model(
+    config,
+    vocab_size=encoding.n_vocab,
+  ).to(device=config.loop.device, dtype=_torch_dtype(config.loop.dtype))
+  config = _config_with_resolved_batch_size(
+    config,
+    model=model,
+    vocab_size=encoding.n_vocab,
+    on_batch_size_resolved=on_batch_size_resolved,
+  )
   dataset_bundle = build_training_dataset(config)
   eval_bundle = None
   if config.eval is not None:
@@ -43,11 +55,6 @@ def train_language_model(
       data=replace(config.data, split=config.eval.split),
     )
     eval_bundle = build_training_dataset(eval_config)
-  encoding = get_tokenizer(config.data.encoding_name)
-  model = build_model(
-    config,
-    vocab_size=encoding.n_vocab,
-  ).to(device=config.loop.device, dtype=_torch_dtype(config.loop.dtype))
   optimizer = configure_adamw(
     model,
     learning_rate=config.optimizer.learning_rate,
@@ -107,6 +114,153 @@ def train_language_model(
     token_count=dataset_bundle.token_count,
     file_count=dataset_bundle.file_count,
     byte_count=dataset_bundle.byte_count,
+  )
+
+
+def _config_with_resolved_batch_size(
+  config: TrainConfig,
+  *,
+  model: LanguageModel,
+  vocab_size: int,
+  on_batch_size_resolved: Callable[[int], None] | None = None,
+) -> TrainConfig:
+  if config.loop.batch_size != "auto":
+    return config
+  batch_size = auto_batch_size(
+    model=model,
+    vocab_size=vocab_size,
+    seq_len=config.data.seq_len,
+    device=config.loop.device,
+    target_fraction=config.loop.batch_size_vram_fraction,
+  )
+  if on_batch_size_resolved is not None:
+    on_batch_size_resolved(batch_size)
+  return replace(config, loop=replace(config.loop, batch_size=batch_size))
+
+
+def auto_batch_size(
+  *,
+  model: LanguageModel,
+  vocab_size: int,
+  seq_len: int,
+  device: str,
+  target_fraction: float,
+) -> int:
+  if not device.startswith("cuda"):
+    raise ValueError("loop.batch_size='auto' requires a CUDA device")
+  if not torch.cuda.is_available():
+    raise RuntimeError("loop.batch_size='auto' requires CUDA to be available")
+  if not 0 < target_fraction <= 1:
+    raise ValueError("loop.batch_size_vram_fraction must be in (0, 1]")
+
+  cuda_device = torch.device(device)
+  _, total_bytes = torch.cuda.mem_get_info(cuda_device)
+  target_bytes = int(total_bytes * target_fraction)
+  optimizer_state_bytes = _estimated_adamw_state_bytes(model)
+
+  if not _batch_size_fits(
+    model=model,
+    batch_size=1,
+    seq_len=seq_len,
+    vocab_size=vocab_size,
+    device=cuda_device,
+    target_bytes=target_bytes,
+    optimizer_state_bytes=optimizer_state_bytes,
+  ):
+    raise RuntimeError(
+      "batch_size=1 does not fit within "
+      f"{target_fraction:.0%} of CUDA VRAM for seq_len={seq_len}"
+    )
+
+  low = 1
+  high = 2
+  while _batch_size_fits(
+    model=model,
+    batch_size=high,
+    seq_len=seq_len,
+    vocab_size=vocab_size,
+    device=cuda_device,
+    target_bytes=target_bytes,
+    optimizer_state_bytes=optimizer_state_bytes,
+  ):
+    low = high
+    high *= 2
+
+  while high - low > 1:
+    candidate = (low + high) // 2
+    if _batch_size_fits(
+      model=model,
+      batch_size=candidate,
+      seq_len=seq_len,
+      vocab_size=vocab_size,
+      device=cuda_device,
+      target_bytes=target_bytes,
+      optimizer_state_bytes=optimizer_state_bytes,
+    ):
+      low = candidate
+    else:
+      high = candidate
+  return low
+
+
+def _batch_size_fits(
+  *,
+  model: LanguageModel,
+  batch_size: int,
+  seq_len: int,
+  vocab_size: int,
+  device: torch.device,
+  target_bytes: int,
+  optimizer_state_bytes: int,
+) -> bool:
+  was_training = model.training
+  model.train()
+  input_ids = None
+  targets = None
+  loss = None
+  try:
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats(device)
+    model.zero_grad(set_to_none=True)
+    input_ids = torch.randint(
+      low=0,
+      high=vocab_size,
+      size=(batch_size, seq_len),
+      dtype=torch.long,
+      device=device,
+    )
+    targets = torch.randint(
+      low=0,
+      high=vocab_size,
+      size=(batch_size, seq_len),
+      dtype=torch.long,
+      device=device,
+    )
+    _, loss = model(input_ids, targets, return_logits=False)
+    if loss is None:
+      raise RuntimeError("training loss was not produced during batch-size probe")
+    loss.backward()
+    torch.cuda.synchronize(device)
+    peak_bytes = torch.cuda.max_memory_allocated(device) + optimizer_state_bytes
+    return peak_bytes <= target_bytes
+  except torch.cuda.OutOfMemoryError:
+    return False
+  except RuntimeError as exc:
+    if "out of memory" in str(exc).lower():
+      return False
+    raise
+  finally:
+    del input_ids, targets, loss
+    model.zero_grad(set_to_none=True)
+    model.train(was_training)
+    torch.cuda.empty_cache()
+
+
+def _estimated_adamw_state_bytes(model: LanguageModel) -> int:
+  return sum(
+    parameter.numel() * 4 * 2
+    for parameter in model.parameters()
+    if parameter.requires_grad
   )
 
 

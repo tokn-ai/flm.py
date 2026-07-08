@@ -63,6 +63,8 @@ def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
 
 
 def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
+  if config.loop.batch_size == "auto":
+    raise ValueError("loop.batch_size must be resolved before building datasets")
   resolved_data = resolve_data_config(config.data)
   metadata = _load_dataset_manifest(resolved_data)
   token_arrays = _load_dataset_token_arrays(resolved_data, metadata)

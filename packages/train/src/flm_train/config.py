@@ -302,7 +302,8 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       seed=int(loop.get("seed", 42)),
       device=str(loop.get("device", "cpu")),
       dtype=_parse_torch_dtype(loop.get("dtype", "float32")),
-      batch_size=int(loop.get("batch_size", 8)),
+      batch_size=_parse_batch_size(loop.get("batch_size", 8)),
+      batch_size_vram_fraction=float(loop.get("batch_size_vram_fraction", 0.9)),
       steps=int(loop.get("steps", 10)),
     ),
     eval=_parse_eval(eval_config),
@@ -332,6 +333,7 @@ def apply_overrides(
       device=config.loop.device if overrides.device is None else overrides.device,
       dtype=config.loop.dtype,
       batch_size=config.loop.batch_size,
+      batch_size_vram_fraction=config.loop.batch_size_vram_fraction,
       steps=config.loop.steps if overrides.steps is None else overrides.steps,
     ),
     eval=config.eval,
@@ -555,6 +557,15 @@ def _parse_torch_dtype(value: Any) -> TorchDType:
   if dtype not in {"float32", "float16", "bfloat16"}:
     raise ValueError(f"unsupported loop.dtype: {dtype}")
   return dtype
+
+
+def _parse_batch_size(value: Any) -> int | Literal["auto"]:
+  if str(value) == "auto":
+    return "auto"
+  batch_size = int(value)
+  if batch_size < 1:
+    raise ValueError("loop.batch_size must be positive or 'auto'")
+  return batch_size
 
 
 def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:

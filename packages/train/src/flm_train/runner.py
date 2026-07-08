@@ -57,6 +57,10 @@ class ExperimentRunner:
         on_step=lambda metrics: self.report_step(metrics, sink=sink),
         on_eval=lambda metrics: self.report_eval(metrics, sink=sink),
         on_rollout=lambda batch: self.report_rollout(batch, sink=sink),
+        on_batch_size_resolved=lambda batch_size: self.report_batch_size(
+          batch_size,
+          sink=sink,
+        ),
         on_checkpoint=lambda path, step: self.report_checkpoint(
           path,
           step=step,
@@ -80,6 +84,7 @@ class ExperimentRunner:
     on_step,
     on_eval,
     on_rollout,
+    on_batch_size_resolved,
     on_checkpoint,
   ) -> TrainingResult:
     return train_language_model(
@@ -87,6 +92,7 @@ class ExperimentRunner:
       on_step=on_step,
       on_eval=on_eval,
       on_rollout=on_rollout,
+      on_batch_size_resolved=on_batch_size_resolved,
       checkpoint_dir=self.run_dir / "checkpoints",
       on_checkpoint=on_checkpoint,
     )
@@ -122,6 +128,10 @@ class ExperimentRunner:
   def report_eval(self, metrics: EvalMetrics, sink) -> None:
     sink.log_metrics(metrics.to_log_dict(), step=metrics.step)
     self._log(f"step={metrics.step} {metrics.split}_loss={metrics.loss:.4f}")
+
+  def report_batch_size(self, batch_size: int, sink) -> None:
+    sink.log_metrics({"train/batch_size": batch_size}, step=0)
+    self._log(f"batch_size={batch_size}")
 
   def report_rollout(self, batch: RolloutBatch, sink) -> None:
     rollout_dir = self.run_dir / "rollouts"

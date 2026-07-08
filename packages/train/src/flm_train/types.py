@@ -14,6 +14,7 @@ LossBackend = Literal[
 ]
 AttentionBackend = Literal["torch", "flash_attention2", "tilelang"]
 TorchDType = Literal["float32", "float16", "bfloat16"]
+BatchSize = int | Literal["auto"]
 
 
 @dataclass(frozen=True)
@@ -102,7 +103,8 @@ class OptimizerConfig:
 
 @dataclass(frozen=True)
 class LoopConfig:
-  batch_size: int = 8
+  batch_size: BatchSize = 8
+  batch_size_vram_fraction: float = 0.9
   steps: int = 10
   device: str = "cpu"
   seed: int = 42

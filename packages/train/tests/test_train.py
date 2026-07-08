@@ -19,7 +19,7 @@ from flm_train.data import (
   publish_repo_source_dataset,
 )
 from flm_train.data_cli import parse_args, run_from_args
-from flm_train.presets import train_language_model
+from flm_train.presets import auto_batch_size, train_language_model
 from flm_train.svd import checkpoint_ffn_down_svd_metrics
 from flm_train.trainer import TrainStepMetrics
 from flm_train.types import (
@@ -238,6 +238,36 @@ def test_train_token_dataset_uses_random_windows_without_loader_shuffle(
   assert isinstance(bundle.dataloader.dataset, RandomTokenWindowDataset)
   assert len(bundle.dataloader.dataset) == 6
   assert type(bundle.dataloader.sampler).__name__ == "SequentialSampler"
+
+
+def test_auto_batch_size_selects_largest_fitting_batch(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  calls = []
+
+  def fake_fits(**kwargs) -> bool:
+    calls.append(kwargs)
+    return int(kwargs["batch_size"]) <= 5
+
+  monkeypatch.setattr("flm_train.presets.torch.cuda.is_available", lambda: True)
+  monkeypatch.setattr(
+    "flm_train.presets.torch.cuda.mem_get_info",
+    lambda device: (10_000, 100_000),
+  )
+  monkeypatch.setattr("flm_train.presets._batch_size_fits", fake_fits)
+
+  batch_size = auto_batch_size(
+    model=torch.nn.Linear(1, 1),
+    vocab_size=128,
+    seq_len=1024,
+    device="cuda",
+    target_fraction=0.9,
+  )
+
+  assert batch_size == 5
+  assert [call["batch_size"] for call in calls] == [1, 2, 4, 8, 6, 5]
+  assert all(call["target_bytes"] == 90_000 for call in calls)
+  assert all(call["seq_len"] == 1024 for call in calls)
 
 
 def test_data_cli_publishes_repo_sources(tmp_path: Path, capsys) -> None:
