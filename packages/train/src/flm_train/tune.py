@@ -28,6 +28,7 @@ from flm_train.config import (
   load_workspace_config,
   write_yaml,
 )
+from flm_train.presets import probe_auto_batch_size
 from flm_train.runner import ExperimentRunner, generate_run_id, run_experiment
 from flm_train.types import CheckpointConfig
 
@@ -49,7 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument(
     "--profiler",
     default="memory",
-    help="Profiler to run: memory, torch, nsys, all, or a comma-separated list.",
+    help=(
+      "Profiler to run: batch-size, memory, torch, nsys, all, "
+      "or a comma-separated list."
+    ),
   )
   parser.add_argument(
     "--memory-trace",
@@ -103,6 +107,8 @@ def run_from_args(args: argparse.Namespace) -> None:
     include_checkpoint=args.include_checkpoint,
   )
   profilers = parse_profilers(args.profiler)
+  if "batch-size" in profilers:
+    run_batch_size_tune(config, log=print)
   if "memory" in profilers:
     run_torch_memory_profile(config, trace=args.memory_trace, log=print)
   if "torch" in profilers:
@@ -121,14 +127,61 @@ def _resolve_code_path(code_root: Path, path: Path) -> Path:
 def parse_profilers(value: str) -> tuple[str, ...]:
   profilers = tuple(item.strip() for item in value.split(",") if item.strip())
   if profilers == ("all",):
-    return ("memory", "torch", "nsys")
-  supported = {"memory", "torch", "nsys"}
+    return ("batch-size", "memory", "torch", "nsys")
+  supported = {"batch-size", "memory", "torch", "nsys"}
   unknown = sorted(set(profilers) - supported)
   if unknown:
     raise ValueError(f"unsupported profiler: {unknown}")
   if not profilers:
     raise ValueError("profiler must not be empty")
   return profilers
+
+
+def run_batch_size_tune(
+  config: ExperimentConfig,
+  *,
+  log,
+) -> Path:
+  tune_dir = config.run_dir / "tune" / "batch_size"
+  tune_dir.mkdir(parents=True, exist_ok=True)
+  train_config = config.to_train_config()
+  batch_size = probe_auto_batch_size(
+    config=replace(
+      train_config,
+      loop=replace(train_config.loop, batch_size="auto"),
+    ),
+    vocab_size=_vocab_size(train_config.data.encoding_name),
+  )
+  tokens_per_step = int(batch_size) * int(train_config.data.seq_len)
+  _write_json(
+    tune_dir / "summary.json",
+    {
+      "batch_size": batch_size,
+      "device": train_config.loop.device,
+      "dtype": train_config.loop.dtype,
+      "model": config_to_plain(train_config.model),
+      "profiler": "batch-size",
+      "run_dir": str(config.run_dir),
+      "seq_len": train_config.data.seq_len,
+      "target_vram_fraction": train_config.loop.batch_size_vram_fraction,
+      "tokens_per_step": tokens_per_step,
+    },
+  )
+  (tune_dir / "loop.patch.yaml").write_text(
+    f"loop:\n  batch_size: {batch_size}\n",
+    encoding="utf-8",
+  )
+  log(
+    f"tune=batch-size batch_size={batch_size} "
+    f"tokens_per_step={tokens_per_step} dir={tune_dir}"
+  )
+  return tune_dir
+
+
+def _vocab_size(encoding_name: str) -> int:
+  from flm_datasets import get_tokenizer
+
+  return int(get_tokenizer(encoding_name).n_vocab)
 
 
 def prepare_tune_config(

@@ -256,8 +256,10 @@ def test_auto_batch_size_selects_largest_fitting_batch(
   )
   monkeypatch.setattr("flm_train.presets._batch_size_fits", fake_fits)
 
+  model = torch.nn.Linear(1, 1)
   batch_size = auto_batch_size(
-    model=torch.nn.Linear(1, 1),
+    model=model,
+    optimizer=torch.optim.AdamW(model.parameters()),
     vocab_size=128,
     seq_len=1024,
     device="cuda",

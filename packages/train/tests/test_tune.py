@@ -15,6 +15,7 @@ from flm_train.tune import (
   parse_args,
   parse_profilers,
   prepare_tune_config,
+  run_batch_size_tune,
   run_torch_memory_profile,
   run_torch_profile,
 )
@@ -85,7 +86,8 @@ def test_parse_args_can_disable_memory_trace() -> None:
 
 
 def test_parse_profilers_accepts_all_and_lists() -> None:
-  assert parse_profilers("all") == ("memory", "torch", "nsys")
+  assert parse_profilers("all") == ("batch-size", "memory", "torch", "nsys")
+  assert parse_profilers("batch-size") == ("batch-size",)
   assert parse_profilers("nsys,torch") == ("nsys", "torch")
   assert parse_profilers("memory") == ("memory",)
   assert parse_profilers("torch") == ("torch",)
@@ -142,6 +144,46 @@ def test_prepare_tune_config_marks_generated_run_id(tmp_path: Path) -> None:
   assert config.run.id.startswith("tune-")
   assert config.run_dir == Path("runs") / "tune" / config.run.id
   assert config.sinks == (FilesSinkConfig(),)
+
+
+def test_run_batch_size_tune_writes_resolved_artifacts(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  dataset_root = publish_fixture_dataset(tmp_path)
+  calls = []
+
+  def fake_probe_auto_batch_size(*, config, vocab_size):
+    calls.append((config.loop.batch_size, vocab_size))
+    return 12
+
+  monkeypatch.setattr("flm_train.tune._vocab_size", lambda encoding_name: 8192)
+  monkeypatch.setattr(
+    "flm_train.tune.probe_auto_batch_size",
+    fake_probe_auto_batch_size,
+  )
+
+  run_batch_size_tune(
+    ExperimentConfig(
+      name="tune",
+      data=DataConfig(dataset_root=dataset_root, seq_len=1024),
+      run=RunConfig(id="run-123", name="tune brisk-signal", group="tune"),
+      loop=LoopConfig(batch_size=8, batch_size_vram_fraction=0.9),
+      output=OutputConfig(root_dir=tmp_path),
+    ),
+    log=lambda message: calls.append(("log", message)),
+  )
+
+  tune_dir = tmp_path / "tune" / "run-123" / "tune" / "batch_size"
+  summary = json.loads((tune_dir / "summary.json").read_text(encoding="utf-8"))
+  assert calls[0] == ("auto", 8192)
+  assert summary["batch_size"] == 12
+  assert summary["seq_len"] == 1024
+  assert summary["tokens_per_step"] == 12288
+  assert summary["target_vram_fraction"] == 0.9
+  assert (tune_dir / "loop.patch.yaml").read_text(encoding="utf-8") == (
+    "loop:\n  batch_size: 12\n"
+  )
 
 
 def publish_fixture_dataset(tmp_path: Path) -> Path:
