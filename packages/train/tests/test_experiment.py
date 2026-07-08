@@ -28,7 +28,11 @@ from flm_train.config import (
   parse_workspace_config,
 )
 from flm_train.data import publish_repo_source_dataset
-from flm_train.runner import resolve_run_config, run_experiment
+from flm_train.runner import (
+  rebuild_rollout_summaries,
+  resolve_run_config,
+  run_experiment,
+)
 from flm_train.secrets import apply_secret_env, load_secret_env
 from flm_train.sinks import (
   FilesRunSink,
@@ -837,12 +841,15 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   assert all(metrics["eval/test_bpb"] > 0 for metrics in eval_metrics)
   assert all("eval/test_perplexity" not in metrics for metrics in eval_metrics)
 
-  rollout_path = run_dir / "rollouts" / "step-00000002.json"
+  rollout_path = run_dir / "rollouts" / "details" / "step-00000002.json"
   rollout = json.loads(rollout_path.read_text(encoding="utf-8"))
   assert rollout["step"] == 2
   assert rollout["samples"][0]["name"] == "fib"
   assert rollout["samples"][0]["prompt"] == "def fib(n):"
   assert rollout["samples"][0]["prompt_tokens"]
+  assert len(rollout["samples"][0]["prompt_log_probs"]) == (
+    len(rollout["samples"][0]["prompt_tokens"]) - 1
+  )
   assert len(rollout["samples"][0]["tokens"]) == 2
   assert "completion" not in rollout["samples"][0]
   assert len(rollout["samples"][0]["token_texts"]) == 2
@@ -857,8 +864,70 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   assert all(
     len(log_probs) == 10 for log_probs in rollout["samples"][0]["top_log_probs"]
   )
+  summary_lines = (
+    (run_dir / "rollouts" / "fib.jsonl").read_text(encoding="utf-8").splitlines()
+  )
+  assert len(summary_lines) == 1
+  summary = json.loads(summary_lines[0])
+  assert summary["step"] == 2
+  assert summary["prompt"] == "def fib(n):"
+  assert summary["generated_text"] == "".join(rollout["samples"][0]["token_texts"])
+  assert "text" not in summary
+  assert summary["token_count"] == 2
+  assert isinstance(summary["log_prob"], float)
+  assert isinstance(summary["mean_log_prob"], float)
+  assert isinstance(summary["mean_entropy"], float)
+  assert isinstance(summary["prompt_log_prob"], float)
+  assert isinstance(summary["prompt_mean_log_prob"], float)
   artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
-  assert "rollouts/step-00000002.json" in artifacts
+  assert "rollouts/details/step-00000002.json" in artifacts
+  assert "rollouts/fib.jsonl" in artifacts
+
+
+def test_rebuild_rollout_summaries_indexes_prompt_across_steps(
+  tmp_path: Path,
+) -> None:
+  details_dir = tmp_path / "rollouts" / "details"
+  details_dir.mkdir(parents=True)
+  for step, generated_text in [(4, " world"), (2, " there")]:
+    (details_dir / f"step-{step:08d}.json").write_text(
+      json.dumps(
+        {
+          "step": step,
+          "samples": [
+            {
+              "name": "I am",
+              "prompt": "I am",
+              "prompt_log_probs": [-1.5],
+              "tokens": [10],
+              "token_texts": [generated_text],
+              "log_probs": [-2.0],
+              "entropy": [3.0],
+            }
+          ],
+        }
+      ),
+      encoding="utf-8",
+    )
+
+  summary_paths = rebuild_rollout_summaries(tmp_path / "rollouts")
+
+  assert summary_paths == [tmp_path / "rollouts" / "I_am.jsonl"]
+  rows = [
+    json.loads(line)
+    for line in (tmp_path / "rollouts" / "I_am.jsonl")
+    .read_text(encoding="utf-8")
+    .splitlines()
+  ]
+  assert [row["step"] for row in rows] == [2, 4]
+  assert [row["generated_text"] for row in rows] == [" there", " world"]
+  assert all(row["prompt"] == "I am" for row in rows)
+  assert all("text" not in row for row in rows)
+  assert rows[0]["prompt_log_prob"] == -1.5
+  assert rows[0]["prompt_mean_log_prob"] == -1.5
+  assert rows[0]["log_prob"] == -2.0
+  assert rows[0]["mean_log_prob"] == -2.0
+  assert rows[0]["mean_entropy"] == 3.0
 
 
 def test_run_experiment_writes_checkpoints(tmp_path: Path) -> None:

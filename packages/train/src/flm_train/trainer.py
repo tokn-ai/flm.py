@@ -86,6 +86,7 @@ class RolloutSample:
   name: str
   prompt: str
   prompt_tokens: tuple[int, ...]
+  prompt_log_probs: tuple[float, ...]
   tokens: tuple[int, ...]
   token_texts: tuple[str, ...]
   log_probs: tuple[float, ...]

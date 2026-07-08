@@ -188,6 +188,12 @@ def generate_rollouts(
   with torch.no_grad():
     for prompt in prompts:
       prompt_tokens = encoding.encode_ordinary(prompt.prompt)
+      prompt_log_probs = prompt_token_log_probs(
+        model=model,
+        prompt_tokens=prompt_tokens,
+        device=device,
+        max_seq_len=max_seq_len,
+      )
       generated_tokens = greedy_decode(
         model=model,
         prompt_tokens=prompt_tokens,
@@ -203,6 +209,7 @@ def generate_rollouts(
           name=prompt.name,
           prompt=prompt.prompt,
           prompt_tokens=tuple(prompt_tokens),
+          prompt_log_probs=tuple(prompt_log_probs),
           tokens=tuple(generated_tokens.tokens),
           token_texts=tuple(generated_tokens.token_texts),
           log_probs=tuple(generated_tokens.log_probs),
@@ -218,6 +225,23 @@ def generate_rollouts(
         )
       )
   return RolloutBatch(step=step, samples=tuple(samples))
+
+
+def prompt_token_log_probs(
+  *,
+  model: LanguageModel,
+  prompt_tokens: list[int],
+  device: str,
+  max_seq_len: int,
+) -> list[float]:
+  values: list[float] = []
+  for index in range(1, len(prompt_tokens)):
+    window = prompt_tokens[max(0, index - max_seq_len) : index]
+    input_ids = torch.tensor([window], dtype=torch.long, device=device)
+    logits, _ = model(input_ids)
+    log_probs = torch.log_softmax(logits[0, -1], dim=-1)
+    values.append(float(log_probs[prompt_tokens[index]].detach().cpu()))
+  return values
 
 
 def greedy_decode(

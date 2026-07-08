@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -124,13 +125,16 @@ class ExperimentRunner:
 
   def report_rollout(self, batch: RolloutBatch, sink) -> None:
     rollout_dir = self.run_dir / "rollouts"
-    rollout_dir.mkdir(parents=True, exist_ok=True)
-    path = rollout_dir / f"step-{batch.step:08d}.json"
+    details_dir = rollout_dir / "details"
+    details_dir.mkdir(parents=True, exist_ok=True)
+    path = details_dir / f"step-{batch.step:08d}.json"
     path.write_text(
       json.dumps(asdict(batch), indent=2, sort_keys=True) + "\n",
       encoding="utf-8",
     )
-    sink.log_artifact(path, name=f"rollouts/step-{batch.step:08d}.json")
+    sink.log_artifact(path, name=f"rollouts/details/step-{batch.step:08d}.json")
+    for summary_path in rebuild_rollout_summaries(rollout_dir):
+      sink.log_artifact(summary_path, name=f"rollouts/{summary_path.name}")
     self._log(f"step={batch.step} rollouts={path}")
 
   def report_checkpoint(self, path: Path, *, step: int, sink) -> None:
@@ -165,6 +169,73 @@ def run_experiment(
   log: LogFn | None = None,
 ) -> TrainingResult:
   return ExperimentRunner(config, workspace=workspace, log=log).run()
+
+
+def rebuild_rollout_summaries(rollout_dir: Path) -> list[Path]:
+  details_dir = rollout_dir / "details"
+  grouped: dict[str, list[dict]] = {}
+  for detail_path in sorted(details_dir.glob("step-*.json")):
+    batch = json.loads(detail_path.read_text(encoding="utf-8"))
+    step = int(batch["step"])
+    for sample in batch.get("samples", []):
+      name = str(sample.get("name", "prompt"))
+      grouped.setdefault(name, []).append(_rollout_summary_record(step, sample))
+
+  summary_paths = []
+  for name, records in grouped.items():
+    path = rollout_dir / f"{_rollout_summary_name(name)}.jsonl"
+    records.sort(key=lambda record: int(record["step"]))
+    path.write_text(
+      "".join(
+        json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+        for record in records
+      ),
+      encoding="utf-8",
+    )
+    summary_paths.append(path)
+  return summary_paths
+
+
+def _rollout_summary_record(step: int, sample: dict) -> dict:
+  log_probs = [float(value) for value in sample.get("log_probs", [])]
+  prompt_log_probs = [float(value) for value in sample.get("prompt_log_probs", [])]
+  entropy = [float(value) for value in sample.get("entropy", [])]
+  prompt = str(sample.get("prompt", ""))
+  return {
+    "step": step,
+    "prompt": prompt,
+    "generated_text": _generated_text(sample, prompt=prompt),
+    "token_count": len(sample.get("tokens", [])),
+    "log_prob": _sum_or_none(log_probs),
+    "mean_log_prob": _mean_or_none(log_probs),
+    "mean_entropy": _mean_or_none(entropy),
+    "prompt_log_prob": _sum_or_none(prompt_log_probs),
+    "prompt_mean_log_prob": _mean_or_none(prompt_log_probs),
+  }
+
+
+def _rollout_summary_name(name: str) -> str:
+  sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._-")
+  return sanitized or "prompt"
+
+
+def _generated_text(sample: dict, *, prompt: str) -> str:
+  text = sample.get("text")
+  if isinstance(text, str) and text.startswith(prompt):
+    return text[len(prompt) :]
+  return "".join(str(text) for text in sample.get("token_texts", []))
+
+
+def _sum_or_none(values: list[float]) -> float | None:
+  if not values:
+    return None
+  return sum(values)
+
+
+def _mean_or_none(values: list[float]) -> float | None:
+  if not values:
+    return None
+  return sum(values) / len(values)
 
 
 def result_path(run_dir: Path) -> Path:
