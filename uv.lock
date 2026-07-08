@@ -17,6 +17,7 @@ members = [
     "flm-modules",
     "flm-rl",
     "flm-train",
+    "flm-vllm",
 ]
 
 [[package]]
@@ -761,6 +762,7 @@ dev = [
     { name = "flm-modules" },
     { name = "flm-rl" },
     { name = "flm-train" },
+    { name = "flm-vllm" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "transformers" },
@@ -776,6 +778,7 @@ dev = [
     { name = "flm-modules", editable = "packages/modules" },
     { name = "flm-rl", editable = "packages/rl" },
     { name = "flm-train", editable = "packages/train" },
+    { name = "flm-vllm", editable = "packages/vllm" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.13.0" },
     { name = "transformers", specifier = ">=4.50" },
@@ -914,6 +917,25 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.17" },
 ]
 provides-extras = ["mlflow", "tensorboard", "wandb"]
+
+[[package]]
+name = "flm-vllm"
+version = "0.1.0"
+source = { editable = "packages/vllm" }
+dependencies = [
+    { name = "flm-datasets" },
+    { name = "flm-llm" },
+    { name = "flm-train" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "flm-datasets", editable = "packages/datasets" },
+    { name = "flm-llm", editable = "packages/llm" },
+    { name = "flm-train", editable = "packages/train" },
+    { name = "torch", specifier = ">=2.5" },
+]
 
 [[package]]
 name = "fonttools"

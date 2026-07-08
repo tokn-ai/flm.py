@@ -19,6 +19,7 @@ flm-llm = { workspace = true }
 flm-train = { workspace = true }
 flm-rl = { workspace = true }
 flm-inference = { workspace = true }
+flm-vllm = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -28,6 +29,7 @@ dev = [
   "flm-train",
   "flm-rl",
   "flm-inference",
+  "flm-vllm",
   # "flash-attn>=2.8.0",
   "pytest>=8.0",
   "ruff>=0.13.0",
@@ -61,4 +63,5 @@ testpaths = [
   "packages/modules/tests",
   "packages/rl/tests",
   "packages/train/tests",
+  "packages/vllm/tests",
 ]
