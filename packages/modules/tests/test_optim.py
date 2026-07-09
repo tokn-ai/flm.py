@@ -1,3 +1,4 @@
+import pytest
 import torch
 from flm_modules import Muon, configure_adamw, configure_muon
 from torch import nn
@@ -96,3 +97,34 @@ def test_muon_step_updates_muon_and_adamw_parameters() -> None:
   assert "momentum_buffer" in optimizer.state[model.linear.weight]
   assert "exp_avg" in optimizer.state[model.linear.bias]
   assert "exp_avg_sq" in optimizer.state[model.linear.bias]
+
+
+def test_muon_matrix_step_matches_torch_muon() -> None:
+  torch_muon = getattr(torch.optim, "Muon", None)
+  if torch_muon is None:
+    pytest.skip("torch.optim.Muon is not available")
+
+  param = torch.tensor([[1.0, -2.0, 3.0], [4.0, -5.0, 6.0]])
+  grads = (
+    torch.tensor([[0.2, -0.3, 0.4], [0.5, -0.6, 0.7]]),
+    torch.tensor([[-0.1, 0.3, -0.5], [0.7, -0.9, 1.1]]),
+  )
+  ours = nn.Parameter(param.clone())
+  expected = nn.Parameter(param.clone())
+  kwargs = {
+    "lr": 0.03,
+    "weight_decay": 0.01,
+    "momentum": 0.9,
+    "nesterov": True,
+    "ns_steps": 5,
+  }
+  ours_optimizer = Muon([{"params": [ours], "use_muon": True}], **kwargs)
+  torch_optimizer = torch_muon([expected], **kwargs)
+
+  for grad in grads:
+    ours.grad = grad.clone()
+    expected.grad = grad.clone()
+    ours_optimizer.step()
+    torch_optimizer.step()
+
+  torch.testing.assert_close(ours, expected, rtol=0.0, atol=0.0)

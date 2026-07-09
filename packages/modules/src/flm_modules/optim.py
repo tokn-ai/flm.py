@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable
 
 import torch
@@ -121,10 +122,10 @@ class Muon(Optimizer):
       if "momentum_buffer" not in state:
         state["momentum_buffer"] = torch.zeros_like(param)
       buffer = state["momentum_buffer"]
-      buffer.mul_(momentum).add_(grad)
-      update = grad.add(buffer, alpha=momentum) if nesterov else buffer
+      buffer.lerp_(grad, 1.0 - momentum)
+      update = grad.lerp(buffer, momentum) if nesterov else buffer
       update = _orthogonalize_update(update, ns_steps=ns_steps)
-      param.add_(update, alpha=-lr)
+      param.add_(update, alpha=-_adjust_muon_lr(lr, param.shape))
 
   def _adamw_step(self, group: dict[str, object]) -> None:
     lr = float(group["lr"])
@@ -213,16 +214,22 @@ def _zeroth_power_via_newton_schulz5(
 
   a, b, c = 3.4445, -4.7750, 2.0315
   original_dtype = matrix.dtype
-  x = matrix.float()
+  x = matrix.bfloat16()
   if x.size(0) > x.size(1):
     x = x.T
 
-  x = x / (x.norm() + 1e-7)
+  x.div_(x.norm().clamp(min=1e-7))
   for _ in range(steps):
     xx_t = x @ x.T
-    x = a * x + (b * xx_t + c * xx_t @ xx_t) @ x
+    gram_update = torch.addmm(xx_t, xx_t, xx_t, beta=b, alpha=c)
+    x = torch.addmm(x, gram_update, x, beta=a)
 
   if matrix.size(0) > matrix.size(1):
     x = x.T
-  scale = max(1.0, (matrix.size(0) / matrix.size(1)) ** 0.5)
-  return x.mul(scale).to(dtype=original_dtype)
+  return x.to(dtype=original_dtype)
+
+
+def _adjust_muon_lr(lr: float, shape: torch.Size) -> float:
+  rows = shape[0]
+  cols = math.prod(shape[1:])
+  return lr * max(1.0, rows / cols) ** 0.5
