@@ -7,6 +7,7 @@ dependencies = [
   "flm-datasets",
   "flm-llm",
   "flm-train",
+  "safetensors>=0.5",
   "torch>=2.5",
 ]
 

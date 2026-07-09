@@ -12,6 +12,9 @@ import numpy as np
 import torch
 from flm_train.checkpoints import _decode_state as decode_checkpoint_state
 from flm_train.checkpoints import resolve_checkpoint_path
+from safetensors.torch import save_file
+
+WEIGHT_FILE = "model.safetensors"
 
 
 @dataclass(frozen=True)
@@ -51,15 +54,16 @@ def export_reference_checkpoint(
 
   output_dir = output_dir or (run_dir / "vllm" / checkpoint_path.name)
   output_dir.mkdir(parents=True, exist_ok=True)
-  torch.save(model_state, output_dir / "pytorch_model.bin")
+  save_file(_safetensors_state(model_state), output_dir / WEIGHT_FILE)
   _write_json(output_dir / "config.json", _hf_config_payload(vllm_config))
   _write_json(
     output_dir / "flm_vllm_manifest.json",
     {
-      "format": "flm-vllm-reference-export-v1",
+      "format": "flm-vllm-reference-export-v2",
       "source_run_dir": str(run_dir),
       "source_checkpoint": str(checkpoint_path),
-      "weight_file": "pytorch_model.bin",
+      "weight_file": WEIGHT_FILE,
+      "weight_format": "safetensors",
       "config": asdict(vllm_config),
     },
   )
@@ -128,6 +132,17 @@ def _load_model_state(checkpoint_path: Path) -> dict[str, torch.Tensor]:
       arrays=arrays,
       map_location="cpu",
     )
+
+
+def _safetensors_state(
+  state: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+  # Safetensors intentionally rejects shared storage. FLM ties embedding and
+  # lm_head weights, so clone tensors into an explicit flat serving payload.
+  return {
+    name: tensor.detach().cpu().contiguous().clone()
+    for name, tensor in state.items()
+  }
 
 
 def _checkpoint_path(*, run_dir: Path, checkpoint: Path | str) -> Path:

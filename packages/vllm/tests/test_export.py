@@ -9,6 +9,7 @@ from flm_train.checkpoints import CheckpointState, save_checkpoint
 from flm_vllm.export import export_reference_checkpoint, reference_vllm_config
 from flm_vllm.importing import import_reference_export
 from flm_vllm.rollout import generate_vllm_rollouts, resolve_export_encoding_name
+from safetensors.torch import load_file
 
 
 def test_reference_vllm_config_uses_experiment_dimensions() -> None:
@@ -88,15 +89,17 @@ def test_export_reference_checkpoint_writes_vllm_config_and_weights(
   assert exported_config["intermediate_size"] == 24
   assert exported_config["tie_word_embeddings"] is True
 
-  weights = torch.load(
-    output_dir / "pytorch_model.bin",
-    map_location="cpu",
-    weights_only=True,
-  )
+  manifest = json.loads((output_dir / "flm_vllm_manifest.json").read_text("utf-8"))
+  assert manifest["format"] == "flm-vllm-reference-export-v2"
+  assert manifest["weight_file"] == "model.safetensors"
+  assert manifest["weight_format"] == "safetensors"
+
+  weights = load_file(output_dir / "model.safetensors", device="cpu")
   assert weights["token_embedding.weight"].shape == (32, 8)
   assert weights["blocks.0.attn.qkv.weight"].shape == (24, 8)
   assert weights["blocks.1.ffn.up.weight"].shape == (48, 8)
   assert "lm_head.weight" in weights
+  assert not (output_dir / "pytorch_model.bin").exists()
   assert (output_dir / "flm_vllm_manifest.json").is_file()
 
 
@@ -146,10 +149,50 @@ def test_import_reference_export_round_trips_exported_weights(tmp_path: Path) ->
   expected, _ = model(input_ids)
   actual, _ = imported.model(input_ids)
 
-  assert imported.weight_path == output_dir / "pytorch_model.bin"
+  assert imported.weight_path == output_dir / "model.safetensors"
   assert imported.model.config.vocab_size == 32
   assert imported.model.config.max_seq_len == 16
   torch.testing.assert_close(actual, expected)
+
+
+def test_import_reference_export_supports_legacy_bin_weight_file(
+  tmp_path: Path,
+) -> None:
+  model_dir = tmp_path / "model"
+  model_dir.mkdir()
+  config = {
+    "architectures": ["FlmReferenceForCausalLM"],
+    "attention_bias": False,
+    "hidden_size": 8,
+    "intermediate_size": 24,
+    "max_position_embeddings": 16,
+    "num_attention_heads": 2,
+    "num_hidden_layers": 2,
+    "rms_norm_eps": 1e-6,
+    "rope_theta": 10_000.0,
+    "tie_word_embeddings": True,
+    "vocab_size": 32,
+  }
+  (model_dir / "config.json").write_text(
+    json.dumps(config),
+    encoding="utf-8",
+  )
+  model = ReferenceModel(
+    ReferenceModelConfig(
+      vocab_size=32,
+      max_seq_len=16,
+      d_model=8,
+      n_layers=2,
+      n_heads=2,
+      d_ff=24,
+    )
+  )
+  torch.save(model.state_dict(), model_dir / "pytorch_model.bin")
+
+  imported = import_reference_export(model_dir)
+
+  assert imported.weight_path == model_dir / "pytorch_model.bin"
+  assert imported.model.config.vocab_size == 32
 
 
 def test_resolve_export_encoding_name_prefers_explicit_value(tmp_path: Path) -> None:

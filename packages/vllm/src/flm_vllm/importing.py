@@ -9,6 +9,10 @@ from typing import Any
 
 import torch
 from flm_llm import ReferenceModel, ReferenceModelConfig
+from safetensors.torch import load_file
+
+SAFETENSORS_WEIGHT_FILE = "model.safetensors"
+LEGACY_BIN_WEIGHT_FILE = "pytorch_model.bin"
 
 
 @dataclass(frozen=True)
@@ -33,7 +37,7 @@ def import_reference_export(
   model_dir = Path(model_dir)
   config = _read_json(model_dir / "config.json")
   manifest = _read_manifest(model_dir)
-  weight_path = model_dir / str(manifest.get("weight_file", "pytorch_model.bin"))
+  weight_path = _resolve_weight_path(model_dir=model_dir, manifest=manifest)
   state = _load_weights(weight_path=weight_path, map_location=map_location)
   _validate_export_config(config)
   _validate_tied_embeddings(state)
@@ -85,16 +89,30 @@ def _validate_tied_embeddings(state: dict[str, torch.Tensor]) -> None:
 def _load_weights(*, weight_path: Path, map_location: str) -> dict[str, torch.Tensor]:
   if not weight_path.is_file():
     raise FileNotFoundError(weight_path)
-  state = torch.load(
-    weight_path,
-    map_location=map_location,
-    weights_only=True,
-  )
+  if weight_path.suffix == ".safetensors":
+    state = load_file(weight_path, device=map_location)
+  else:
+    state = torch.load(
+      weight_path,
+      map_location=map_location,
+      weights_only=True,
+    )
   if not isinstance(state, dict):
     raise ValueError(f"expected state dict in {weight_path}")
   if not all(isinstance(value, torch.Tensor) for value in state.values()):
     raise ValueError(f"expected tensor-only state dict in {weight_path}")
   return state
+
+
+def _resolve_weight_path(*, model_dir: Path, manifest: dict[str, Any]) -> Path:
+  weight_file = manifest.get("weight_file")
+  if isinstance(weight_file, str):
+    return model_dir / weight_file
+
+  safetensors_path = model_dir / SAFETENSORS_WEIGHT_FILE
+  if safetensors_path.is_file():
+    return safetensors_path
+  return model_dir / LEGACY_BIN_WEIGHT_FILE
 
 
 def _read_manifest(model_dir: Path) -> dict[str, Any]:
