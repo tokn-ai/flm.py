@@ -32,6 +32,7 @@ FINEWEB2_LANGUAGE_CONFIGS = {
 DEFAULT_LANGUAGES = ("en", "cjk", "fr", "de", "ru", "arb")
 DEFAULT_ENGLISH_DUMPS = ("CC-MAIN-2024-10",)
 DEFAULT_ENGLISH_SAMPLES = ("10BT",)
+DEFAULT_FINEWEB2_SHARD_PREFIXES = ("000", "001")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class DownloadPlan:
   repo_id: str
   local_dir: Path
   allow_patterns: tuple[str, ...]
+  label: str | None = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,6 +96,20 @@ def build_parser() -> argparse.ArgumentParser:
     help="FineWeb2 splits to download",
   )
   parser.add_argument(
+    "--fineweb2-shard-prefix",
+    action="append",
+    dest="fineweb2_shard_prefixes",
+    help=(
+      "FineWeb2 parquet filename prefix to download, repeatable. "
+      "Defaults to 000 then 001 so every selected language gets early samples."
+    ),
+  )
+  parser.add_argument(
+    "--all-fineweb2-shards",
+    action="store_true",
+    help="download all FineWeb2 shards with broad wildcards",
+  )
+  parser.add_argument(
     "--max-workers",
     type=int,
     default=8,
@@ -135,14 +151,14 @@ def build_plans(args: argparse.Namespace) -> list[DownloadPlan]:
     )
   )
   if fineweb2_configs:
-    plans.append(
-      DownloadPlan(
-        repo_id=FINEWEB2_REPO,
+    plans.extend(
+      _fineweb2_download_plans(
         local_dir=args.root / "fineweb-2",
-        allow_patterns=_fineweb2_allow_patterns(
-          configs=fineweb2_configs,
-          splits=tuple(args.splits),
-        ),
+        configs=fineweb2_configs,
+        splits=tuple(args.splits),
+        shard_prefixes=()
+        if args.all_fineweb2_shards
+        else _fineweb2_shard_prefixes(args.fineweb2_shard_prefixes),
       )
     )
 
@@ -155,8 +171,8 @@ def _fineweb_allow_patterns(
   english_dumps: tuple[str, ...],
   english_samples: tuple[str, ...],
 ) -> tuple[str, ...]:
-  data_patterns = ("data/*",) if all_dumps else tuple(
-    f"data/{dump}/*" for dump in english_dumps
+  data_patterns = (
+    ("data/*",) if all_dumps else tuple(f"data/{dump}/*" for dump in english_dumps)
   )
   sample_patterns = tuple(f"sample/{sample}/*" for sample in english_samples)
   return data_patterns + sample_patterns + ("README.md",)
@@ -166,15 +182,72 @@ def _fineweb2_allow_patterns(
   *,
   configs: tuple[str, ...],
   splits: tuple[str, ...],
+  shard_prefix: str | None = None,
 ) -> tuple[str, ...]:
+  filename_pattern = "*" if shard_prefix is None else f"{shard_prefix}_*"
   patterns = [
-    f"data/{config}/{split}/*" for config in configs for split in splits
+    f"data/{config}/{split}/{filename_pattern}"
+    for config in configs
+    for split in splits
   ]
   return tuple(patterns) + ("README.md",)
 
 
+def _fineweb2_download_plans(
+  *,
+  local_dir: Path,
+  configs: tuple[str, ...],
+  splits: tuple[str, ...],
+  shard_prefixes: tuple[str, ...],
+) -> list[DownloadPlan]:
+  if not shard_prefixes:
+    return [
+      DownloadPlan(
+        repo_id=FINEWEB2_REPO,
+        local_dir=local_dir,
+        allow_patterns=_fineweb2_allow_patterns(
+          configs=configs,
+          splits=splits,
+        ),
+        label="fineweb-2/all-shards",
+      )
+    ]
+
+  return [
+    DownloadPlan(
+      repo_id=FINEWEB2_REPO,
+      local_dir=local_dir,
+      allow_patterns=_fineweb2_allow_patterns(
+        configs=configs,
+        splits=splits,
+        shard_prefix=prefix,
+      ),
+      label=f"fineweb-2/shard-prefix-{prefix}",
+    )
+    for prefix in _dedupe(shard_prefixes)
+  ]
+
+
+def _fineweb2_shard_prefixes(values: Sequence[str] | None) -> tuple[str, ...]:
+  return tuple(
+    _normalize_fineweb2_shard_prefix(value)
+    for value in (values or DEFAULT_FINEWEB2_SHARD_PREFIXES)
+  )
+
+
+def _normalize_fineweb2_shard_prefix(value: str) -> str:
+  prefix = value.strip()
+  if prefix.endswith("_*"):
+    prefix = prefix[:-2]
+  if not prefix:
+    raise ValueError("FineWeb2 shard prefix must not be empty")
+  return prefix
+
+
 def print_plan(plans: Sequence[DownloadPlan]) -> None:
   for plan in plans:
+    if plan.label is not None:
+      print(f"stage={plan.label}")
     print(f"repo={plan.repo_id}")
     print(f"local_dir={plan.local_dir}")
     print("allow_patterns:")
@@ -185,7 +258,8 @@ def print_plan(plans: Sequence[DownloadPlan]) -> None:
 
 def run_downloads(plans: Sequence[DownloadPlan], *, max_workers: int) -> None:
   for plan in plans:
-    print(f"Downloading {plan.repo_id} to {plan.local_dir}")
+    prefix = f"{plan.label}: " if plan.label is not None else ""
+    print(f"{prefix}Downloading {plan.repo_id} to {plan.local_dir}")
     snapshot_download(
       repo_id=plan.repo_id,
       repo_type="dataset",
@@ -193,6 +267,10 @@ def run_downloads(plans: Sequence[DownloadPlan], *, max_workers: int) -> None:
       allow_patterns=list(plan.allow_patterns),
       max_workers=max_workers,
     )
+
+
+def _dedupe(values: Sequence[str]) -> tuple[str, ...]:
+  return tuple(dict.fromkeys(values))
 
 
 def main(argv: Sequence[str] | None = None) -> None:
