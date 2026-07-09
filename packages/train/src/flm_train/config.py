@@ -161,7 +161,7 @@ class ExperimentConfig:
   def to_train_config(self) -> TrainConfig:
     if self.data.kind != "token_dataset":
       raise ValueError(f"unsupported data.kind: {self.data.kind}")
-    if self.optimizer.kind != "adamw":
+    if self.optimizer.kind not in {"adamw", "muon"}:
       raise ValueError(f"unsupported optimizer.kind: {self.optimizer.kind}")
     return TrainConfig(
       data=self.data,

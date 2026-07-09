@@ -1,5 +1,5 @@
 import torch
-from flm_modules import configure_adamw
+from flm_modules import Muon, configure_adamw, configure_muon
 from torch import nn
 
 
@@ -43,3 +43,56 @@ def test_configure_adamw_groups_decay_and_no_decay_parameters() -> None:
   assert model.norm.bias in no_decay_params
   assert model.frozen not in decay_params
   assert model.frozen not in no_decay_params
+
+
+def test_configure_muon_groups_matrix_and_vector_parameters() -> None:
+  model = TinyModel()
+
+  optimizer = configure_muon(
+    model,
+    learning_rate=1e-3,
+    weight_decay=0.2,
+    momentum=0.8,
+    nesterov=False,
+    ns_steps=3,
+    adamw_betas=(0.7, 0.9),
+    adamw_eps=1e-7,
+  )
+
+  assert isinstance(optimizer, Muon)
+  muon_params = set(optimizer.param_groups[0]["params"])
+  adamw_params = set(optimizer.param_groups[1]["params"])
+  assert optimizer.param_groups[0]["use_muon"] is True
+  assert optimizer.param_groups[1]["use_muon"] is False
+  assert optimizer.param_groups[0]["lr"] == 1e-3
+  assert optimizer.param_groups[0]["momentum"] == 0.8
+  assert optimizer.param_groups[0]["nesterov"] is False
+  assert optimizer.param_groups[0]["ns_steps"] == 3
+  assert optimizer.param_groups[1]["adamw_betas"] == (0.7, 0.9)
+  assert optimizer.param_groups[1]["adamw_eps"] == 1e-7
+  assert optimizer.param_groups[0]["weight_decay"] == 0.2
+  assert optimizer.param_groups[1]["weight_decay"] == 0.0
+  assert model.linear.weight in muon_params
+  assert model.linear.bias in adamw_params
+  assert model.norm.weight in adamw_params
+  assert model.norm.bias in adamw_params
+  assert model.frozen not in muon_params
+  assert model.frozen not in adamw_params
+
+
+def test_muon_step_updates_muon_and_adamw_parameters() -> None:
+  torch.manual_seed(0)
+  model = TinyModel()
+  optimizer = configure_muon(model, learning_rate=1e-2, weight_decay=0.0)
+  before_weight = model.linear.weight.detach().clone()
+  before_bias = model.linear.bias.detach().clone()
+
+  output = model.linear(torch.ones(4, 3)).square().sum()
+  output.backward()
+  optimizer.step()
+
+  assert not torch.equal(model.linear.weight, before_weight)
+  assert not torch.equal(model.linear.bias, before_bias)
+  assert "momentum_buffer" in optimizer.state[model.linear.weight]
+  assert "exp_avg" in optimizer.state[model.linear.bias]
+  assert "exp_avg_sq" in optimizer.state[model.linear.bias]
