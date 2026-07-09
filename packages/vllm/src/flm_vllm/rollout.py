@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from flm_datasets import get_tokenizer
@@ -12,7 +13,7 @@ from flm_train.types import RolloutPromptConfig
 def generate_vllm_rollouts(
   *,
   model_dir: Path,
-  encoding_name: str,
+  encoding_name: str | None = None,
   prompts: tuple[RolloutPromptConfig, ...],
   max_new_tokens: int,
   step: int = 0,
@@ -28,6 +29,10 @@ def generate_vllm_rollouts(
   from flm_vllm.registration import register_flm_models
 
   register_flm_models()
+  encoding_name = resolve_export_encoding_name(
+    model_dir=model_dir,
+    encoding_name=encoding_name,
+  )
   encoding = get_tokenizer(encoding_name)
   llm = LLM(
     model=str(model_dir),
@@ -54,6 +59,21 @@ def generate_vllm_rollouts(
     for prompt, output in zip(prompts, outputs, strict=True)
   ]
   return RolloutBatch(step=step, samples=tuple(samples))
+
+
+def resolve_export_encoding_name(*, model_dir: Path, encoding_name: str | None) -> str:
+  if encoding_name:
+    return encoding_name
+  hint_path = Path(model_dir) / "flm_tokenizer.json"
+  if not hint_path.is_file():
+    raise ValueError(
+      "--encoding is required when the model export has no flm_tokenizer.json"
+    )
+  hint = json.loads(hint_path.read_text(encoding="utf-8"))
+  value = hint.get("encoding_name")
+  if not isinstance(value, str) or not value:
+    raise ValueError(f"invalid tokenizer hint in {hint_path}")
+  return value
 
 
 def _sample_from_output(

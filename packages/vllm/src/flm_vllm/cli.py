@@ -11,6 +11,7 @@ from flm_train.runner import rebuild_rollout_summaries
 from flm_train.types import RolloutPromptConfig
 
 from flm_vllm.export import export_reference_checkpoint
+from flm_vllm.importing import import_reference_export
 from flm_vllm.rollout import generate_vllm_rollouts
 
 
@@ -28,10 +29,34 @@ def export_main(argv: list[str] | None = None) -> None:
   print(output_dir)
 
 
+def import_main(argv: list[str] | None = None) -> None:
+  parser = argparse.ArgumentParser(
+    description="Validate and import an FLM vLLM export locally."
+  )
+  parser.add_argument("model_dir", type=Path)
+  parser.add_argument("--map-location", default="cpu")
+  args = parser.parse_args(argv)
+  imported = import_reference_export(
+    args.model_dir,
+    map_location=args.map_location,
+  )
+  summary = {
+    "model_dir": str(args.model_dir),
+    "weight_path": str(imported.weight_path),
+    "architecture": imported.config["architectures"][0],
+    "vocab_size": imported.model.config.vocab_size,
+    "max_seq_len": imported.model.config.max_seq_len,
+    "d_model": imported.model.config.d_model,
+    "n_layers": imported.model.config.n_layers,
+    "n_heads": imported.model.config.n_heads,
+  }
+  print(json.dumps(summary, indent=2, sort_keys=True))
+
+
 def rollout_main(argv: list[str] | None = None) -> None:
   parser = argparse.ArgumentParser(description="Run FLM rollout with vLLM.")
   parser.add_argument("model_dir", type=Path)
-  parser.add_argument("--encoding", required=True)
+  parser.add_argument("--encoding", default=None)
   parser.add_argument("--prompt", action="append", default=[])
   parser.add_argument("--max-new-tokens", type=int, default=64)
   parser.add_argument("--step", type=int, default=0)
