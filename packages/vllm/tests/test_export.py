@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 from flm_llm import ReferenceModel, ReferenceModelConfig
 from flm_train.checkpoints import CheckpointState, save_checkpoint
 from flm_vllm.export import export_reference_checkpoint, reference_vllm_config
 from flm_vllm.importing import import_reference_export
+from flm_vllm.reference import FlmReferenceForCausalLM
 from flm_vllm.rollout import generate_vllm_rollouts, resolve_export_encoding_name
 from safetensors.torch import load_file
 
@@ -193,6 +195,53 @@ def test_import_reference_export_supports_legacy_bin_weight_file(
 
   assert imported.weight_path == model_dir / "pytorch_model.bin"
   assert imported.model.config.vocab_size == 32
+
+
+def test_reference_vllm_adapter_exposes_input_embeddings() -> None:
+  adapter = FlmReferenceForCausalLM(vllm_config=_vllm_config())
+  input_ids = torch.tensor([1, 2, 3])
+
+  embeddings = adapter.embed_input_ids(input_ids)
+
+  assert embeddings.shape == (3, 8)
+
+
+def test_reference_vllm_adapter_reports_loaded_vllm_parameter_names() -> None:
+  adapter = FlmReferenceForCausalLM(vllm_config=_vllm_config())
+  state = ReferenceModel(
+    ReferenceModelConfig(
+      vocab_size=32,
+      max_seq_len=16,
+      d_model=8,
+      n_layers=2,
+      n_heads=2,
+      d_ff=24,
+    )
+  ).state_dict()
+
+  loaded = adapter.load_weights(state.items())
+
+  assert "model.token_embedding.weight" in loaded
+  assert "model.blocks.0.attn.qkv.weight" in loaded
+  assert "token_embedding.weight" not in loaded
+
+
+def _vllm_config():
+  return SimpleNamespace(
+    model_config=SimpleNamespace(
+      hf_config=SimpleNamespace(
+        attention_bias=False,
+        hidden_size=8,
+        intermediate_size=24,
+        max_position_embeddings=16,
+        num_attention_heads=2,
+        num_hidden_layers=2,
+        rms_norm_eps=1e-6,
+        rope_theta=10_000.0,
+        vocab_size=32,
+      )
+    )
+  )
 
 
 def test_resolve_export_encoding_name_prefers_explicit_value(tmp_path: Path) -> None:

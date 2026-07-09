@@ -50,17 +50,25 @@ class FlmReferenceForCausalLM(nn.Module):
       raise RuntimeError("reference model did not return logits")
     return logits.reshape(-1, logits.shape[-1])
 
+  def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+    return self.model.token_embedding(input_ids)
+
   def compute_logits(
     self,
     hidden_states: torch.Tensor,
-    sampling_metadata,
+    sampling_metadata=None,
   ) -> torch.Tensor:
     del sampling_metadata
     return hidden_states
 
   def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-    state = {name.removeprefix("model."): tensor for name, tensor in weights}
+    loaded_names = set()
+    state = {}
+    for name, tensor in weights:
+      loaded_names.add(name if name.startswith("model.") else f"model.{name}")
+      state[name.removeprefix("model.")] = tensor
     missing, unexpected = self.model.load_state_dict(state, strict=False)
     if unexpected:
       raise RuntimeError(f"unexpected FLM checkpoint tensors: {sorted(unexpected)}")
-    return set(state) - set(missing)
+    missing_names = set(missing) | {f"model.{name}" for name in missing}
+    return loaded_names - missing_names
