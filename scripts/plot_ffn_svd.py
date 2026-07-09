@@ -98,16 +98,13 @@ def _parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--outdir",
     type=Path,
-    default=Path(
-      "runs/100mib_4k_repo_reference/20260704-160611-092c2a/svd"
-    ),
+    default=Path("runs/100mib_4k_repo_reference/20260704-160611-092c2a/svd"),
   )
   parser.add_argument(
     "--heatmap-vmin",
     type=float,
     help=(
-      "minimum log10(s_i / s_0) color value. Defaults to each view's "
-      "1st percentile."
+      "minimum log10(s_i / s_0) color value. Defaults to each view's 1st percentile."
     ),
   )
   return parser.parse_args()
@@ -230,9 +227,9 @@ def _plot_heatmap(
   spectra = sorted(spectra, key=lambda spectrum: spectrum.layer)
   matrix = torch.stack(
     [
-      torch.log10(
-        spectrum.singular_values / spectrum.singular_values[0]
-      ).clamp_min(-5.0)
+      torch.log10(spectrum.singular_values / spectrum.singular_values[0]).clamp_min(
+        -5.0
+      )
       for spectrum in spectra
     ]
   ).T.numpy()

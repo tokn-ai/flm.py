@@ -219,9 +219,7 @@ def _load_transformers_weights(
       layer.set_weights_from_transformers(
         q_proj=weights["q_proj.weight"] if q_lora_rank is None else None,
         q_a_proj=None if q_lora_rank is None else weights["q_a_proj.weight"],
-        q_a_layernorm=None
-        if q_lora_rank is None
-        else weights["q_a_layernorm.weight"],
+        q_a_layernorm=None if q_lora_rank is None else weights["q_a_layernorm.weight"],
         q_b_proj=None if q_lora_rank is None else weights["q_b_proj.weight"],
         kv_a_proj_with_mqa=weights["kv_a_proj_with_mqa.weight"],
         kv_a_layernorm=weights["kv_a_layernorm.weight"],
