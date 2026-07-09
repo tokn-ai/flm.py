@@ -63,11 +63,9 @@ class DeepSeekDSAIndexer(nn.Module):
     attention_mask: Float[torch.Tensor, "... seq seq"] | None = None,
     positions: Float[torch.Tensor, "... seq seq"] | None = None,
   ) -> Int[torch.Tensor, "... seq topk"]:
-    q_base: Float[torch.Tensor, "... n_heads seq head_dim"] = rearrange(
-      self.wq_u_proj(q_residual),
-      "... seq (n_heads head_dim) -> ... n_heads seq head_dim",
-      n_heads=self.n_heads,
-    )
+    # fmt: off
+    q_base: Float[torch.Tensor, "... n_heads seq head_dim"] = rearrange(self.wq_u_proj(q_residual), "... seq (n_heads head_dim) -> ... n_heads seq head_dim", n_heads=self.n_heads)
+    # fmt: on
     q_nope, q_rope = torch.split(
       q_base, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
     )
@@ -76,9 +74,9 @@ class DeepSeekDSAIndexer(nn.Module):
       q_rope, cos, sin
     )
     q = torch.cat([q_nope, q_rope], dim=-1)
-    k_base: Float[torch.Tensor, "... 1 seq head_dim"] = rearrange(
-      self.wk_u_proj(hidden_states), "... seq head_dim -> ... 1 seq head_dim"
-    )
+    # fmt: off
+    k_base: Float[torch.Tensor, "... 1 seq head_dim"] = rearrange(self.wk_u_proj(hidden_states), "... seq head_dim -> ... 1 seq head_dim")
+    # fmt: on
     k_base = self.k_norm(k_base)
     k_nope, k_rope = torch.split(
       k_base, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
@@ -105,14 +103,12 @@ class DeepSeekDSAIndexer(nn.Module):
     attention_mask: Float[torch.Tensor, "... seq seq"] | None = None,
     causal: bool = True,
   ) -> Float[torch.Tensor, "... n_heads seq seq"]:
+    # fmt: off
     k = rearrange(k, "... 1 seq head_dim -> ... seq head_dim")
-    qk = einsum(
-      q, k, "... n_heads seq_q head_dim, ... seq_k head_dim -> ... seq_q seq_k n_heads"
-    )
+    qk = einsum(q, k, "... n_heads seq_q head_dim, ... seq_k head_dim -> ... seq_q seq_k n_heads")
     qk = F.relu(qk)  # relu before mask
-    scores = einsum(
-      qk, weights, "... seq_q seq_k n_heads, ... seq_q n_heads -> ... seq_q seq_k"
-    )
+    scores = einsum(qk, weights, "... seq_q seq_k n_heads, ... seq_q n_heads -> ... seq_q seq_k")
+    # fmt: on
     if attention_mask is not None:
       scores = scores + attention_mask
     elif causal:

@@ -186,21 +186,11 @@ class DeepSeekMLA(nn.Module):
     Float[Tensor, "... n_heads seq qk_head_dim"],
     Float[Tensor, "... n_heads seq v_head_dim"],
   ]:
-    k_C: Float[Tensor, "... n_heads seq qk_nope_head_dim"] = rearrange(
-      self.k_u_proj(c_kv),
-      "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
-      n_heads=self.n_heads,
-    )
-    k_R: Float[Tensor, "... n_heads seq qk_rope_head_dim"] = repeat(
-      self.k_r_proj(hidden_states),
-      "... seq qk_rope_head_dim -> ... n_heads seq qk_rope_head_dim",
-      n_heads=self.n_heads,
-    )
-    v_C: Float[Tensor, "... n_heads seq v_head_dim"] = rearrange(
-      self.v_u_proj(c_kv),
-      "... seq (n_heads v_head_dim) -> ... n_heads seq v_head_dim",
-      n_heads=self.n_heads,
-    )
+    # fmt: off
+    k_C: Float[Tensor, "... n_heads seq qk_nope_head_dim"] = rearrange(self.k_u_proj(c_kv), "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
+    k_R: Float[Tensor, "... n_heads seq qk_rope_head_dim"] = repeat(self.k_r_proj(hidden_states), "... seq qk_rope_head_dim -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
+    v_C: Float[Tensor, "... n_heads seq v_head_dim"] = rearrange(self.v_u_proj(c_kv), "... seq (n_heads v_head_dim) -> ... n_heads seq v_head_dim", n_heads=self.n_heads)
+    # fmt: on
     if self.q_lora_rank is None:
       q_C, q_R = torch.split(
         c_q,
@@ -210,27 +200,15 @@ class DeepSeekMLA(nn.Module):
         ],
         dim=-1,
       )
-      q_C = rearrange(
-        q_C,
-        "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
-        n_heads=self.n_heads,
-      )
-      q_R = rearrange(
-        q_R,
-        "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim",
-        n_heads=self.n_heads,
-      )
+      # fmt: off
+      q_C = rearrange(q_C, "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
+      q_R = rearrange(q_R, "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
+      # fmt: on
     else:
-      q_C = rearrange(
-        self.q_u_proj(c_q),
-        "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
-        n_heads=self.n_heads,
-      )
-      q_R = rearrange(
-        self.q_r_proj(c_q),
-        "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim",
-        n_heads=self.n_heads,
-      )
+      # fmt: off
+      q_C = rearrange(self.q_u_proj(c_q), "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
+      q_R = rearrange(self.q_r_proj(c_q), "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
+      # fmt: on
 
     cos, sin = self.rope(q_C, positions=positions)
     k_R = apply_rotary(k_R, cos, sin, layout=self.rope.layout)
