@@ -45,9 +45,7 @@ def main() -> None:
     )
 
   print(f"checkpoint={checkpoint}")
-  print(
-    "name,shape,rank,effective_rank,stable_rank,r90,r95,r99,top_singular_values"
-  )
+  print("name,shape,rank,effective_rank,stable_rank,r90,r95,r99,top_singular_values")
   for report in reports:
     print(
       f"{report.name},"

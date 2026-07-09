@@ -69,6 +69,7 @@ from flm_modules.rope import RotaryEmbedding, apply_rotary
 #     c: Float[Tensor, "... seq d_lora_rank"] = self.layernorm(self.d_proj(hidden_states))
 #     return rearrange(c, "... seq (n_heads d_lora_rank) -> ... n_heads seq d_lora_rank", n_heads=self.n_heads)
 
+
 class DeepSeekMLA(nn.Module):
   """DeepSeek-style multi-head latent attention."""
 
@@ -130,13 +131,9 @@ class DeepSeekMLA(nn.Module):
     self.k_u_proj = nn.Linear(
       self.kv_lora_rank, n_heads * self.qk_nope_head_dim, bias=bias
     )
-    self.v_u_proj = nn.Linear(
-      self.kv_lora_rank, n_heads * self.v_head_dim, bias=bias
-    )
+    self.v_u_proj = nn.Linear(self.kv_lora_rank, n_heads * self.v_head_dim, bias=bias)
 
-    self.k_r_proj = nn.Linear(
-      d_model, self.qk_rope_head_dim, bias=bias
-    )
+    self.k_r_proj = nn.Linear(d_model, self.qk_rope_head_dim, bias=bias)
     self.o_proj = nn.Linear(n_heads * v_head_dim, d_model, bias=bias)
     self.rope = RotaryEmbedding(
       self.qk_rope_head_dim, base=rope_base, layout=rope_layout
@@ -162,8 +159,7 @@ class DeepSeekMLA(nn.Module):
     return self._project_o(o)
 
   def _compress(
-      self,
-      hidden_states: Float[Tensor, "... seq d_model"]
+    self, hidden_states: Float[Tensor, "... seq d_model"]
   ) -> tuple[
     Float[Tensor, "... seq kv_lora_rank"],
     Float[Tensor, "... seq q"],
@@ -172,7 +168,9 @@ class DeepSeekMLA(nn.Module):
       self.kv_d_proj(hidden_states)
     )
     if self.q_lora_rank is not None:
-      c_q: Float[Tensor, "... seq q_lora_rank"] = self.q_d_layernorm(self.q_d_proj(hidden_states))
+      c_q: Float[Tensor, "... seq q_lora_rank"] = self.q_d_layernorm(
+        self.q_d_proj(hidden_states)
+      )
     else:
       c_q: Float[Tensor, "... seq q"] = self.q_proj(hidden_states)
     return c_kv, c_q
@@ -188,9 +186,21 @@ class DeepSeekMLA(nn.Module):
     Float[Tensor, "... n_heads seq qk_head_dim"],
     Float[Tensor, "... n_heads seq v_head_dim"],
   ]:
-    k_C: Float[Tensor, "... n_heads seq qk_nope_head_dim"] = rearrange(self.k_u_proj(c_kv), "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
-    k_R: Float[Tensor, "... n_heads seq qk_rope_head_dim"] = repeat(self.k_r_proj(hidden_states), "... seq qk_rope_head_dim -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
-    v_C: Float[Tensor, "... n_heads seq v_head_dim"] = rearrange(self.v_u_proj(c_kv), "... seq (n_heads v_head_dim) -> ... n_heads seq v_head_dim", n_heads=self.n_heads)
+    k_C: Float[Tensor, "... n_heads seq qk_nope_head_dim"] = rearrange(
+      self.k_u_proj(c_kv),
+      "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
+      n_heads=self.n_heads,
+    )
+    k_R: Float[Tensor, "... n_heads seq qk_rope_head_dim"] = repeat(
+      self.k_r_proj(hidden_states),
+      "... seq qk_rope_head_dim -> ... n_heads seq qk_rope_head_dim",
+      n_heads=self.n_heads,
+    )
+    v_C: Float[Tensor, "... n_heads seq v_head_dim"] = rearrange(
+      self.v_u_proj(c_kv),
+      "... seq (n_heads v_head_dim) -> ... n_heads seq v_head_dim",
+      n_heads=self.n_heads,
+    )
     if self.q_lora_rank is None:
       q_C, q_R = torch.split(
         c_q,
@@ -200,11 +210,27 @@ class DeepSeekMLA(nn.Module):
         ],
         dim=-1,
       )
-      q_C = rearrange(q_C, "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
-      q_R = rearrange(q_R, "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
+      q_C = rearrange(
+        q_C,
+        "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
+        n_heads=self.n_heads,
+      )
+      q_R = rearrange(
+        q_R,
+        "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim",
+        n_heads=self.n_heads,
+      )
     else:
-      q_C = rearrange(self.q_u_proj(c_q), "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim", n_heads=self.n_heads)
-      q_R = rearrange(self.q_r_proj(c_q), "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim", n_heads=self.n_heads)
+      q_C = rearrange(
+        self.q_u_proj(c_q),
+        "... seq (n_heads qk_nope_head_dim) -> ... n_heads seq qk_nope_head_dim",
+        n_heads=self.n_heads,
+      )
+      q_R = rearrange(
+        self.q_r_proj(c_q),
+        "... seq (n_heads qk_rope_head_dim) -> ... n_heads seq qk_rope_head_dim",
+        n_heads=self.n_heads,
+      )
 
     cos, sin = self.rope(q_C, positions=positions)
     k_R = apply_rotary(k_R, cos, sin, layout=self.rope.layout)
@@ -215,14 +241,12 @@ class DeepSeekMLA(nn.Module):
 
     return q, k, v_C
 
-
   def _project_o(
     self,
     o: Float[Tensor, "... n_heads seq v_head_dim"],
   ) -> Float[Tensor, "... seq d_model"]:
     o = rearrange(o, "... n_heads seq v_head_dim -> ... seq (n_heads v_head_dim)")
     return self.o_proj(o)
-
 
   def set_weights_from_transformers(
     self,
@@ -233,7 +257,7 @@ class DeepSeekMLA(nn.Module):
     kv_a_proj_with_mqa: Tensor,
     kv_a_layernorm: Tensor,
     kv_b_proj: Tensor,
-    o_proj: Tensor
+    o_proj: Tensor,
   ) -> None:
     if q_proj is not None:
       q_proj = q_proj.view(self.n_heads, self.qk_head_dim, self.d_model)
@@ -253,8 +277,7 @@ class DeepSeekMLA(nn.Module):
     else:
       if q_a_proj is None or q_a_layernorm is None or q_b_proj is None:
         raise ValueError(
-          "q_proj is None, but one of q_a_proj, q_a_layernorm, "
-          "or q_b_proj is also None"
+          "q_proj is None, but one of q_a_proj, q_a_layernorm, or q_b_proj is also None"
         )
       self.q_d_proj.weight.data.copy_(q_a_proj)
       self.q_d_layernorm.weight.data.copy_(q_a_layernorm)
@@ -269,9 +292,7 @@ class DeepSeekMLA(nn.Module):
       self.q_r_proj.weight.data.copy_(
         q_rope.reshape(self.n_heads * self.qk_rope_head_dim, self.q_lora_rank)
       )
-    self.kv_d_proj.weight.data.copy_(
-      kv_a_proj_with_mqa[..., :self.kv_lora_rank, :]
-    )
+    self.kv_d_proj.weight.data.copy_(kv_a_proj_with_mqa[..., : self.kv_lora_rank, :])
     self.kv_d_layernorm.weight.data.copy_(kv_a_layernorm)
     kv_b_proj = kv_b_proj.view(
       self.n_heads,
@@ -285,7 +306,5 @@ class DeepSeekMLA(nn.Module):
     self.v_u_proj.weight.data.copy_(
       v.reshape(self.n_heads * self.v_head_dim, self.kv_lora_rank)
     )
-    self.k_r_proj.weight.data.copy_(
-      kv_a_proj_with_mqa[..., self.kv_lora_rank:, :]
-    )
+    self.k_r_proj.weight.data.copy_(kv_a_proj_with_mqa[..., self.kv_lora_rank :, :])
     self.o_proj.weight.data.copy_(o_proj)
