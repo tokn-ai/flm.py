@@ -195,6 +195,7 @@ class ExperimentOverrides:
   steps: int | None = None
   root_dir: Path | None = None
   seed: int | None = None
+  run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -358,33 +359,89 @@ def apply_overrides(
   config: ExperimentConfig,
   overrides: ExperimentOverrides,
 ) -> ExperimentConfig:
+  target_steps = config.loop.steps if overrides.steps is None else overrides.steps
+  schedule, speedrun_schedule = _scaled_schedules(
+    config,
+    target_steps=target_steps,
+  )
   return ExperimentConfig(
     name=config.name,
     data=config.data,
     model=config.model,
     optimizer=config.optimizer,
-    schedule=config.schedule,
-    speedrun_schedule=config.speedrun_schedule,
+    schedule=schedule,
+    speedrun_schedule=speedrun_schedule,
     loop=LoopConfig(
       seed=config.loop.seed if overrides.seed is None else overrides.seed,
       device=config.loop.device if overrides.device is None else overrides.device,
       dtype=config.loop.dtype,
       batch_size=config.loop.batch_size,
       batch_size_vram_fraction=config.loop.batch_size_vram_fraction,
-      steps=config.loop.steps if overrides.steps is None else overrides.steps,
+      steps=target_steps,
       gradient_accumulation_steps=config.loop.gradient_accumulation_steps,
     ),
     eval=config.eval,
     rollout=config.rollout,
     checkpoint=config.checkpoint,
     system_metrics=config.system_metrics,
-    run=config.run,
+    run=config.run
+    if overrides.run_id is None
+    else replace(config.run, id=overrides.run_id),
     secrets=config.secrets,
     output=config.output
     if overrides.root_dir is None
     else OutputConfig(root_dir=overrides.root_dir),
     sinks=config.sinks,
   )
+
+
+def _scaled_schedules(
+  config: ExperimentConfig,
+  *,
+  target_steps: int,
+) -> tuple[OptimizerScheduleConfig, SpeedrunScheduleConfig]:
+  source_steps = config.loop.steps
+  if target_steps == source_steps:
+    return config.schedule, config.speedrun_schedule
+  if source_steps < 1 or target_steps < 1:
+    raise ValueError("loop.steps must be positive when scaling schedules")
+
+  def scale(steps: int) -> int:
+    if steps == 0:
+      return 0
+    return max(1, round(steps * target_steps / source_steps))
+
+  schedule = replace(
+    config.schedule,
+    warmup_steps=scale(config.schedule.warmup_steps),
+    cooldown_steps=scale(config.schedule.cooldown_steps),
+    cooldown_end_step=None
+    if config.schedule.cooldown_end_step is None
+    else scale(config.schedule.cooldown_end_step),
+    momentum_warmup_steps=scale(config.schedule.momentum_warmup_steps),
+    momentum_cooldown_steps=scale(config.schedule.momentum_cooldown_steps),
+  )
+  source_stages = config.speedrun_schedule.stages
+  stages_by_end: dict[int, SpeedrunStageConfig] = {}
+  previous_end = 0
+  for index, stage in enumerate(source_stages):
+    end_step = min(target_steps, scale(stage.end_step))
+    if target_steps >= len(source_stages):
+      remaining_stages = len(source_stages) - index - 1
+      end_step = min(
+        max(end_step, previous_end + 1),
+        target_steps - remaining_stages,
+      )
+    stages_by_end[end_step] = replace(stage, end_step=end_step)
+    previous_end = end_step
+  speedrun_schedule = replace(
+    config.speedrun_schedule,
+    stages=tuple(stages_by_end.values()),
+    untie_step=None
+    if config.speedrun_schedule.untie_step is None
+    else min(target_steps, scale(config.speedrun_schedule.untie_step)),
+  )
+  return schedule, speedrun_schedule
 
 
 def apply_workspace_overrides(
@@ -613,16 +670,34 @@ def _parse_batch_size(value: Any) -> int | Literal["auto"]:
 def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
   if value is None:
     return None
-  allowed = {"split", "every_steps", "max_batches", "batch_tokens"}
+  allowed = {
+    "split",
+    "every_steps",
+    "every_fraction",
+    "min_every_steps",
+    "max_batches",
+    "batch_tokens",
+  }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown eval config keys: {sorted(unknown)}")
   split = str(value.get("split", "test"))
   if split not in {"val", "test"}:
     raise ValueError(f"unsupported eval.split: {split}")
+  every_steps = _optional_int(value.get("every_steps"))
+  every_fraction = float(value.get("every_fraction", 0.01))
+  min_every_steps = int(value.get("min_every_steps", 50))
+  _validate_interval_config(
+    section="eval",
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
+  )
   return EvalConfig(
     split=split,
-    every_steps=int(value.get("every_steps", 100)),
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
     max_batches=int(value.get("max_batches", 8)),
     batch_tokens=_optional_int(value.get("batch_tokens")),
   )
@@ -631,34 +706,81 @@ def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
 def _parse_rollout(value: dict[str, Any] | None) -> RolloutConfig | None:
   if value is None:
     return None
-  allowed = {"every_steps", "max_new_tokens", "prompts"}
+  allowed = {
+    "every_steps",
+    "every_fraction",
+    "min_every_steps",
+    "max_new_tokens",
+    "prompts",
+  }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown rollout config keys: {sorted(unknown)}")
+  every_steps = _optional_int(value.get("every_steps"))
+  every_fraction = float(value.get("every_fraction", 0.02))
+  min_every_steps = int(value.get("min_every_steps", 100))
+  _validate_interval_config(
+    section="rollout",
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
+  )
   return RolloutConfig(
-    every_steps=int(value.get("every_steps", 100)),
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
     max_new_tokens=int(value.get("max_new_tokens", 64)),
     prompts=_parse_rollout_prompts(value.get("prompts")),
   )
 
 
 def _parse_checkpoint(value: dict[str, Any]) -> CheckpointConfig:
-  allowed = {"enabled", "every_steps", "keep_last", "resume"}
+  allowed = {
+    "enabled",
+    "every_steps",
+    "every_fraction",
+    "min_every_steps",
+    "keep_last",
+    "resume",
+  }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown checkpoint config keys: {sorted(unknown)}")
-  every_steps = int(value.get("every_steps", 100))
+  every_steps = _optional_int(value.get("every_steps"))
+  every_fraction = float(value.get("every_fraction", 0.05))
+  min_every_steps = int(value.get("min_every_steps", 200))
   keep_last = int(value.get("keep_last", 3))
-  if every_steps <= 0:
-    raise ValueError("checkpoint.every_steps must be positive")
+  _validate_interval_config(
+    section="checkpoint",
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
+  )
   if keep_last < 0:
     raise ValueError("checkpoint.keep_last must be non-negative")
   return CheckpointConfig(
     enabled=bool(value.get("enabled", False)),
     every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
     keep_last=keep_last,
     resume=_optional_str(value.get("resume")),
   )
+
+
+def _validate_interval_config(
+  *,
+  section: str,
+  every_steps: int | None,
+  every_fraction: float,
+  min_every_steps: int,
+) -> None:
+  if every_steps is not None and every_steps <= 0:
+    raise ValueError(f"{section}.every_steps must be positive")
+  if not 0 < every_fraction <= 1:
+    raise ValueError(f"{section}.every_fraction must be in (0, 1]")
+  if min_every_steps < 1:
+    raise ValueError(f"{section}.min_every_steps must be positive")
 
 
 def _parse_system_metrics(value: dict[str, Any]) -> SystemMetricsConfig:

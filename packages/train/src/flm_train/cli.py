@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument("--device", default=None)
   parser.add_argument("--steps", type=int, default=None)
   parser.add_argument("--seed", type=int, default=None)
+  parser.add_argument("--run-id", default=None)
   return parser
 
 
@@ -59,6 +60,7 @@ def run_from_args(args: argparse.Namespace) -> None:
       device=args.device,
       steps=args.steps,
       seed=args.seed,
+      run_id=args.run_id,
     ),
   )
   run_experiment(config, workspace=workspace, log=print)

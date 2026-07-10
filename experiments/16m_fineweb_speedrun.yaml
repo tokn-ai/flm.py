@@ -1,0 +1,115 @@
+name: 16m_fineweb_10bt_speedrun_ga6
+
+data:
+  kind: token_dataset
+  dataset_root: cache/tokens/fineweb_10bt_8192/fineweb_10bt
+  version: latest
+  split: train
+  encoding_name: unitoken:tokenizers/fineweb_10bt_8192
+  seq_len: 1024
+
+model:
+  kind: nanogpt_speedrun
+  padded_vocab_size: 8192
+  d_model: 144
+  n_layers: 11
+  n_heads: 4
+  d_ff: 576
+  attention_backend: torch
+  loss_backend: cross_entropy
+  logit_softcap: null
+  logit_sigmoid_scale: 23.0
+  logit_sigmoid_bias: 5.0
+  logit_sigmoid_temperature: 7.5
+  bigram_vocab_size: 122880
+  bigram_dim: 40
+  bigram_sign_table_rows: 8192
+  mudd_hidden_dim: 64
+  value_residual: false
+
+optimizer:
+  kind: speedrun_normuon
+  secondary_update_every: 2
+  max_grad_norm: null
+
+schedule:
+  cooldown_steps: 594
+  cooldown_end_step: 990
+  final_lr_scale: 0.15
+  momentum_start: 0.85
+  momentum_end: 0.95
+  momentum_warmup_steps: 216
+  momentum_cooldown_steps: 36
+  scale_weight_decay_with_lr: false
+
+speedrun_schedule:
+  untie_step: 662
+  final_eval_short_window: 384
+  final_eval_long_window: 1024
+  stages:
+    - end_step: 330
+      batch_size: 6
+      seq_len: 512
+      learning_rate_scale: 1.0
+      mtp_weights: [1.0, 0.5, 0.25]
+      mtp_weights_end: [1.0, 0.5, 0.0]
+      short_window: 64
+      long_window: 192
+    - end_step: 660
+      batch_size: 6
+      seq_len: 1024
+      learning_rate_scale: 1.52
+      mtp_weights: [1.0, 0.5]
+      mtp_weights_end: [1.0, 0.0]
+      short_window: 192
+      long_window: 448
+    - end_step: 990
+      batch_size: 9
+      seq_len: 1024
+      learning_rate_scale: 1.73
+      mtp_weights: [1.0]
+      mtp_weights_end: [1.0]
+      short_window: 320
+      long_window: 704
+    - end_step: 1000
+      batch_size: 9
+      seq_len: 1024
+      learning_rate_scale: 1.0
+      mtp_weights: [1.0]
+      mtp_weights_end: [1.0]
+      short_window: 384
+      long_window: 832
+
+loop:
+  seed: 42
+  device: cuda
+  dtype: bfloat16
+  batch_size: 6
+  steps: 1000
+  gradient_accumulation_steps: 6
+
+eval:
+  split: test
+  max_batches: 8
+
+rollout:
+  max_new_tokens: 64
+  prompts:
+    - name: i_am
+      prompt: "I am"
+    - name: yesterday
+      prompt: "Yesterday,"
+    - name: capital
+      prompt: "The capital of"
+
+checkpoint:
+  enabled: true
+  keep_last: 3
+  resume: auto
+
+secrets:
+  env_file: .secret
+
+sinks:
+  - kind: files
+  - kind: tensorboard

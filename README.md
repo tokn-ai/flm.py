@@ -42,6 +42,33 @@ This is the portable semantic baseline. Distributed execution, FP8,
 FlashAttention 3, and the fused H100 kernels required for sub-90-second timing
 are intentionally outside this configuration.
 
+### 16M FineWeb speedrun-style experiment
+
+The 16M experiment keeps the current speedrun topology and optimizer while
+scaling it to the existing 8,192-token Unitoken FineWeb dataset. It has
+15,931,066 trainable parameters and a 37,048,320-token staged training budget.
+Six-way gradient accumulation preserves that effective budget while keeping
+the CUDA microbatches within an 8 GiB GPU. File and TensorBoard logging are
+enabled for both smoke and full runs.
+
+Run a ten-step launch smoke test from the full experiment configuration:
+
+```sh
+scripts/run_16m_fineweb_speedrun.sh --steps 10
+```
+
+Then start or resume the full experiment:
+
+```sh
+scripts/run_16m_fineweb_speedrun.sh
+```
+
+The script forwards extra CLI options, for example:
+
+```sh
+scripts/run_16m_fineweb_speedrun.sh --workspace-config /path/to/flm.workspace.yaml
+```
+
 Workspace-specific directories can live outside the experiment config. A local
 `flm.workspace.yaml` in the current directory or one of its parents is loaded
 automatically and is ignored by git:
