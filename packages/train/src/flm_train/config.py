@@ -613,7 +613,7 @@ def _parse_batch_size(value: Any) -> int | Literal["auto"]:
 def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
   if value is None:
     return None
-  allowed = {"split", "every_steps", "max_batches"}
+  allowed = {"split", "every_steps", "max_batches", "batch_tokens"}
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown eval config keys: {sorted(unknown)}")
@@ -624,6 +624,7 @@ def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
     split=split,
     every_steps=int(value.get("every_steps", 100)),
     max_batches=int(value.get("max_batches", 8)),
+    batch_tokens=_optional_int(value.get("batch_tokens")),
   )
 
 
@@ -779,7 +780,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       padded_vocab_size=_optional_int(value.get("padded_vocab_size")),
       d_model=int(value.get("d_model", 768)),
       n_layers=int(value.get("n_layers", 11)),
-      n_heads=int(value.get("n_heads", 12)),
+      n_heads=int(value.get("n_heads", 6)),
       d_ff=int(value.get("d_ff", 3072)),
       attention_backend=attention_backend,
       loss_backend=loss_backend,

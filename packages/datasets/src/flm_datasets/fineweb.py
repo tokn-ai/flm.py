@@ -235,3 +235,66 @@ class FineWebPackedDataset(
     if offset != self.batch_tokens:
       raise RuntimeError("packed FineWeb batch did not consume its token budget")
     return input_ids, targets, previous_input_ids, index
+
+
+class FineWebValidationDataset(
+  IterableDataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+):
+  """Unaligned fixed-token validation chunks isolated at canonical BOS tokens."""
+
+  def __init__(
+    self,
+    paths: Sequence[Path],
+    *,
+    batch_tokens: int,
+    token_limit: int | None,
+    bos_token_id: int = 50256,
+  ) -> None:
+    self.source = FineWebBinaryDataset(
+      paths,
+      seq_len=batch_tokens,
+      token_limit=token_limit,
+    )
+    self.token_limit = self.source.token_limit
+    self.batch_tokens = batch_tokens
+    self.bos_token_id = bos_token_id
+
+  def __len__(self) -> int:
+    return len(self.source)
+
+  def __iter__(self):
+    for index in range(len(self.source)):
+      flat_inputs, flat_targets = self.source[index]
+      yield self._split_documents(flat_inputs, flat_targets)
+
+  def _split_documents(
+    self,
+    flat_inputs: torch.Tensor,
+    flat_targets: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    bos_positions = torch.nonzero(flat_inputs == self.bos_token_id).flatten()
+    boundaries = [0]
+    boundaries.extend(int(position) for position in bos_positions if position > 0)
+    boundaries.append(flat_inputs.numel())
+    lengths = [
+      end - start for start, end in zip(boundaries[:-1], boundaries[1:], strict=True)
+    ]
+    width = max(lengths)
+    input_ids = torch.full(
+      (len(lengths), width),
+      self.bos_token_id,
+      dtype=torch.long,
+    )
+    targets = torch.full_like(input_ids, -100)
+    previous_input_ids = torch.full_like(input_ids, -1)
+    flat_previous = torch.empty_like(flat_inputs)
+    flat_previous[0] = -1
+    flat_previous[1:] = flat_inputs[:-1]
+    for row, (start, end) in enumerate(
+      zip(boundaries[:-1], boundaries[1:], strict=True)
+    ):
+      length = end - start
+      input_ids[row, :length] = flat_inputs[start:end]
+      targets[row, :length] = flat_targets[start:end]
+      previous_input_ids[row, :length] = flat_previous[start:end]
+    return input_ids, targets, previous_input_ids

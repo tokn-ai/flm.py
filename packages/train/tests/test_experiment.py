@@ -98,6 +98,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "split": "test",
         "every_steps": 2,
         "max_batches": 3,
+        "batch_tokens": 1024,
       },
       "rollout": {
         "every_steps": 2,
@@ -190,6 +191,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
     split="test",
     every_steps=2,
     max_batches=3,
+    batch_tokens=1024,
   )
   assert train_config.rollout == RolloutConfig(
     every_steps=2,

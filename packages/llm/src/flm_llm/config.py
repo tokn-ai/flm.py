@@ -38,7 +38,7 @@ class NanoGPTSpeedrunConfig:
   max_seq_len: int = 1024
   d_model: int = 768
   n_layers: int = 11
-  n_heads: int = 12
+  n_heads: int = 6
   d_ff: int = 3072
   bias: bool = False
   rope_base: float = 10_000.0

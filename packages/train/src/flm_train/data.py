@@ -14,8 +14,8 @@ from typing import Any
 import numpy as np
 from flm_datasets import (
   SOURCE_CORPUS_SEPARATOR,
-  FineWebBinaryDataset,
   FineWebPackedDataset,
+  FineWebValidationDataset,
   RandomTokenWindowDataset,
   ShardedTokenDataset,
   SourceCorpusConfig,
@@ -97,17 +97,15 @@ def build_fineweb_binary_dataset(config: TrainConfig) -> RepoSourceDatasetBundle
     if config.data.token_limit is None and config.data.split == "val"
     else config.data.token_limit
   )
-  dataset = FineWebBinaryDataset(
+  dataset = FineWebValidationDataset(
     paths,
-    seq_len=config.data.seq_len,
+    batch_tokens=config.loop.batch_size,
     token_limit=token_limit,
   )
   return RepoSourceDatasetBundle(
     dataloader=DataLoader(
       dataset,
-      batch_size=config.loop.batch_size,
-      shuffle=False,
-      drop_last=False,
+      batch_size=None,
     ),
     token_count=dataset.token_limit,
     file_count=len(paths),

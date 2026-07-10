@@ -47,7 +47,7 @@ class NanoGPTSpeedrunModelConfig:
   padded_vocab_size: int | None = None
   d_model: int = 768
   n_layers: int = 11
-  n_heads: int = 12
+  n_heads: int = 6
   d_ff: int = 3072
   attention_backend: AttentionBackend = "torch"
   loss_backend: LossBackend = "cross_entropy"
@@ -200,6 +200,7 @@ class EvalConfig:
   split: Literal["val", "test"] = "test"
   every_steps: int = 100
   max_batches: int = 8
+  batch_tokens: int | None = None
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,7 @@ from flm_datasets.fineweb import (
   FINEWEB_VERSION,
   FineWebBinaryDataset,
   FineWebPackedDataset,
+  FineWebValidationDataset,
   load_fineweb_binary,
 )
 from flm_datasets.token_dataset import (
@@ -40,6 +41,7 @@ __all__ = [
   "FINEWEB_VERSION",
   "FineWebBinaryDataset",
   "FineWebPackedDataset",
+  "FineWebValidationDataset",
   "RandomTokenWindowDataset",
   "SOURCE_CORPUS_SEPARATOR",
   "SourceCorpusConfig",

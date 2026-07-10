@@ -9,8 +9,8 @@ import pytest
 import torch
 from flm_datasets import (
   FINEWEB_HEADER_INTS,
-  FineWebBinaryDataset,
   FineWebPackedDataset,
+  FineWebValidationDataset,
   RandomTokenWindowDataset,
 )
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
@@ -288,7 +288,10 @@ def test_build_fineweb_binary_validation_dataset_uses_exact_stream(
 ) -> None:
   header = np.zeros(FINEWEB_HEADER_INTS, dtype="<i4")
   header[:3] = (20240520, 1, 17)
-  tokens = np.arange(17, dtype="<u2")
+  tokens = np.asarray(
+    [50256, 1, 2, 50256, 3, 4, 5, 50256, 6, 7, 8, 9, 50256, 10, 11, 12, 13],
+    dtype="<u2",
+  )
   path = tmp_path / "fineweb_val_000000.bin"
   path.write_bytes(header.tobytes() + tokens.tobytes())
 
@@ -302,15 +305,21 @@ def test_build_fineweb_binary_validation_dataset_uses_exact_stream(
         seq_len=4,
         token_limit=16,
       ),
-      loop=LoopConfig(batch_size=2, steps=0),
+      loop=LoopConfig(batch_size=8, steps=0),
     )
   )
 
-  assert isinstance(bundle.dataloader.dataset, FineWebBinaryDataset)
+  assert isinstance(bundle.dataloader.dataset, FineWebValidationDataset)
   assert bundle.token_count == 16
-  input_ids, targets = next(iter(bundle.dataloader))
-  torch.testing.assert_close(input_ids, torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]]))
-  torch.testing.assert_close(targets, torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8]]))
+  input_ids, targets, previous_input_ids = next(iter(bundle.dataloader))
+  torch.testing.assert_close(
+    input_ids,
+    torch.tensor(
+      [[50256, 1, 2, 50256], [50256, 3, 4, 5], [50256, 50256, 50256, 50256]]
+    ),
+  )
+  assert int((targets != -100).sum()) == 8
+  assert previous_input_ids[1, 0] == 2
 
 
 def test_build_fineweb_binary_training_dataset_uses_token_budget(

@@ -12,7 +12,7 @@ model:
   padded_vocab_size: 50304
   d_model: 768
   n_layers: 11
-  n_heads: 12
+  n_heads: 6
   d_ff: 3072
   attention_backend: torch
   loss_backend: cross_entropy
@@ -90,6 +90,7 @@ eval:
   split: val
   every_steps: 250
   max_batches: 1
+  batch_tokens: 262144
 
 checkpoint:
   enabled: false

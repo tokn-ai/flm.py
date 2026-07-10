@@ -57,9 +57,13 @@ def train_language_model(
   stage_dataloaders = _build_stage_dataloaders(config)
   eval_bundle = None
   if config.eval is not None:
+    eval_loop = config.loop
+    if config.data.kind == "fineweb_binary" and config.eval.batch_tokens is not None:
+      eval_loop = replace(config.loop, batch_size=config.eval.batch_tokens)
     eval_config = replace(
       config,
       data=replace(config.data, split=config.eval.split),
+      loop=eval_loop,
     )
     eval_bundle = build_training_dataset(eval_config)
   optimizer = _build_optimizer(config, model)
@@ -159,6 +163,12 @@ def _config_with_stage_max_seq_len(config: TrainConfig) -> TrainConfig:
       if stage.seq_len is not None
     )
   )
+  if (
+    config.data.kind == "fineweb_binary"
+    and config.eval is not None
+    and config.eval.batch_tokens is not None
+  ):
+    max_seq_len = max(max_seq_len, config.eval.batch_tokens)
   if max_seq_len == config.data.seq_len:
     return config
   return replace(config, data=replace(config.data, seq_len=max_seq_len))
@@ -405,13 +415,23 @@ def evaluate_language_model(
   total_tokens = 0
   total_batches = 0
   with torch.no_grad():
-    for input_ids, targets in dataloader:
+    for batch in dataloader:
+      if len(batch) == 2:
+        input_ids, targets = batch
+        previous_token_ids = None
+      else:
+        input_ids, targets, previous_token_ids = batch
       input_ids = input_ids.to(device)
       targets = targets.to(device)
-      _, loss = model(input_ids, targets, return_logits=False)
+      model_kwargs = (
+        {}
+        if previous_token_ids is None
+        else {"previous_token_ids": previous_token_ids.to(device)}
+      )
+      _, loss = model(input_ids, targets, return_logits=False, **model_kwargs)
       if loss is None:
         raise RuntimeError("eval loss was not produced")
-      token_count = int(input_ids.numel())
+      token_count = int(targets.ne(-100).sum())
       total_loss += float(loss.detach().cpu()) * token_count
       total_tokens += token_count
       total_batches += 1
