@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import torch
 from flm_llm import ReferenceModel, ReferenceModelConfig
 from flm_train.checkpoints import CheckpointState, save_checkpoint
 from flm_vllm.export import export_reference_checkpoint, reference_vllm_config
 from flm_vllm.importing import import_reference_export
-from flm_vllm.reference import FlmReferenceForCausalLM
+from flm_vllm.reference import (
+  FlmReferenceForCausalLM,
+  _pad_attention_output,
+  _pad_qkv_heads,
+  _vllm_weight_name,
+)
+from flm_vllm.registration import register_flm_models
 from flm_vllm.rollout import generate_vllm_rollouts, resolve_export_encoding_name
 from safetensors.torch import load_file
 
@@ -276,6 +284,149 @@ def test_resolve_export_encoding_name_uses_export_hint(tmp_path: Path) -> None:
     )
     == "unitoken:/tmp/tokenizer"
   )
+
+
+def test_generate_vllm_rollouts_configures_cpu_options(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  engine_options = {}
+  monkeypatch.delenv("VLLM_CPU_KVCACHE_SPACE", raising=False)
+  monkeypatch.delenv("VLLM_CPU_OMP_THREADS_BIND", raising=False)
+
+  class FakeModelRegistry:
+    @staticmethod
+    def get_supported_archs():
+      return []
+
+    @staticmethod
+    def register_model(name, model) -> None:
+      del name, model
+
+  class FakeLLM:
+    def __init__(self, **kwargs) -> None:
+      engine_options.update(kwargs)
+
+    def generate(self, requests, sampling):
+      del requests, sampling
+      return []
+
+  class FakeSamplingParams:
+    def __init__(self, **kwargs) -> None:
+      del kwargs
+
+  fake_vllm = ModuleType("vllm")
+  fake_vllm.LLM = FakeLLM
+  fake_vllm.ModelRegistry = FakeModelRegistry
+  fake_vllm.SamplingParams = FakeSamplingParams
+  monkeypatch.setitem(sys.modules, "vllm", fake_vllm)
+  monkeypatch.setattr(
+    "flm_vllm.rollout.get_tokenizer",
+    lambda _: SimpleNamespace(encode_ordinary=lambda value: [len(value)]),
+  )
+
+  batch = generate_vllm_rollouts(
+    model_dir=tmp_path,
+    encoding_name="test",
+    prompts=(),
+    max_new_tokens=4,
+    dtype="bfloat16",
+    cpu_kvcache_space=4,
+    cpu_omp_threads_bind="0-3",
+    enforce_eager=True,
+    max_num_batched_tokens=128,
+  )
+
+  assert batch.samples == ()
+  assert engine_options == {
+    "model": str(tmp_path),
+    "tokenizer": None,
+    "skip_tokenizer_init": True,
+    "trust_remote_code": True,
+    "dtype": "bfloat16",
+    "enforce_eager": True,
+    "max_num_batched_tokens": 128,
+  }
+  assert os.environ["VLLM_CPU_KVCACHE_SPACE"] == "4"
+  assert os.environ["VLLM_CPU_OMP_THREADS_BIND"] == "0-3"
+
+
+def test_register_flm_models_is_idempotent_and_lazy(monkeypatch) -> None:
+  registrations = []
+  supported = set()
+
+  class FakeModelRegistry:
+    @staticmethod
+    def get_supported_archs():
+      return supported
+
+    @staticmethod
+    def register_model(name, model) -> None:
+      registrations.append((name, model))
+      supported.add(name)
+
+  fake_vllm = ModuleType("vllm")
+  fake_vllm.ModelRegistry = FakeModelRegistry
+  monkeypatch.setitem(sys.modules, "vllm", fake_vllm)
+
+  register_flm_models()
+  register_flm_models()
+
+  assert registrations == [
+    ("FlmReferenceForCausalLM", "flm_vllm.reference:FlmReferenceForCausalLM")
+  ]
+
+
+def test_reference_vllm_weight_names_match_native_llama_layers() -> None:
+  assert _vllm_weight_name("token_embedding.weight") == "model.embed_tokens.weight"
+  assert _vllm_weight_name("blocks.3.attn_norm.weight") == (
+    "model.layers.3.input_layernorm.weight"
+  )
+  assert _vllm_weight_name("blocks.3.attn.qkv.weight") == (
+    "model.layers.3.self_attn.qkv_proj.weight"
+  )
+  assert _vllm_weight_name("blocks.3.attn.out.weight") == (
+    "model.layers.3.self_attn.o_proj.weight"
+  )
+  assert _vllm_weight_name("blocks.3.ffn_norm.weight") == (
+    "model.layers.3.post_attention_layernorm.weight"
+  )
+  assert _vllm_weight_name("blocks.3.ffn.up.weight") == (
+    "model.layers.3.mlp.gate_up_proj.weight"
+  )
+  assert _vllm_weight_name("blocks.3.ffn.down.weight") == (
+    "model.layers.3.mlp.down_proj.weight"
+  )
+  assert _vllm_weight_name("norm.weight") == "model.norm.weight"
+  assert _vllm_weight_name("lm_head.weight") == "lm_head.weight"
+
+
+def test_reference_vllm_cpu_head_padding_preserves_logical_components() -> None:
+  qkv = torch.arange(3 * 2 * 4 * 3).reshape(3 * 2 * 4, 3)
+  padded_qkv = _pad_qkv_heads(
+    qkv,
+    n_heads=2,
+    logical_head_dim=4,
+    physical_head_dim=8,
+  ).reshape(3, 2, 8, 3)
+  source_qkv = qkv.reshape(3, 2, 4, 3)
+
+  torch.testing.assert_close(padded_qkv[:2, :, 0:4:2], source_qkv[:2, :, :2])
+  torch.testing.assert_close(padded_qkv[:2, :, 4:8:2], source_qkv[:2, :, 2:])
+  torch.testing.assert_close(padded_qkv[2, :, :4], source_qkv[2])
+  assert torch.count_nonzero(padded_qkv[:2, :, 1:4:2]) == 0
+  assert torch.count_nonzero(padded_qkv[:2, :, 5:8:2]) == 0
+  assert torch.count_nonzero(padded_qkv[2, :, 4:]) == 0
+
+  output = torch.arange(5 * 2 * 4).reshape(5, 2 * 4)
+  padded_output = _pad_attention_output(
+    output,
+    n_heads=2,
+    logical_head_dim=4,
+    physical_head_dim=8,
+  ).reshape(5, 2, 8)
+  torch.testing.assert_close(padded_output[:, :, :4], output.reshape(5, 2, 4))
+  assert torch.count_nonzero(padded_output[:, :, 4:]) == 0
 
 
 def test_reference_vllm_config_rejects_non_reference_model() -> None:

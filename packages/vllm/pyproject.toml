@@ -16,6 +16,9 @@ flm-vllm-export = "flm_vllm.cli:export_main"
 flm-vllm-import = "flm_vllm.cli:import_main"
 flm-vllm-rollout = "flm_vllm.cli:rollout_main"
 
+[project.entry-points."vllm.general_plugins"]
+flm_models = "flm_vllm.registration:register_flm_models"
+
 [tool.uv.sources]
 flm-datasets = { workspace = true }
 flm-llm = { workspace = true }
