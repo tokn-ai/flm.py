@@ -151,8 +151,22 @@ def test_normuon_step_tracks_low_rank_variance_and_updates_parameter() -> None:
 
 
 def test_normuon_rejects_non_matrix_parameters() -> None:
-  with pytest.raises(ValueError, match="only supports 2D"):
+  with pytest.raises(ValueError, match="matrix parameters"):
     NorMuon([nn.Parameter(torch.ones(2))])
+
+
+def test_normuon_updates_batched_matrices_independently() -> None:
+  parameter = nn.Parameter(torch.ones(2, 3, 4))
+  optimizer = NorMuon([parameter], lr=0.01, weight_decay=0.0)
+  parameter.grad = torch.stack((torch.ones(3, 4), 2 * torch.ones(3, 4)))
+  before = parameter.detach().clone()
+
+  optimizer.step()
+
+  assert not torch.equal(parameter, before)
+  state = optimizer.state[parameter]
+  assert state["momentum_buffer"].shape == parameter.shape
+  assert state["second_momentum_buffer"].shape == (2, 1, 4)
 
 
 def test_cautious_adamw_decays_only_updates_aligned_with_parameters() -> None:

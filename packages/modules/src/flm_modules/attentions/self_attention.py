@@ -87,6 +87,7 @@ class QKNormSelfAttention(nn.Module):
     zero_init_out: bool = False,
     paired_heads: bool = False,
     speedrun_yarn: bool = False,
+    split_qk: bool = False,
     max_seq_len: int = 2048,
   ) -> None:
     super().__init__()
@@ -99,9 +100,21 @@ class QKNormSelfAttention(nn.Module):
     self.backend = AttentionBackend(backend)
     self.causal = causal
     self.paired_heads = paired_heads
+    self.split_qk = split_qk
     if paired_heads and n_heads % 2:
       raise ValueError("paired-head attention requires an even number of heads")
-    self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
+    if split_qk:
+      if bias:
+        raise ValueError("split QK attention does not support bias")
+      if n_heads % 2:
+        raise ValueError("split QK attention requires an even number of heads")
+      self.qk = nn.Parameter(torch.empty(2, n_heads // 2, 2 * self.head_dim, d_model))
+      self.v = nn.Linear(d_model, d_model, bias=False)
+      self.qkv = None
+    else:
+      self.register_parameter("qk", None)
+      self.v = None
+      self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
     self.out = nn.Linear(d_model, d_model, bias=bias)
     if speedrun_yarn:
       self.yarn = SpeedrunYaRN(
@@ -135,7 +148,20 @@ class QKNormSelfAttention(nn.Module):
     attn_mask: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_len, _ = x.shape
-    q, k, v = (qkv_scale * self.qkv(x)).chunk(3, dim=-1)
+    if self.qk is not None and self.v is not None:
+      qk = F.linear(x, self.qk.flatten(0, 2)).view(
+        batch_size,
+        seq_len,
+        2,
+        self.d_model,
+      )
+      q, k = qk.unbind(dim=2)
+      v = self.v(x)
+      q, k, v = qkv_scale * q, qkv_scale * k, qkv_scale * v
+    else:
+      if self.qkv is None:
+        raise RuntimeError("attention QKV projection is unavailable")
+      q, k, v = (qkv_scale * self.qkv(x)).chunk(3, dim=-1)
     q = self._split_heads(q)
     k = self._split_heads(k)
     v = self._split_heads(v)

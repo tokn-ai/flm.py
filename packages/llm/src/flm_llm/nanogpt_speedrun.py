@@ -34,6 +34,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
       zero_init_out=False,
       paired_heads=layer_index in config.paired_head_layers,
       speedrun_yarn=True,
+      split_qk=True,
       max_seq_len=config.max_seq_len,
     )
     self.ffn = ReLUSquared(
@@ -43,7 +44,10 @@ class NanoGPTSpeedrunBlock(nn.Module):
       zero_init_down=True,
     )
     bound = 3**0.5 * 0.5 * config.d_model**-0.5
-    nn.init.uniform_(self.attn.qkv.weight, -bound, bound)
+    if self.attn.qk is None or self.attn.v is None:
+      raise RuntimeError("speedrun attention split projections are unavailable")
+    nn.init.uniform_(self.attn.qk, -bound, bound)
+    nn.init.uniform_(self.attn.v.weight, -bound, bound)
     nn.init.uniform_(self.attn.out.weight, -bound, bound)
     nn.init.uniform_(self.ffn.up.weight, -bound, bound)
 

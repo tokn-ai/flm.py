@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Iterable
 
 import torch
@@ -113,8 +112,8 @@ class NorMuon(Optimizer):
     super().__init__(params, defaults)
     for group in self.param_groups:
       for param in group["params"]:
-        if param.ndim != 2:
-          raise ValueError("NorMuon only supports 2D matrix parameters")
+        if param.ndim < 2:
+          raise ValueError("NorMuon only supports matrix parameters")
 
   @torch.no_grad()
   def step(self, closure: Callable[[], object] | None = None) -> object | None:
@@ -318,7 +317,7 @@ def configure_speedrun_normuon(
 
 
 def _use_matrix_optimizer(name: str, param: nn.Parameter) -> bool:
-  if param.ndim != 2:
+  if param.ndim < 2:
     return False
   if any(token in name for token in ("embedding", "lm_head", "gate", "norm")):
     return False
@@ -350,7 +349,9 @@ def _speedrun_adam_settings(
     return 0.25, wd_scale, (0.9, 0.99)
   if name in {"attention_gate_weights", "value_gate_weights"}:
     return 1.0, 1.0, (0.9, 0.99)
-  if name in {"residual_scales", "token_smear.scale", "block_skip_logit"}:
+  if name in {"token_smear.scale", "block_skip_logit", "attention_scales"}:
+    return 5.0, 0.0, (0.9, 0.99)
+  if name == "residual_scales":
     return 5.0, 0.0, (0.9, 0.95)
   if name in {
     "post_scales",
@@ -398,7 +399,7 @@ _POLAR_EXPRESS_COEFFICIENTS = (
   (4.042929935166739, -2.808917465908714, 0.5000178451051316),
   (3.8916678022926607, -2.772484153217685, 0.5060648178503393),
   (3.285753657755655, -2.3681294933425376, 0.46449024233003106),
-  (2.3465413258596377, -1.709782838708108, 0.42323551169305323),
+  (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 )
 
 
@@ -407,13 +408,13 @@ def _polar_express(update: torch.Tensor) -> torch.Tensor:
   x = update.bfloat16()
   transposed = x.shape[-2] > x.shape[-1]
   if transposed:
-    x = x.T
-  x = x / (x.norm() * 1.02 + 1e-6)
+    x = x.mT
+  x = x / (x.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
   for a, b, c in _POLAR_EXPRESS_COEFFICIENTS:
-    gram = x @ x.T
+    gram = x @ x.mT
     x = a * x + (b * gram + c * gram @ gram) @ x
   if transposed:
-    x = x.T
+    x = x.mT
   return x.to(original_dtype)
 
 
@@ -426,14 +427,18 @@ def _normuon_variance_reduction(
 ) -> torch.Tensor:
   variance = update.float().square().mean(dim=red_dim, keepdim=True)
   red_dim_size = update.size(red_dim)
-  original_norm = (variance.sum() * red_dim_size).sqrt()
+  original_norm = (variance.sum(dim=(-2, -1), keepdim=True) * red_dim_size).sqrt()
   second_momentum.lerp_(variance, 1.0 - beta2)
   scale = second_momentum.clamp_min(1e-10).rsqrt()
-  scaled_norm = (variance * red_dim_size * scale.float().square()).sum().sqrt()
+  scaled_norm = (
+    (variance * red_dim_size * scale.float().square())
+    .sum(dim=(-2, -1), keepdim=True)
+    .sqrt()
+  )
   return update * scale * (original_norm / scaled_norm.clamp_min(1e-10))
 
 
 def _adjust_muon_lr(lr: float, shape: torch.Size) -> float:
-  rows = shape[0]
-  cols = math.prod(shape[1:])
+  rows = shape[-2]
+  cols = shape[-1]
   return lr * max(1.0, rows / cols) ** 0.5
