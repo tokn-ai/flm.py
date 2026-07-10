@@ -47,6 +47,9 @@ are intentionally outside this configuration.
 The 16M experiment keeps the current speedrun topology and optimizer while
 scaling it to the existing 8,192-token Unitoken FineWeb dataset. It has
 15,931,066 trainable parameters and a 37,048,320-token staged training budget.
+Six-way gradient accumulation preserves that effective budget while keeping
+the CUDA microbatches within an 8 GiB GPU. File and TensorBoard logging are
+enabled for both the smoke and full runs.
 
 Run the two-step launch smoke test first:
 

@@ -30,7 +30,12 @@ def test_16m_speedrun_schedule_matches_reference_token_budget() -> None:
   token_budget = 0
   for stage in config.speedrun_schedule.stages:
     duration = stage.end_step - previous_end
-    token_budget += duration * stage.batch_size * stage.seq_len
+    token_budget += (
+      duration
+      * stage.batch_size
+      * stage.seq_len
+      * config.loop.gradient_accumulation_steps
+    )
     previous_end = stage.end_step
 
   assert token_budget == 37_048_320

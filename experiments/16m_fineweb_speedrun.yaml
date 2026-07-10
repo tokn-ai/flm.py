@@ -1,4 +1,4 @@
-name: 16m_fineweb_10bt_speedrun
+name: 16m_fineweb_10bt_speedrun_ga6
 
 data:
   kind: token_dataset
@@ -48,7 +48,7 @@ speedrun_schedule:
   final_eval_long_window: 1024
   stages:
     - end_step: 330
-      batch_size: 36
+      batch_size: 6
       seq_len: 512
       learning_rate_scale: 1.0
       mtp_weights: [1.0, 0.5, 0.25]
@@ -56,7 +56,7 @@ speedrun_schedule:
       short_window: 64
       long_window: 192
     - end_step: 660
-      batch_size: 36
+      batch_size: 6
       seq_len: 1024
       learning_rate_scale: 1.52
       mtp_weights: [1.0, 0.5]
@@ -64,7 +64,7 @@ speedrun_schedule:
       short_window: 192
       long_window: 448
     - end_step: 990
-      batch_size: 54
+      batch_size: 9
       seq_len: 1024
       learning_rate_scale: 1.73
       mtp_weights: [1.0]
@@ -72,7 +72,7 @@ speedrun_schedule:
       short_window: 320
       long_window: 704
     - end_step: 1000
-      batch_size: 54
+      batch_size: 9
       seq_len: 1024
       learning_rate_scale: 1.0
       mtp_weights: [1.0]
@@ -84,9 +84,9 @@ loop:
   seed: 42
   device: cuda
   dtype: bfloat16
-  batch_size: 36
+  batch_size: 6
   steps: 1000
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 6
 
 eval:
   split: test
@@ -115,3 +115,4 @@ secrets:
 
 sinks:
   - kind: files
+  - kind: tensorboard

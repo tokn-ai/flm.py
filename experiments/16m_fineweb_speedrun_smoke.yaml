@@ -67,3 +67,4 @@ secrets:
 
 sinks:
   - kind: files
+  - kind: tensorboard
