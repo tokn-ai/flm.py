@@ -57,6 +57,7 @@ class NanoGPTSpeedrunConfig:
   bigram_vocab_size: int | None = None
   bigram_dim: int = 192
   bigram_sign_table_rows: int = 8192
+  mtp_weights: tuple[float, ...] = (1.0, 0.5, 0.25)
   embedding_skip: bool = True
   value_residual: bool = True
   block_skip_from: int | None = 3

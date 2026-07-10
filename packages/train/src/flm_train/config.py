@@ -743,6 +743,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       bigram_vocab_size=_optional_int(value.get("bigram_vocab_size")),
       bigram_dim=int(value.get("bigram_dim", 192)),
       bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),
+      mtp_weights=_float_tuple(value.get("mtp_weights", (1.0, 0.5, 0.25))),
       embedding_skip=bool(value.get("embedding_skip", True)),
       value_residual=bool(value.get("value_residual", True)),
       block_skip_from=_optional_int(value.get("block_skip_from", 3)),
@@ -811,6 +812,12 @@ def _int_tuple(value: Any) -> tuple[int, ...]:
   if not isinstance(value, list | tuple):
     raise ValueError("expected a list of integers")
   return tuple(int(item) for item in value)
+
+
+def _float_tuple(value: Any) -> tuple[float, ...]:
+  if not isinstance(value, list | tuple):
+    raise ValueError("expected a list of numbers")
+  return tuple(float(item) for item in value)
 
 
 def _optional_float(value: Any) -> float | None:

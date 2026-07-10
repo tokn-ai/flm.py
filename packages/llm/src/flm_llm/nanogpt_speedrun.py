@@ -77,6 +77,10 @@ class NanoGPTSpeedrunModel(nn.Module):
         raise ValueError("logit_sigmoid_scale must be positive")
       if config.logit_sigmoid_temperature <= 0:
         raise ValueError("logit_sigmoid_temperature must be positive")
+    if not config.mtp_weights or config.mtp_weights[0] <= 0:
+      raise ValueError("mtp_weights must start with a positive primary weight")
+    if any(weight < 0 for weight in config.mtp_weights):
+      raise ValueError("mtp_weights must be non-negative")
     if (config.block_skip_from is None) != (config.block_skip_to is None):
       raise ValueError("block skip endpoints must both be set or both be None")
     if config.block_skip_from is not None:
@@ -178,6 +182,7 @@ class NanoGPTSpeedrunModel(nn.Module):
     needs_logits_for_loss = targets is not None and (
       self.config.logit_sigmoid_scale is not None
       or self.config.logit_softcap is not None
+      or (self.training and len(self.config.mtp_weights) > 1)
     )
     logits = (
       self._logits(hidden_states)
@@ -210,10 +215,11 @@ class NanoGPTSpeedrunModel(nn.Module):
     if (
       self.config.logit_sigmoid_scale is not None
       or self.config.logit_softcap is not None
+      or (self.training and len(self.config.mtp_weights) > 1)
     ):
       if logits is None:
         raise RuntimeError("softcapped loss requires logits")
-      return F.cross_entropy(logits.flatten(0, 1), targets.flatten())
+      return self._multi_token_loss(logits, targets)
     return language_model_loss(
       hidden_states=hidden_states,
       classifier_weight=self.lm_head.weight,
@@ -221,3 +227,23 @@ class NanoGPTSpeedrunModel(nn.Module):
       backend=self.config.loss_backend,
       chunk_size=self.config.loss_chunk_size,
     )
+
+  def _multi_token_loss(
+    self,
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+  ) -> torch.Tensor:
+    weights = self.config.mtp_weights if self.training else (1.0,)
+    token_count = targets.numel()
+    total = logits.new_zeros((), dtype=torch.float32)
+    for offset, weight in enumerate(weights):
+      if weight == 0 or offset >= targets.shape[1]:
+        continue
+      offset_logits = logits[:, : targets.shape[1] - offset]
+      offset_targets = targets[:, offset:]
+      total = total + weight * F.cross_entropy(
+        offset_logits.flatten(0, 1).float(),
+        offset_targets.flatten(),
+        reduction="sum",
+      )
+    return total / token_count

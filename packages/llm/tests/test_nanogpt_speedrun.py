@@ -51,6 +51,7 @@ def test_nanogpt_speedrun_model_supports_chunked_loss_without_softcap() -> None:
     logit_softcap=None,
     logit_sigmoid_scale=None,
     loss_backend="linear_cross_entropy",
+    mtp_weights=(1.0,),
   )
   model = NanoGPTSpeedrunModel(config)
   input_ids = torch.randint(0, 32, (2, 8))
@@ -88,6 +89,47 @@ def test_nanogpt_speedrun_model_wires_portable_token_features() -> None:
   assert model.bigram_injection_weights is not None
   assert logits is not None
   assert torch.isfinite(logits).all()
+
+
+def test_nanogpt_speedrun_model_multi_token_loss_matches_offsets() -> None:
+  model = NanoGPTSpeedrunModel(
+    _config(
+      logit_softcap=None,
+      logit_sigmoid_scale=None,
+      mtp_weights=(1.0, 0.5),
+    )
+  )
+  logits = torch.randn(2, 4, 32)
+  targets = torch.randint(0, 32, (2, 4))
+  primary = torch.nn.functional.cross_entropy(
+    logits.flatten(0, 1),
+    targets.flatten(),
+    reduction="sum",
+  )
+  second = torch.nn.functional.cross_entropy(
+    logits[:, :-1].flatten(0, 1),
+    targets[:, 1:].flatten(),
+    reduction="sum",
+  )
+
+  loss = model._multi_token_loss(logits, targets)
+
+  torch.testing.assert_close(loss, (primary + 0.5 * second) / targets.numel())
+
+
+def test_nanogpt_speedrun_model_eval_loss_uses_primary_target_only() -> None:
+  model = NanoGPTSpeedrunModel(_config(mtp_weights=(1.0, 0.5, 0.25)))
+  model.eval()
+  logits = torch.randn(2, 4, 32)
+  targets = torch.randint(0, 32, (2, 4))
+
+  loss = model._multi_token_loss(logits, targets)
+  expected = torch.nn.functional.cross_entropy(
+    logits.flatten(0, 1),
+    targets.flatten(),
+  )
+
+  torch.testing.assert_close(loss, expected)
 
 
 def _config(**overrides) -> NanoGPTSpeedrunConfig:

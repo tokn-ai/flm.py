@@ -42,6 +42,7 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         bigram_vocab_size=model_config.bigram_vocab_size,
         bigram_dim=model_config.bigram_dim,
         bigram_sign_table_rows=model_config.bigram_sign_table_rows,
+        mtp_weights=model_config.mtp_weights,
         embedding_skip=model_config.embedding_skip,
         value_residual=model_config.value_residual,
         block_skip_from=model_config.block_skip_from,

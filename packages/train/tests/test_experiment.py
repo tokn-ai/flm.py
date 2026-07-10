@@ -298,6 +298,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
         "block_skip_from": 0,
         "block_skip_to": 3,
         "residual_decay": 0.99,
+        "mtp_weights": [1.0, 0.25],
       },
     }
   )
@@ -313,6 +314,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
     block_skip_from=0,
     block_skip_to=3,
     residual_decay=0.99,
+    mtp_weights=(1.0, 0.25),
   )
 
 
