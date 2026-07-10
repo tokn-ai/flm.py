@@ -37,7 +37,7 @@ class NanoGPTSpeedrunConfig:
   vocab_size: int = 50_304
   max_seq_len: int = 1024
   d_model: int = 768
-  n_layers: int = 12
+  n_layers: int = 11
   n_heads: int = 12
   d_ff: int = 3072
   bias: bool = False
@@ -48,10 +48,19 @@ class NanoGPTSpeedrunConfig:
   loss_chunk_size: int = 512
   logit_softcap: float | None = 30.0
   logit_scale: float = 1.0
+  logit_sigmoid_scale: float | None = 23.0
+  logit_sigmoid_bias: float = 5.0
+  logit_sigmoid_temperature: float = 7.5
+  token_smear: bool = True
+  smear_gate_dim: int = 12
+  partial_key_offset_layers: tuple[int, ...] = (3, 10)
+  bigram_vocab_size: int | None = None
+  bigram_dim: int = 192
+  bigram_sign_table_rows: int = 8192
   embedding_skip: bool = True
   value_residual: bool = True
-  block_skip_from: int | None = 2
-  block_skip_to: int | None = 5
+  block_skip_from: int | None = 3
+  block_skip_to: int | None = 6
   residual_decay: float = 1.0
   tie_embeddings: bool = True
 

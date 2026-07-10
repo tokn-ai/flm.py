@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import torch
-from flm_modules import QKNormSelfAttention, ReLUSquared, RMSNorm
+from flm_modules import (
+  BigramHashEmbedding,
+  QKNormSelfAttention,
+  ReLUSquared,
+  RMSNorm,
+  TokenSmear,
+)
 from flm_modules.losses import language_model_loss
 from torch import nn
 from torch.nn import functional as F
@@ -39,11 +45,13 @@ class NanoGPTSpeedrunBlock(nn.Module):
     *,
     value_residual: torch.Tensor | None = None,
     value_mix: torch.Tensor | float | None = None,
+    partial_key_offset: bool = False,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     attn_output, values = self.attn(
       self.attn_norm(x),
       value_residual=value_residual,
       value_mix=value_mix,
+      partial_key_offset=partial_key_offset,
     )
     x = self.residual_decay * x + attn_output
     x = self.residual_decay * x + self.ffn(self.ffn_norm(x))
@@ -64,6 +72,11 @@ class NanoGPTSpeedrunModel(nn.Module):
       raise ValueError("n_layers must be positive")
     if config.logit_softcap is not None and config.logit_softcap <= 0:
       raise ValueError("logit_softcap must be positive")
+    if config.logit_sigmoid_scale is not None:
+      if config.logit_sigmoid_scale <= 0:
+        raise ValueError("logit_sigmoid_scale must be positive")
+      if config.logit_sigmoid_temperature <= 0:
+        raise ValueError("logit_sigmoid_temperature must be positive")
     if (config.block_skip_from is None) != (config.block_skip_to is None):
       raise ValueError("block skip endpoints must both be set or both be None")
     if config.block_skip_from is not None:
@@ -72,7 +85,26 @@ class NanoGPTSpeedrunModel(nn.Module):
 
     self.config = config
     self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
-    nn.init.normal_(self.token_embedding.weight, mean=0.0, std=0.02)
+    nn.init.normal_(self.token_embedding.weight, mean=0.0, std=0.005)
+    self.token_smear = (
+      TokenSmear(config.d_model, gate_dim=config.smear_gate_dim)
+      if config.token_smear
+      else None
+    )
+    if config.bigram_vocab_size is not None:
+      if not 1 <= config.bigram_dim <= config.d_model:
+        raise ValueError("bigram_dim must be in [1, d_model]")
+      self.bigram_embedding = BigramHashEmbedding(
+        config.bigram_vocab_size,
+        config.bigram_dim,
+        sign_table_rows=config.bigram_sign_table_rows,
+      )
+      self.bigram_injection_weights = nn.Parameter(
+        torch.full((config.n_layers,), 0.05)
+      )
+    else:
+      self.bigram_embedding = None
+      self.register_parameter("bigram_injection_weights", None)
     self.blocks = nn.ModuleList(
       NanoGPTSpeedrunBlock(config) for _ in range(config.n_layers)
     )
@@ -82,9 +114,7 @@ class NanoGPTSpeedrunModel(nn.Module):
       self.lm_head.weight = self.token_embedding.weight
 
     if config.embedding_skip:
-      self.embedding_skip_weights = nn.Parameter(
-        torch.full((config.n_layers,), config.n_layers**-0.5)
-      )
+      self.embedding_skip_weights = nn.Parameter(torch.zeros(config.n_layers))
     else:
       self.register_parameter("embedding_skip_weights", None)
     if config.value_residual and config.n_layers > 1:
@@ -109,12 +139,22 @@ class NanoGPTSpeedrunModel(nn.Module):
       raise ValueError("sequence length exceeds config.max_seq_len")
 
     embeddings = self.token_embedding(input_ids)
-    x = embeddings
+    x = self.token_smear(embeddings) if self.token_smear is not None else embeddings
+    bigram_values = (
+      self.bigram_embedding(input_ids)
+      if self.bigram_embedding is not None
+      else None
+    )
     first_values = None
     block_skip = None
     for layer_index, block in enumerate(self.blocks):
       if self.embedding_skip_weights is not None:
         x = x + self.embedding_skip_weights[layer_index] * embeddings
+      if bigram_values is not None and self.bigram_injection_weights is not None:
+        x = x + self.bigram_injection_weights[layer_index] * F.pad(
+          bigram_values,
+          (0, self.config.d_model - self.config.bigram_dim),
+        )
       if layer_index == self.config.block_skip_to:
         if block_skip is None or self.block_skip_weight is None:
           raise RuntimeError("block skip source was not captured")
@@ -127,6 +167,7 @@ class NanoGPTSpeedrunModel(nn.Module):
         x,
         value_residual=first_values,
         value_mix=value_mix,
+        partial_key_offset=layer_index in self.config.partial_key_offset_layers,
       )
       if first_values is None and self.config.value_residual:
         first_values = values
@@ -134,8 +175,9 @@ class NanoGPTSpeedrunModel(nn.Module):
         block_skip = x
 
     hidden_states = self.norm(x)
-    needs_logits_for_loss = (
-      targets is not None and self.config.logit_softcap is not None
+    needs_logits_for_loss = targets is not None and (
+      self.config.logit_sigmoid_scale is not None
+      or self.config.logit_softcap is not None
     )
     logits = (
       self._logits(hidden_states)
@@ -147,7 +189,12 @@ class NanoGPTSpeedrunModel(nn.Module):
 
   def _logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
     logits = self.config.logit_scale * self.lm_head(hidden_states)
-    if self.config.logit_softcap is not None:
+    if self.config.logit_sigmoid_scale is not None:
+      logits = self.config.logit_sigmoid_scale * torch.sigmoid(
+        (logits + self.config.logit_sigmoid_bias)
+        / self.config.logit_sigmoid_temperature
+      )
+    elif self.config.logit_softcap is not None:
       cap = self.config.logit_softcap
       logits = cap * torch.tanh(logits / cap)
     return logits
@@ -160,7 +207,10 @@ class NanoGPTSpeedrunModel(nn.Module):
   ) -> torch.Tensor | None:
     if targets is None:
       return None
-    if self.config.logit_softcap is not None:
+    if (
+      self.config.logit_sigmoid_scale is not None
+      or self.config.logit_softcap is not None
+    ):
       if logits is None:
         raise RuntimeError("softcapped loss requires logits")
       return F.cross_entropy(logits.flatten(0, 1), targets.flatten())

@@ -47,7 +47,11 @@ def test_nanogpt_speedrun_model_uses_value_and_embedding_skips() -> None:
 
 
 def test_nanogpt_speedrun_model_supports_chunked_loss_without_softcap() -> None:
-  config = _config(logit_softcap=None, loss_backend="linear_cross_entropy")
+  config = _config(
+    logit_softcap=None,
+    logit_sigmoid_scale=None,
+    loss_backend="linear_cross_entropy",
+  )
   model = NanoGPTSpeedrunModel(config)
   input_ids = torch.randint(0, 32, (2, 8))
   targets = torch.randint(0, 32, (2, 8))
@@ -66,6 +70,26 @@ def test_nanogpt_speedrun_model_validates_block_skip_endpoints() -> None:
     )
 
 
+def test_nanogpt_speedrun_model_wires_portable_token_features() -> None:
+  model = NanoGPTSpeedrunModel(
+    _config(
+      bigram_vocab_size=101,
+      bigram_dim=8,
+      bigram_sign_table_rows=16,
+      partial_key_offset_layers=(1,),
+    )
+  )
+  input_ids = torch.randint(0, 32, (2, 8))
+
+  logits, _ = model(input_ids)
+
+  assert model.token_smear is not None
+  assert model.bigram_embedding is not None
+  assert model.bigram_injection_weights is not None
+  assert logits is not None
+  assert torch.isfinite(logits).all()
+
+
 def _config(**overrides) -> NanoGPTSpeedrunConfig:
   values = {
     "vocab_size": 32,
@@ -77,6 +101,7 @@ def _config(**overrides) -> NanoGPTSpeedrunConfig:
     "block_skip_from": None,
     "block_skip_to": None,
     "logit_softcap": 5.0,
+    "logit_sigmoid_scale": 5.0,
   }
   values.update(overrides)
   return NanoGPTSpeedrunConfig(**values)

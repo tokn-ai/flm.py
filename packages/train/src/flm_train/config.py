@@ -720,7 +720,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
   if kind == "nanogpt_speedrun":
     return NanoGPTSpeedrunModelConfig(
       d_model=int(value.get("d_model", 768)),
-      n_layers=int(value.get("n_layers", 12)),
+      n_layers=int(value.get("n_layers", 11)),
       n_heads=int(value.get("n_heads", 12)),
       d_ff=int(value.get("d_ff", 3072)),
       attention_backend=attention_backend,
@@ -728,10 +728,25 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       loss_chunk_size=loss_chunk_size,
       logit_softcap=_optional_float(value.get("logit_softcap", 30.0)),
       logit_scale=float(value.get("logit_scale", 1.0)),
+      logit_sigmoid_scale=_optional_float(
+        value.get("logit_sigmoid_scale", 23.0)
+      ),
+      logit_sigmoid_bias=float(value.get("logit_sigmoid_bias", 5.0)),
+      logit_sigmoid_temperature=float(
+        value.get("logit_sigmoid_temperature", 7.5)
+      ),
+      token_smear=bool(value.get("token_smear", True)),
+      smear_gate_dim=int(value.get("smear_gate_dim", 12)),
+      partial_key_offset_layers=_int_tuple(
+        value.get("partial_key_offset_layers", (3, 10))
+      ),
+      bigram_vocab_size=_optional_int(value.get("bigram_vocab_size")),
+      bigram_dim=int(value.get("bigram_dim", 192)),
+      bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),
       embedding_skip=bool(value.get("embedding_skip", True)),
       value_residual=bool(value.get("value_residual", True)),
-      block_skip_from=_optional_int(value.get("block_skip_from", 2)),
-      block_skip_to=_optional_int(value.get("block_skip_to", 5)),
+      block_skip_from=_optional_int(value.get("block_skip_from", 3)),
+      block_skip_to=_optional_int(value.get("block_skip_to", 6)),
       residual_decay=float(value.get("residual_decay", 1.0)),
       tie_embeddings=bool(value.get("tie_embeddings", True)),
     )
@@ -790,6 +805,12 @@ def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:
   if not isinstance(value, list | tuple):
     raise ValueError("attention_layer_types must be a list")
   return tuple(str(item) for item in value)
+
+
+def _int_tuple(value: Any) -> tuple[int, ...]:
+  if not isinstance(value, list | tuple):
+    raise ValueError("expected a list of integers")
+  return tuple(int(item) for item in value)
 
 
 def _optional_float(value: Any) -> float | None:
