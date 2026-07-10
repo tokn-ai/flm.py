@@ -926,6 +926,7 @@ dependencies = [
     { name = "flm-datasets" },
     { name = "flm-llm" },
     { name = "flm-train" },
+    { name = "safetensors" },
     { name = "torch" },
 ]
 
@@ -934,6 +935,7 @@ requires-dist = [
     { name = "flm-datasets", editable = "packages/datasets" },
     { name = "flm-llm", editable = "packages/llm" },
     { name = "flm-train", editable = "packages/train" },
+    { name = "safetensors", specifier = ">=0.5" },
     { name = "torch", specifier = ">=2.5" },
 ]
 

@@ -7,11 +7,13 @@ dependencies = [
   "flm-datasets",
   "flm-llm",
   "flm-train",
+  "safetensors>=0.5",
   "torch>=2.5",
 ]
 
 [project.scripts]
 flm-vllm-export = "flm_vllm.cli:export_main"
+flm-vllm-import = "flm_vllm.cli:import_main"
 flm-vllm-rollout = "flm_vllm.cli:rollout_main"
 
 [tool.uv.sources]
