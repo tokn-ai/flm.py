@@ -273,6 +273,23 @@ def test_composite_optimizer_round_trips_state() -> None:
   assert "exp_avg_sq" in restored_optimizer.state[restored.linear.bias]
 
 
+def test_normuon_restores_float_state_for_bfloat16_parameters() -> None:
+  parameter = nn.Parameter(torch.ones(4, 4, dtype=torch.bfloat16))
+  optimizer = NorMuon([parameter], lr=1e-2)
+  parameter.grad = torch.ones_like(parameter)
+  optimizer.step()
+
+  restored_parameter = nn.Parameter(torch.ones_like(parameter))
+  restored_optimizer = NorMuon([restored_parameter], lr=1e-2)
+  restored_optimizer.load_state_dict(optimizer.state_dict())
+  restored_state = restored_optimizer.state[restored_parameter]
+
+  assert restored_state["momentum_buffer"].dtype == torch.float32
+  assert restored_state["second_momentum_buffer"].dtype == torch.float32
+  restored_parameter.grad = torch.ones_like(restored_parameter)
+  restored_optimizer.step()
+
+
 def test_composite_optimizer_can_accumulate_secondary_gradients() -> None:
   model = TinyModel()
   optimizer = configure_normuon(model, learning_rate=1e-2, weight_decay=0.0)

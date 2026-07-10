@@ -119,6 +119,17 @@ class NorMuon(Optimizer):
         if param.ndim < 2:
           raise ValueError("NorMuon only supports matrix parameters")
 
+  def load_state_dict(self, state_dict: dict[str, object]) -> None:
+    super().load_state_dict(state_dict)
+    for state in self.state.values():
+      for name in ("momentum_buffer", "second_momentum_buffer"):
+        value = state.get(name)
+        if isinstance(value, torch.Tensor):
+          state[name] = value.float()
+      mantissa = state.get("mantissa")
+      if isinstance(mantissa, torch.Tensor):
+        state["mantissa"] = mantissa.to(dtype=torch.uint16)
+
   @torch.no_grad()
   def step(self, closure: Callable[[], object] | None = None) -> object | None:
     loss = None
