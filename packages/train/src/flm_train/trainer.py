@@ -42,6 +42,7 @@ class LanguageModel(Protocol):
     input_ids: torch.Tensor,
     targets: torch.Tensor | None = None,
     *,
+    previous_token_ids: torch.Tensor | None = None,
     return_logits: bool = True,
   ) -> tuple[torch.Tensor | None, torch.Tensor | None]: ...
 
@@ -210,10 +211,23 @@ class LanguageModelTrainer:
       token_count = 0
       loss_sum = 0.0
       for _ in range(self.gradient_accumulation_steps):
-        input_ids, targets, iterator = self._next_batch(iterator)
+        input_ids, targets, previous_token_ids, iterator = self._next_batch(iterator)
         input_ids = input_ids.to(self.device)
         targets = targets.to(self.device)
-        _, loss = self.model(input_ids, targets, return_logits=False)
+        previous_token_ids = (
+          None if previous_token_ids is None else previous_token_ids.to(self.device)
+        )
+        model_kwargs = (
+          {}
+          if previous_token_ids is None
+          else {"previous_token_ids": previous_token_ids}
+        )
+        _, loss = self.model(
+          input_ids,
+          targets,
+          return_logits=False,
+          **model_kwargs,
+        )
         if loss is None:
           raise RuntimeError("training loss was not produced")
         (loss / self.gradient_accumulation_steps).backward()
@@ -357,14 +371,19 @@ class LanguageModelTrainer:
 
   def _next_batch(
     self,
-    iterator: Iterator[tuple[torch.Tensor, torch.Tensor]],
-  ) -> tuple[torch.Tensor, torch.Tensor, Iterator[tuple[torch.Tensor, torch.Tensor]]]:
+    iterator: Iterator,
+  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, Iterator]:
     try:
-      input_ids, targets = next(iterator)
+      batch = next(iterator)
     except StopIteration:
       iterator = iter(self.dataloader)
-      input_ids, targets = next(iterator)
-    return input_ids, targets, iterator
+      batch = next(iterator)
+    if len(batch) == 2:
+      input_ids, targets = batch
+      previous_token_ids = None
+    else:
+      input_ids, targets, previous_token_ids = batch
+    return input_ids, targets, previous_token_ids, iterator
 
   def _should_eval(self, step: int) -> bool:
     return (

@@ -339,9 +339,10 @@ def test_build_fineweb_binary_training_dataset_uses_token_budget(
   )
 
   assert isinstance(bundle.dataloader.dataset, FineWebPackedDataset)
-  input_ids, targets = next(iter(bundle.dataloader))
+  input_ids, targets, previous_input_ids = next(iter(bundle.dataloader))
   assert input_ids.ndim == targets.ndim == 2
   assert int((targets != -100).sum()) == 4
+  assert previous_input_ids[1, 0] == input_ids[0, -1]
 
 
 def test_build_speedrun_model_supports_padded_vocabulary() -> None:

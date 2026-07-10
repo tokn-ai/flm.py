@@ -378,19 +378,33 @@ class NanoGPTSpeedrunModel(nn.Module):
     input_ids: torch.Tensor,
     targets: torch.Tensor | None = None,
     *,
+    previous_token_ids: torch.Tensor | None = None,
     return_logits: bool = True,
   ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     if input_ids.ndim != 2:
       raise ValueError("input_ids must have shape (batch, seq_len)")
     if input_ids.shape[1] > self.config.max_seq_len:
       raise ValueError("sequence length exceeds config.max_seq_len")
+    if previous_token_ids is not None and previous_token_ids.shape != input_ids.shape:
+      raise ValueError("previous_token_ids must have the same shape as input_ids")
 
     embeddings = self.token_embedding(input_ids)
-    x = self.token_smear(embeddings) if self.token_smear is not None else embeddings
+    previous_embeddings = None
+    if previous_token_ids is not None:
+      valid_previous = previous_token_ids >= 0
+      previous_embeddings = self.token_embedding(previous_token_ids.clamp_min(0))
+      previous_embeddings = previous_embeddings * valid_previous.unsqueeze(-1)
+    x = (
+      self.token_smear(embeddings, previous_embeddings)
+      if self.token_smear is not None
+      else embeddings
+    )
     x0 = _speedrun_norm(x)
     x = x0
     bigram_values = (
-      self.bigram_embedding(input_ids) if self.bigram_embedding is not None else None
+      self.bigram_embedding(input_ids, previous_token_ids)
+      if self.bigram_embedding is not None
+      else None
     )
     padded_bigram_values = (
       None

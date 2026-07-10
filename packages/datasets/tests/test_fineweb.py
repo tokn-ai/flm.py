@@ -78,7 +78,7 @@ def test_fineweb_packed_dataset_aligns_and_truncates_documents(tmp_path: Path) -
 
   batches = list(dataset)
 
-  input_ids, targets = batches[0]
+  input_ids, targets, previous = batches[0]
   torch.testing.assert_close(
     input_ids,
     torch.tensor([[99, 1, 2, 3], [99, 5, 99, 99]]),
@@ -87,7 +87,11 @@ def test_fineweb_packed_dataset_aligns_and_truncates_documents(tmp_path: Path) -
     targets,
     torch.tensor([[1, 2, 3, 99], [5, 6, -100, -100]]),
   )
-  next_inputs, next_targets = batches[1]
+  torch.testing.assert_close(
+    previous,
+    torch.tensor([[-1, 99, 1, 2], [3, 99, -1, -1]]),
+  )
+  next_inputs, next_targets, _ = batches[1]
   torch.testing.assert_close(
     next_inputs,
     torch.tensor([[99, 7, 8, 9], [99, 10, 99, 99]]),
@@ -115,9 +119,9 @@ def test_fineweb_packed_dataset_accepts_runtime_batch_shape_changes(
   )
   iterator = iter(dataset)
 
-  first_inputs, _ = next(iterator)
+  first_inputs, _, _ = next(iterator)
   dataset.set_batch_shape(batch_tokens=5, max_seq_len=2)
-  second_inputs, second_targets = next(iterator)
+  second_inputs, second_targets, _ = next(iterator)
 
   assert first_inputs.shape == (2, 3)
   assert second_inputs.shape == (3, 2)

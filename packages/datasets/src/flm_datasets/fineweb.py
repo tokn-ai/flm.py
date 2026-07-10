@@ -113,7 +113,9 @@ class FineWebBinaryDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     return np.concatenate(pieces)
 
 
-class FineWebPackedDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
+class FineWebPackedDataset(
+  IterableDataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+):
   """BOS-aligned document-fragment batches matching speedrun training order.
 
   Each yielded item is already a complete token-budget batch. Document fragments
@@ -170,9 +172,9 @@ class FineWebPackedDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
         bos_index = 0
         bos_positions = self._bos_positions(shard_index)
         continue
-      input_ids, targets, bos_index = packed
+      input_ids, targets, previous_input_ids, bos_index = packed
       yielded += 1
-      yield input_ids, targets
+      yield input_ids, targets, previous_input_ids
 
   def _bos_positions(self, shard_index: int) -> np.ndarray:
     return np.flatnonzero(self.shards[shard_index] == self.bos_token_id).astype(
@@ -185,7 +187,7 @@ class FineWebPackedDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
     tokens: np.ndarray,
     bos_positions: np.ndarray,
     bos_index: int,
-  ) -> tuple[torch.Tensor, torch.Tensor, int] | None:
+  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int] | None:
     starts = []
     ends = []
     total = 0
@@ -212,17 +214,24 @@ class FineWebPackedDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
     )
     flat_inputs = buffer[:-1].astype(np.int64, copy=False)
     flat_targets = buffer[1:].astype(np.int64, copy=False)
+    flat_previous = np.empty_like(flat_inputs)
+    flat_previous[0] = -1
+    flat_previous[1:] = flat_inputs[:-1]
     lengths = [end - start for start, end in zip(starts, ends, strict=True)]
     lengths[-1] -= 1
     row_count = len(lengths)
     width = max(lengths)
     input_ids = torch.full((row_count, width), self.bos_token_id, dtype=torch.long)
     targets = torch.full((row_count, width), -100, dtype=torch.long)
+    previous_input_ids = torch.full((row_count, width), -1, dtype=torch.long)
     offset = 0
     for row, length in enumerate(lengths):
       input_ids[row, :length] = torch.from_numpy(flat_inputs[offset : offset + length])
       targets[row, :length] = torch.from_numpy(flat_targets[offset : offset + length])
+      previous_input_ids[row, :length] = torch.from_numpy(
+        flat_previous[offset : offset + length]
+      )
       offset += length
     if offset != self.batch_tokens:
       raise RuntimeError("packed FineWeb batch did not consume its token budget")
-    return input_ids, targets, index
+    return input_ids, targets, previous_input_ids, index

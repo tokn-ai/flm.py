@@ -26,6 +26,18 @@ def test_token_smear_injects_only_previous_tokens() -> None:
   torch.testing.assert_close(output[:, 1:], x[:, 1:] + x[:, :-1])
 
 
+def test_token_smear_accepts_cross_row_predecessors() -> None:
+  smear = TokenSmear(d_model=4, gate_dim=2)
+  with torch.no_grad():
+    smear.scale.fill_(2.0)
+  x = torch.arange(24, dtype=torch.float32).view(2, 3, 4)
+  previous = torch.full_like(x, 7.0)
+
+  output = smear(x, previous)
+
+  torch.testing.assert_close(output, x + previous)
+
+
 def test_bigram_hash_embedding_matches_reference_hash() -> None:
   layer = BigramHashEmbedding(
     num_embeddings=101,
@@ -60,6 +72,23 @@ def test_bigram_hash_embedding_is_zero_at_initialization() -> None:
     layer(input_ids),
     torch.zeros(1, 3, 4),
   )
+
+
+def test_bigram_hash_embedding_accepts_cross_row_predecessors() -> None:
+  layer = BigramHashEmbedding(
+    num_embeddings=101,
+    embedding_dim=4,
+    sign_table_rows=8,
+  )
+  input_ids = torch.tensor([[1, 2], [3, 4]])
+  previous = torch.tensor([[-1, 1], [2, 3]])
+
+  hashes = layer.hash_ids(input_ids, previous)
+  signs = layer.sign_ids(input_ids, previous)
+
+  assert hashes[0, 0] == 100
+  assert hashes[1, 0] == (36_313 * 3 ^ 27_191 * 2) % 100
+  assert signs[1, 0] == (2 ^ 3) % 8
 
 
 def test_speedrun_modules_validate_shapes() -> None:
