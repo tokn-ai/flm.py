@@ -9,14 +9,11 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 
+from flm_modules.optim.composite import CompositeOptimizer
+
 
 class Muon(Optimizer):
-  """Muon optimizer with AdamW fallback groups.
-
-  Muon applies momentum followed by a Newton-Schulz matrix orthogonalization to
-  matrix-like parameters. Non-matrix parameters use AdamW updates, which is the
-  standard split for biases, norms, and other scalar/vector parameters.
-  """
+  """Muon optimizer for 2D matrix parameters."""
 
   def __init__(
     self,
@@ -27,8 +24,6 @@ class Muon(Optimizer):
     weight_decay: float = 0.1,
     nesterov: bool = True,
     ns_steps: int = 5,
-    adamw_betas: tuple[float, float] = (0.9, 0.95),
-    adamw_eps: float = 1e-8,
   ) -> None:
     if lr < 0.0:
       raise ValueError(f"invalid learning rate: {lr}")
@@ -38,13 +33,6 @@ class Muon(Optimizer):
       raise ValueError(f"invalid weight_decay value: {weight_decay}")
     if ns_steps < 1:
       raise ValueError(f"invalid ns_steps value: {ns_steps}")
-    beta1, beta2 = adamw_betas
-    if not 0.0 <= beta1 < 1.0:
-      raise ValueError(f"invalid AdamW beta1 value: {beta1}")
-    if not 0.0 <= beta2 < 1.0:
-      raise ValueError(f"invalid AdamW beta2 value: {beta2}")
-    if adamw_eps < 0.0:
-      raise ValueError(f"invalid AdamW epsilon value: {adamw_eps}")
 
     defaults = {
       "lr": lr,
@@ -52,11 +40,15 @@ class Muon(Optimizer):
       "weight_decay": weight_decay,
       "nesterov": nesterov,
       "ns_steps": ns_steps,
-      "adamw_betas": adamw_betas,
-      "adamw_eps": adamw_eps,
-      "use_muon": True,
     }
     super().__init__(params, defaults)
+    for group in self.param_groups:
+      for param in group["params"]:
+        if param.ndim != 2:
+          raise ValueError(
+            "Muon only supports 2D parameters, "
+            f"but found parameter with shape {tuple(param.shape)}"
+          )
 
   @torch.no_grad()
   def step(self, closure: Callable[[], object] | None = None) -> object | None:
@@ -66,10 +58,7 @@ class Muon(Optimizer):
         loss = closure()
 
     for group in self.param_groups:
-      if group["use_muon"]:
-        self._muon_step(group)
-      else:
-        self._adamw_step(group)
+      self._muon_step(group)
     return loss
 
   def _muon_step(self, group: dict[str, object]) -> None:
@@ -97,40 +86,6 @@ class Muon(Optimizer):
       update = _orthogonalize_update(update, ns_steps=ns_steps)
       param.add_(update, alpha=-_adjust_muon_lr(lr, param.shape))
 
-  def _adamw_step(self, group: dict[str, object]) -> None:
-    lr = float(group["lr"])
-    weight_decay = float(group["weight_decay"])
-    beta1, beta2 = group["adamw_betas"]
-    eps = float(group["adamw_eps"])
-
-    for param in group["params"]:
-      if param.grad is None:
-        continue
-      grad = param.grad
-      if grad.is_sparse:
-        raise RuntimeError("AdamW fallback does not support sparse gradients")
-
-      if weight_decay:
-        param.mul_(1.0 - lr * weight_decay)
-
-      state = self.state[param]
-      if len(state) == 0:
-        state["step"] = 0
-        state["exp_avg"] = torch.zeros_like(param)
-        state["exp_avg_sq"] = torch.zeros_like(param)
-      state["step"] += 1
-      exp_avg = state["exp_avg"]
-      exp_avg_sq = state["exp_avg_sq"]
-
-      exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-      exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
-
-      bias_correction1 = 1.0 - beta1 ** int(state["step"])
-      bias_correction2 = 1.0 - beta2 ** int(state["step"])
-      step_size = lr / bias_correction1
-      denom = exp_avg_sq.sqrt().div_(bias_correction2**0.5).add_(eps)
-      param.addcdiv_(exp_avg, denom, value=-step_size)
-
 
 def configure_muon(
   model: nn.Module,
@@ -141,7 +96,7 @@ def configure_muon(
   ns_steps: int = 5,
   adamw_betas: tuple[float, float] = (0.9, 0.95),
   adamw_eps: float = 1e-8,
-) -> Muon:
+) -> CompositeOptimizer:
   muon_params: list[nn.Parameter] = []
   adamw_params: list[nn.Parameter] = []
 
@@ -153,20 +108,28 @@ def configure_muon(
     else:
       adamw_params.append(param)
 
-  param_groups: Iterable[dict[str, object]] = [
-    {"params": muon_params, "use_muon": True, "weight_decay": weight_decay},
-    {"params": adamw_params, "use_muon": False, "weight_decay": 0.0},
-  ]
-  return Muon(
-    param_groups,
-    lr=learning_rate,
-    momentum=momentum,
-    weight_decay=weight_decay,
-    nesterov=nesterov,
-    ns_steps=ns_steps,
-    adamw_betas=adamw_betas,
-    adamw_eps=adamw_eps,
-  )
+  optimizers: list[torch.optim.Optimizer] = []
+  if muon_params:
+    optimizers.append(
+      Muon(
+        muon_params,
+        lr=learning_rate,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        nesterov=nesterov,
+        ns_steps=ns_steps,
+      )
+    )
+  if adamw_params:
+    optimizers.append(
+      torch.optim.AdamW(
+        [{"params": adamw_params, "weight_decay": 0.0}],
+        lr=learning_rate,
+        betas=adamw_betas,
+        eps=adamw_eps,
+      )
+    )
+  return CompositeOptimizer(optimizers)
 
 
 def _orthogonalize_update(update: torch.Tensor, *, ns_steps: int) -> torch.Tensor:

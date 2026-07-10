@@ -34,11 +34,12 @@ from flm_modules.moe import (
   RouterScoring,
 )
 from flm_modules.norm import RMSNorm
-from flm_modules.optim import Muon, configure_adamw, configure_muon
+from flm_modules.optim import CompositeOptimizer, Muon, configure_adamw, configure_muon
 from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
 
 __all__ = [
   "AttentionBackend",
+  "CompositeOptimizer",
   "DeepSeekDSA",
   "DeepSeekDSAIndexer",
   "DeepSeekMLA",

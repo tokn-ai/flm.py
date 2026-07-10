@@ -1,6 +1,6 @@
 import pytest
 import torch
-from flm_modules import Muon, configure_adamw, configure_muon
+from flm_modules import CompositeOptimizer, Muon, configure_adamw, configure_muon
 from torch import nn
 
 
@@ -46,7 +46,7 @@ def test_configure_adamw_groups_decay_and_no_decay_parameters() -> None:
   assert model.frozen not in no_decay_params
 
 
-def test_configure_muon_groups_matrix_and_vector_parameters() -> None:
+def test_configure_muon_builds_composite_for_matrix_and_vector_parameters() -> None:
   model = TinyModel()
 
   optimizer = configure_muon(
@@ -60,17 +60,19 @@ def test_configure_muon_groups_matrix_and_vector_parameters() -> None:
     adamw_eps=1e-7,
   )
 
-  assert isinstance(optimizer, Muon)
-  muon_params = set(optimizer.param_groups[0]["params"])
-  adamw_params = set(optimizer.param_groups[1]["params"])
-  assert optimizer.param_groups[0]["use_muon"] is True
-  assert optimizer.param_groups[1]["use_muon"] is False
+  assert isinstance(optimizer, CompositeOptimizer)
+  assert len(optimizer.optimizers) == 2
+  muon_optimizer, adamw_optimizer = optimizer.optimizers
+  assert isinstance(muon_optimizer, Muon)
+  assert isinstance(adamw_optimizer, torch.optim.AdamW)
+  muon_params = set(muon_optimizer.param_groups[0]["params"])
+  adamw_params = set(adamw_optimizer.param_groups[0]["params"])
   assert optimizer.param_groups[0]["lr"] == 1e-3
   assert optimizer.param_groups[0]["momentum"] == 0.8
   assert optimizer.param_groups[0]["nesterov"] is False
   assert optimizer.param_groups[0]["ns_steps"] == 3
-  assert optimizer.param_groups[1]["adamw_betas"] == (0.7, 0.9)
-  assert optimizer.param_groups[1]["adamw_eps"] == 1e-7
+  assert optimizer.param_groups[1]["betas"] == (0.7, 0.9)
+  assert optimizer.param_groups[1]["eps"] == 1e-7
   assert optimizer.param_groups[0]["weight_decay"] == 0.2
   assert optimizer.param_groups[1]["weight_decay"] == 0.0
   assert model.linear.weight in muon_params
@@ -79,6 +81,11 @@ def test_configure_muon_groups_matrix_and_vector_parameters() -> None:
   assert model.norm.bias in adamw_params
   assert model.frozen not in muon_params
   assert model.frozen not in adamw_params
+
+
+def test_muon_rejects_non_matrix_parameters() -> None:
+  with pytest.raises(ValueError, match="only supports 2D parameters"):
+    Muon([nn.Parameter(torch.ones(2))])
 
 
 def test_muon_step_updates_muon_and_adamw_parameters() -> None:
@@ -97,6 +104,25 @@ def test_muon_step_updates_muon_and_adamw_parameters() -> None:
   assert "momentum_buffer" in optimizer.state[model.linear.weight]
   assert "exp_avg" in optimizer.state[model.linear.bias]
   assert "exp_avg_sq" in optimizer.state[model.linear.bias]
+
+
+def test_composite_optimizer_round_trips_state() -> None:
+  torch.manual_seed(0)
+  model = TinyModel()
+  optimizer = configure_muon(model, learning_rate=1e-2, weight_decay=0.0)
+
+  output = model.linear(torch.ones(4, 3)).square().sum()
+  output.backward()
+  optimizer.step()
+  state = optimizer.state_dict()
+
+  restored = TinyModel()
+  restored_optimizer = configure_muon(restored, learning_rate=1e-2, weight_decay=0.0)
+  restored_optimizer.load_state_dict(state)
+
+  assert "momentum_buffer" in restored_optimizer.state[restored.linear.weight]
+  assert "exp_avg" in restored_optimizer.state[restored.linear.bias]
+  assert "exp_avg_sq" in restored_optimizer.state[restored.linear.bias]
 
 
 def test_muon_matrix_step_matches_torch_muon() -> None:
@@ -118,7 +144,7 @@ def test_muon_matrix_step_matches_torch_muon() -> None:
     "nesterov": True,
     "ns_steps": 5,
   }
-  ours_optimizer = Muon([{"params": [ours], "use_muon": True}], **kwargs)
+  ours_optimizer = Muon([ours], **kwargs)
   torch_optimizer = torch_muon([expected], **kwargs)
 
   for grad in grads:
