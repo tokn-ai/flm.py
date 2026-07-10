@@ -12,6 +12,9 @@ def register_flm_models() -> None:
       "vLLM is not installed. Install vllm in the runtime environment."
     ) from exc
 
-  from flm_vllm.reference import FlmReferenceForCausalLM
-
-  ModelRegistry.register_model("FlmReferenceForCausalLM", FlmReferenceForCausalLM)
+  architecture = "FlmReferenceForCausalLM"
+  if architecture not in ModelRegistry.get_supported_archs():
+    ModelRegistry.register_model(
+      architecture,
+      "flm_vllm.reference:FlmReferenceForCausalLM",
+    )

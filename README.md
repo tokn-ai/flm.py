@@ -67,8 +67,11 @@ uv run flm-vllm-rollout MODEL_DIR \
   --dtype bfloat16 \
   --cpu-kvcache-space 4 \
   --cpu-omp-threads-bind auto \
+  --enforce-eager \
+  --max-num-batched-tokens 1024 \
   --prompt example="Once upon a time"
 ```
 
 The rollout command translates the CPU tuning arguments into the environment
 variables required internally by vLLM before initializing the engine.
+Eager mode avoids a long first-run compilation for short, one-shot rollouts.

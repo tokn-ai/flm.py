@@ -22,6 +22,8 @@ def generate_vllm_rollouts(
   dtype: str = "auto",
   cpu_kvcache_space: int | None = None,
   cpu_omp_threads_bind: str | None = None,
+  enforce_eager: bool = False,
+  max_num_batched_tokens: int | None = None,
 ) -> RolloutBatch:
   _configure_cpu_environment(
     kvcache_space=cpu_kvcache_space,
@@ -42,12 +44,21 @@ def generate_vllm_rollouts(
     encoding_name=encoding_name,
   )
   encoding = get_tokenizer(encoding_name)
+  engine_options = {
+    "model": str(model_dir),
+    "tokenizer": None,
+    "skip_tokenizer_init": True,
+    "trust_remote_code": True,
+    "dtype": dtype,
+  }
+  if enforce_eager:
+    engine_options["enforce_eager"] = True
+  if max_num_batched_tokens is not None:
+    if max_num_batched_tokens <= 0:
+      raise ValueError("max_num_batched_tokens must be greater than zero")
+    engine_options["max_num_batched_tokens"] = max_num_batched_tokens
   llm = LLM(
-    model=str(model_dir),
-    tokenizer=None,
-    skip_tokenizer_init=True,
-    trust_remote_code=True,
-    dtype=dtype,
+    **engine_options,
   )
   sampling = SamplingParams(
     max_tokens=max_new_tokens,

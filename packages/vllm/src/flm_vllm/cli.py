@@ -64,6 +64,8 @@ def rollout_main(argv: list[str] | None = None) -> None:
   parser.add_argument("--dtype", default="auto")
   parser.add_argument("--cpu-kvcache-space", type=int, default=None)
   parser.add_argument("--cpu-omp-threads-bind", default=None)
+  parser.add_argument("--enforce-eager", action="store_true")
+  parser.add_argument("--max-num-batched-tokens", type=int, default=None)
   parser.add_argument("--output-dir", type=Path, default=None)
   args = parser.parse_args(argv)
   prompts = tuple(_parse_prompt(value) for value in args.prompt)
@@ -77,6 +79,8 @@ def rollout_main(argv: list[str] | None = None) -> None:
     dtype=args.dtype,
     cpu_kvcache_space=args.cpu_kvcache_space,
     cpu_omp_threads_bind=args.cpu_omp_threads_bind,
+    enforce_eager=args.enforce_eager,
+    max_num_batched_tokens=args.max_num_batched_tokens,
   )
   output_dir = args.output_dir or (args.model_dir / "rollouts")
   details_dir = output_dir / "details"
