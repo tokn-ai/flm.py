@@ -8,6 +8,7 @@ from flm_datasets import (
   FINEWEB_MAGIC,
   FINEWEB_VERSION,
   FineWebBinaryDataset,
+  FineWebPackedDataset,
   load_fineweb_binary,
 )
 
@@ -62,3 +63,62 @@ def test_fineweb_binary_dataset_requires_exact_window_limit(tmp_path: Path) -> N
 
   with pytest.raises(ValueError, match="divisible by seq_len"):
     FineWebBinaryDataset([path], seq_len=4, token_limit=7)
+
+
+def test_fineweb_packed_dataset_aligns_and_truncates_documents(tmp_path: Path) -> None:
+  path = tmp_path / "fineweb_train_000001.bin"
+  _write_shard(path, [99, 1, 2, 3, 4, 99, 5, 6, 99, 7, 8, 9, 99, 10, 11])
+  dataset = FineWebPackedDataset(
+    [path],
+    batch_tokens=6,
+    max_seq_len=4,
+    num_batches=2,
+    bos_token_id=99,
+  )
+
+  batches = list(dataset)
+
+  input_ids, targets = batches[0]
+  torch.testing.assert_close(
+    input_ids,
+    torch.tensor([[99, 1, 2, 3], [99, 5, 99, 99]]),
+  )
+  torch.testing.assert_close(
+    targets,
+    torch.tensor([[1, 2, 3, 99], [5, 6, -100, -100]]),
+  )
+  next_inputs, next_targets = batches[1]
+  torch.testing.assert_close(
+    next_inputs,
+    torch.tensor([[99, 7, 8, 9], [99, 10, 99, 99]]),
+  )
+  torch.testing.assert_close(
+    next_targets,
+    torch.tensor([[7, 8, 9, 99], [10, 11, -100, -100]]),
+  )
+
+
+def test_fineweb_packed_dataset_accepts_runtime_batch_shape_changes(
+  tmp_path: Path,
+) -> None:
+  path = tmp_path / "fineweb_train_000001.bin"
+  _write_shard(
+    path,
+    [99, 1, 2, 99, 3, 4, 99, 5, 6, 99, 7, 8, 99, 9, 10, 99, 11, 12],
+  )
+  dataset = FineWebPackedDataset(
+    [path],
+    batch_tokens=3,
+    max_seq_len=3,
+    num_batches=2,
+    bos_token_id=99,
+  )
+  iterator = iter(dataset)
+
+  first_inputs, _ = next(iterator)
+  dataset.set_batch_shape(batch_tokens=5, max_seq_len=2)
+  second_inputs, second_targets = next(iterator)
+
+  assert first_inputs.shape == (2, 3)
+  assert second_inputs.shape == (3, 2)
+  assert int((second_targets != -100).sum()) == 5

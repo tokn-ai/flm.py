@@ -20,9 +20,16 @@ from flm_train.types import TrainConfig
 def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
   model_config = config.model
   if model_config.kind == "nanogpt_speedrun":
+    effective_vocab_size = (
+      vocab_size
+      if model_config.padded_vocab_size is None
+      else model_config.padded_vocab_size
+    )
+    if effective_vocab_size < vocab_size:
+      raise ValueError("model.padded_vocab_size cannot be smaller than tokenizer vocab")
     return NanoGPTSpeedrunModel(
       NanoGPTSpeedrunConfig(
-        vocab_size=vocab_size,
+        vocab_size=effective_vocab_size,
         max_seq_len=config.data.seq_len,
         d_model=model_config.d_model,
         n_layers=model_config.n_layers,

@@ -309,6 +309,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
       "name": "speedrun",
       "model": {
         "kind": "nanogpt_speedrun",
+        "padded_vocab_size": 96,
         "d_model": 64,
         "n_layers": 4,
         "n_heads": 4,
@@ -330,6 +331,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
   )
 
   assert config.model == NanoGPTSpeedrunModelConfig(
+    padded_vocab_size=96,
     d_model=64,
     n_layers=4,
     n_heads=4,
@@ -389,6 +391,7 @@ def test_parse_experiment_config_accepts_speedrun_stages() -> None:
             "seq_len": 8,
             "learning_rate_scale": 1.2,
             "mtp_weights": [1.0, 0.5],
+            "mtp_weights_end": [1.0, 0.0],
             "short_window": 2,
             "long_window": 4,
           },
@@ -406,6 +409,7 @@ def test_parse_experiment_config_accepts_speedrun_stages() -> None:
         seq_len=8,
         learning_rate_scale=1.2,
         mtp_weights=(1.0, 0.5),
+        mtp_weights_end=(1.0, 0.0),
         short_window=2,
         long_window=4,
       ),

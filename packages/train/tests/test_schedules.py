@@ -94,6 +94,7 @@ def test_speedrun_stage_schedule_resolves_transitions_and_untie() -> None:
           batch_size=2,
           seq_len=8,
           mtp_weights=(1.0, 0.5),
+          mtp_weights_end=(1.0, 0.0),
           short_window=2,
           long_window=4,
         ),
@@ -116,11 +117,32 @@ def test_speedrun_stage_schedule_resolves_transitions_and_untie() -> None:
   last = schedule.state_at(6)
 
   assert first is not None and first.index == 0 and first.starts_stage
+  assert first.mtp_weights == (1.0, 0.5)
   assert transition is not None and transition.index == 1
   assert transition.starts_stage and transition.should_untie
   assert transition.embeddings_untied
   assert last is not None and last.index == 1 and not last.starts_stage
   assert last.embeddings_untied
+
+
+def test_speedrun_stage_schedule_interpolates_mtp_weights() -> None:
+  schedule = SpeedrunStageSchedule(
+    total_steps=4,
+    config=SpeedrunScheduleConfig(
+      stages=(
+        SpeedrunStageConfig(
+          end_step=4,
+          mtp_weights=(1.0, 0.6),
+          mtp_weights_end=(1.0, 0.2),
+        ),
+      ),
+    ),
+  )
+
+  state = schedule.state_at(3)
+
+  assert state is not None
+  assert state.mtp_weights == pytest.approx((1.0, 0.4))
 
 
 def test_speedrun_stage_schedule_validates_coverage() -> None:

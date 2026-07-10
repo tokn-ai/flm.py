@@ -731,6 +731,9 @@ def _parse_speedrun_schedule(value: dict[str, Any]) -> SpeedrunScheduleConfig:
         mtp_weights=None
         if raw_stage.get("mtp_weights") is None
         else _float_tuple(raw_stage["mtp_weights"]),
+        mtp_weights_end=None
+        if raw_stage.get("mtp_weights_end") is None
+        else _float_tuple(raw_stage["mtp_weights_end"]),
         short_window=_optional_int(raw_stage.get("short_window")),
         long_window=_optional_int(raw_stage.get("long_window")),
       )
@@ -769,6 +772,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
     )
   if kind == "nanogpt_speedrun":
     return NanoGPTSpeedrunModelConfig(
+      padded_vocab_size=_optional_int(value.get("padded_vocab_size")),
       d_model=int(value.get("d_model", 768)),
       n_layers=int(value.get("n_layers", 11)),
       n_heads=int(value.get("n_heads", 12)),

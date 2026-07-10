@@ -113,7 +113,11 @@ def train_language_model(
         eval_bundle.byte_count,
         eval_bundle.token_count,
       ),
-      max_batches=config.eval.max_batches,
+      max_batches=(
+        len(eval_bundle.dataloader)
+        if config.data.kind == "fineweb_binary"
+        else config.eval.max_batches
+      ),
       step=step,
     ),
     on_eval=on_eval,
@@ -163,6 +167,8 @@ def _config_with_stage_max_seq_len(config: TrainConfig) -> TrainConfig:
 def _build_stage_dataloaders(
   config: TrainConfig,
 ) -> tuple[tuple[int, torch.utils.data.DataLoader], ...]:
+  if config.data.kind == "fineweb_binary":
+    return ()
   dataloaders = []
   cache = {}
   for stage_index, stage in enumerate(config.speedrun_schedule.stages):
@@ -198,6 +204,8 @@ def _config_with_resolved_batch_size(
 ) -> TrainConfig:
   if config.loop.batch_size != "auto":
     return config
+  if config.data.kind == "fineweb_binary":
+    raise ValueError("fineweb_binary requires an explicit token batch size")
   batch_size = probe_auto_batch_size(
     config=config,
     vocab_size=vocab_size,

@@ -201,6 +201,7 @@ class LanguageModelTrainer:
           else stage_state.stage.learning_rate_scale,
         )
       self._apply_model_stage(stage_state)
+      self._apply_data_stage(stage_state)
       step_dataloader = self._dataloader_for_step(step)
       if step_dataloader is not active_dataloader:
         active_dataloader = step_dataloader
@@ -216,7 +217,7 @@ class LanguageModelTrainer:
         if loss is None:
           raise RuntimeError("training loss was not produced")
         (loss / self.gradient_accumulation_steps).backward()
-        microbatch_tokens = int(input_ids.numel())
+        microbatch_tokens = int(targets.ne(-100).sum())
         token_count += microbatch_tokens
         loss_sum += float(loss.detach().cpu()) * microbatch_tokens
       prepare_optimizer_step = getattr(self.model, "prepare_optimizer_step", None)
@@ -309,10 +310,10 @@ class LanguageModelTrainer:
     if state is None:
       return
     stage = state.stage
-    if stage.mtp_weights is not None:
+    if state.mtp_weights is not None:
       setter = getattr(self.model, "set_mtp_weights", None)
       if callable(setter):
-        setter(stage.mtp_weights)
+        setter(state.mtp_weights)
     if stage.short_window is not None and stage.long_window is not None:
       setter = getattr(self.model, "set_attention_windows", None)
       if callable(setter):
@@ -321,6 +322,24 @@ class LanguageModelTrainer:
       untie = getattr(self.model, "untie_embeddings", None)
       if callable(untie):
         untie()
+
+  def _apply_data_stage(self, state: SpeedrunStageState | None) -> None:
+    if state is None:
+      return
+    dataset = self.dataloader.dataset
+    setter = getattr(dataset, "set_batch_shape", None)
+    if not callable(setter):
+      return
+    setter(
+      batch_tokens=(
+        dataset.batch_tokens
+        if state.stage.batch_size is None
+        else state.stage.batch_size
+      ),
+      max_seq_len=(
+        dataset.max_seq_len if state.stage.seq_len is None else state.stage.seq_len
+      ),
+    )
 
   def _next_batch(
     self,

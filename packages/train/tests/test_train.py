@@ -10,6 +10,7 @@ import torch
 from flm_datasets import (
   FINEWEB_HEADER_INTS,
   FineWebBinaryDataset,
+  FineWebPackedDataset,
   RandomTokenWindowDataset,
 )
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
@@ -24,6 +25,7 @@ from flm_train.data import (
   publish_repo_source_dataset,
 )
 from flm_train.data_cli import parse_args, run_from_args
+from flm_train.models import build_model
 from flm_train.presets import auto_batch_size, train_language_model
 from flm_train.svd import checkpoint_ffn_down_svd_metrics
 from flm_train.trainer import TrainStepMetrics
@@ -309,6 +311,67 @@ def test_build_fineweb_binary_validation_dataset_uses_exact_stream(
   input_ids, targets = next(iter(bundle.dataloader))
   torch.testing.assert_close(input_ids, torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]]))
   torch.testing.assert_close(targets, torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8]]))
+
+
+def test_build_fineweb_binary_training_dataset_uses_token_budget(
+  tmp_path: Path,
+) -> None:
+  header = np.zeros(FINEWEB_HEADER_INTS, dtype="<i4")
+  tokens = np.asarray(
+    [50256, 1, 2, 50256, 3, 4, 50256, 5, 6, 50256, 7, 8],
+    dtype="<u2",
+  )
+  header[:3] = (20240520, 1, len(tokens))
+  path = tmp_path / "fineweb_train_000001.bin"
+  path.write_bytes(header.tobytes() + tokens.tobytes())
+
+  bundle = build_training_dataset(
+    TrainConfig(
+      data=DataConfig(
+        kind="fineweb_binary",
+        dataset_root=tmp_path,
+        split="train",
+        encoding_name="gpt2",
+        seq_len=3,
+      ),
+      loop=LoopConfig(batch_size=4, steps=1),
+    )
+  )
+
+  assert isinstance(bundle.dataloader.dataset, FineWebPackedDataset)
+  input_ids, targets = next(iter(bundle.dataloader))
+  assert input_ids.ndim == targets.ndim == 2
+  assert int((targets != -100).sum()) == 4
+
+
+def test_build_speedrun_model_supports_padded_vocabulary() -> None:
+  model = build_model(
+    TrainConfig(
+      model=NanoGPTSpeedrunModelConfig(
+        padded_vocab_size=64,
+        d_model=8,
+        n_layers=2,
+        n_heads=2,
+        d_ff=16,
+        smear_gate_dim=4,
+        attention_gate_dim=4,
+        attention_free_layer=None,
+        paired_head_layers=(),
+        long_window_layers=(),
+        shared_attention_source_layer=None,
+        shared_attention_start_layer=None,
+        value_embedding_layers=(1,),
+        value_embedding_gate_dim=4,
+        mudd=False,
+        block_skip_from=None,
+        block_skip_to=None,
+      )
+    ),
+    vocab_size=32,
+  )
+
+  assert model.token_embedding.num_embeddings == 64
+  assert model.lm_head.out_features == 64
 
 
 def test_auto_batch_size_selects_largest_fitting_batch(

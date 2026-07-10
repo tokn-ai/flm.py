@@ -127,6 +127,7 @@ class SpeedrunStageState:
   starts_stage: bool
   should_untie: bool
   embeddings_untied: bool
+  mtp_weights: tuple[float, ...] | None
 
 
 class SpeedrunStageSchedule:
@@ -158,6 +159,17 @@ class SpeedrunStageSchedule:
         or any(weight < 0 for weight in stage.mtp_weights)
       ):
         raise ValueError("stage mtp_weights are invalid")
+      if stage.mtp_weights_end is not None:
+        if stage.mtp_weights is None:
+          raise ValueError("stage mtp_weights_end requires mtp_weights")
+        if len(stage.mtp_weights_end) != len(stage.mtp_weights):
+          raise ValueError("stage MTP weight endpoints must have equal lengths")
+        if (
+          not stage.mtp_weights_end
+          or stage.mtp_weights_end[0] <= 0
+          or any(weight < 0 for weight in stage.mtp_weights_end)
+        ):
+          raise ValueError("stage mtp_weights_end is invalid")
       if (stage.short_window is None) != (stage.long_window is None):
         raise ValueError("stage attention windows must both be set")
       for window in (stage.short_window, stage.long_window):
@@ -177,6 +189,18 @@ class SpeedrunStageSchedule:
     for index, stage in enumerate(self.config.stages):
       previous_end = 0 if index == 0 else self.config.stages[index - 1].end_step
       if step <= stage.end_step:
+        duration = stage.end_step - previous_end
+        progress = (step - previous_end - 1) / duration
+        mtp_weights = stage.mtp_weights
+        if mtp_weights is not None and stage.mtp_weights_end is not None:
+          mtp_weights = tuple(
+            start + progress * (end - start)
+            for start, end in zip(
+              mtp_weights,
+              stage.mtp_weights_end,
+              strict=True,
+            )
+          )
         return SpeedrunStageState(
           index=index,
           stage=stage,
@@ -185,5 +209,6 @@ class SpeedrunStageSchedule:
           embeddings_untied=(
             self.config.untie_step is not None and step >= self.config.untie_step
           ),
+          mtp_weights=mtp_weights,
         )
     return None

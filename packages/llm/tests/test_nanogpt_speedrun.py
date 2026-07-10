@@ -143,14 +143,41 @@ def test_nanogpt_speedrun_model_multi_token_loss_matches_offsets() -> None:
     reduction="sum",
   )
   second = torch.nn.functional.cross_entropy(
-    logits[:, :-1].flatten(0, 1),
-    targets[:, 1:].flatten(),
+    logits.flatten(0, 1)[:-1],
+    targets.flatten()[1:],
     reduction="sum",
   )
 
   loss = model._multi_token_loss(logits, targets)
 
   torch.testing.assert_close(loss, (primary + 0.5 * second) / targets.numel())
+
+
+def test_nanogpt_speedrun_model_multi_token_loss_ignores_packed_padding() -> None:
+  model = NanoGPTSpeedrunModel(
+    _config(
+      logit_softcap=None,
+      logit_sigmoid_scale=None,
+      mtp_weights=(1.0, 0.5),
+    )
+  )
+  logits = torch.randn(2, 3, 32)
+  targets = torch.tensor([[4, 5, 6], [7, -100, -100]])
+  valid_logits = torch.cat((logits[0], logits[1, :1]))
+  valid_targets = torch.tensor([4, 5, 6, 7])
+  expected = torch.nn.functional.cross_entropy(
+    valid_logits,
+    valid_targets,
+    reduction="sum",
+  ) + 0.5 * torch.nn.functional.cross_entropy(
+    valid_logits[:-1],
+    valid_targets[1:],
+    reduction="sum",
+  )
+
+  loss = model._multi_token_loss(logits, targets)
+
+  torch.testing.assert_close(loss, expected / 4)
 
 
 def test_nanogpt_speedrun_model_eval_loss_uses_primary_target_only() -> None:

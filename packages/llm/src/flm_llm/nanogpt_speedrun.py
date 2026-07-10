@@ -585,16 +585,21 @@ class NanoGPTSpeedrunModel(nn.Module):
     targets: torch.Tensor,
   ) -> torch.Tensor:
     weights = self.active_mtp_weights if self.training else (1.0,)
-    token_count = targets.numel()
+    valid = targets != -100
+    flat_logits = logits[valid]
+    flat_targets = targets[valid]
+    token_count = flat_targets.numel()
+    if token_count == 0:
+      raise ValueError("targets must contain at least one prediction token")
     total = logits.new_zeros((), dtype=torch.float32)
     for offset, weight in enumerate(weights):
-      if weight == 0 or offset >= targets.shape[1]:
+      if weight == 0 or offset >= token_count:
         continue
-      offset_logits = logits[:, : targets.shape[1] - offset]
-      offset_targets = targets[:, offset:]
+      offset_logits = flat_logits[: token_count - offset]
+      offset_targets = flat_targets[offset:]
       total = total + weight * F.cross_entropy(
-        offset_logits.flatten(0, 1).float(),
-        offset_targets.flatten(),
+        offset_logits.float(),
+        offset_targets,
         reduction="sum",
       )
     return total / token_count

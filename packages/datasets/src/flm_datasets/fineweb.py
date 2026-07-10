@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 
 FINEWEB_HEADER_INTS = 256
 FINEWEB_HEADER_BYTES = FINEWEB_HEADER_INTS * 4
@@ -64,6 +64,7 @@ class FineWebBinaryDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     if not paths:
       raise ValueError("at least one FineWeb shard is required")
     self.shards = [load_fineweb_binary(path) for path in paths]
+    self.source_token_count = sum(len(shard) for shard in self.shards)
     self.cumulative_lengths: list[int] = []
     total = 0
     for shard in self.shards:
@@ -110,3 +111,118 @@ class FineWebBinaryDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     if len(pieces) == 1:
       return pieces[0]
     return np.concatenate(pieces)
+
+
+class FineWebPackedDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
+  """BOS-aligned document-fragment batches matching speedrun training order.
+
+  Each yielded item is already a complete token-budget batch. Document fragments
+  are separate padded rows, so eager causal attention cannot cross boundaries.
+  Targets use ``-100`` only for padding and otherwise match the concatenated
+  upstream stream, including the target BOS between adjacent fragments.
+  """
+
+  def __init__(
+    self,
+    paths: Sequence[Path],
+    *,
+    batch_tokens: int,
+    max_seq_len: int,
+    num_batches: int,
+    bos_token_id: int = 50256,
+  ) -> None:
+    if not paths:
+      raise ValueError("at least one FineWeb shard is required")
+    if num_batches < 1:
+      raise ValueError("num_batches must be positive")
+    self.shards = [load_fineweb_binary(path) for path in paths]
+    self.source_token_count = sum(len(shard) for shard in self.shards)
+    self.num_batches = num_batches
+    self.bos_token_id = bos_token_id
+    self.set_batch_shape(batch_tokens=batch_tokens, max_seq_len=max_seq_len)
+
+  def set_batch_shape(self, *, batch_tokens: int, max_seq_len: int) -> None:
+    if batch_tokens < 1:
+      raise ValueError("batch_tokens must be positive")
+    if max_seq_len < 1:
+      raise ValueError("max_seq_len must be positive")
+    self.batch_tokens = batch_tokens
+    self.max_seq_len = max_seq_len
+
+  def __len__(self) -> int:
+    return self.num_batches
+
+  def __iter__(self):
+    shard_index = 0
+    bos_index = 0
+    bos_positions = self._bos_positions(shard_index)
+    yielded = 0
+    while yielded < self.num_batches:
+      packed = self._pack_from_shard(
+        self.shards[shard_index],
+        bos_positions,
+        bos_index,
+      )
+      if packed is None:
+        shard_index += 1
+        if shard_index >= len(self.shards):
+          return
+        bos_index = 0
+        bos_positions = self._bos_positions(shard_index)
+        continue
+      input_ids, targets, bos_index = packed
+      yielded += 1
+      yield input_ids, targets
+
+  def _bos_positions(self, shard_index: int) -> np.ndarray:
+    return np.flatnonzero(self.shards[shard_index] == self.bos_token_id).astype(
+      np.int64,
+      copy=False,
+    )
+
+  def _pack_from_shard(
+    self,
+    tokens: np.ndarray,
+    bos_positions: np.ndarray,
+    bos_index: int,
+  ) -> tuple[torch.Tensor, torch.Tensor, int] | None:
+    starts = []
+    ends = []
+    total = 0
+    index = bos_index
+    while total <= self.batch_tokens:
+      if index >= len(bos_positions):
+        return None
+      start = int(bos_positions[index])
+      starts.append(start)
+      index += 1
+      next_bos = (
+        int(bos_positions[index]) if index < len(bos_positions) else len(tokens)
+      )
+      end = min(
+        next_bos,
+        start + self.max_seq_len,
+        start + self.batch_tokens - total + 1,
+      )
+      ends.append(end)
+      total += end - start
+
+    buffer = np.concatenate(
+      [tokens[start:end] for start, end in zip(starts, ends, strict=True)]
+    )
+    flat_inputs = buffer[:-1].astype(np.int64, copy=False)
+    flat_targets = buffer[1:].astype(np.int64, copy=False)
+    lengths = [end - start for start, end in zip(starts, ends, strict=True)]
+    lengths[-1] -= 1
+    row_count = len(lengths)
+    width = max(lengths)
+    input_ids = torch.full((row_count, width), self.bos_token_id, dtype=torch.long)
+    targets = torch.full((row_count, width), -100, dtype=torch.long)
+    offset = 0
+    for row, length in enumerate(lengths):
+      input_ids[row, :length] = torch.from_numpy(flat_inputs[offset : offset + length])
+      targets[row, :length] = torch.from_numpy(flat_targets[offset : offset + length])
+      offset += length
+    if offset != self.batch_tokens:
+      raise RuntimeError("packed FineWeb batch did not consume its token budget")
+    return input_ids, targets, index

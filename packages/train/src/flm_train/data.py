@@ -15,6 +15,7 @@ import numpy as np
 from flm_datasets import (
   SOURCE_CORPUS_SEPARATOR,
   FineWebBinaryDataset,
+  FineWebPackedDataset,
   RandomTokenWindowDataset,
   ShardedTokenDataset,
   SourceCorpusConfig,
@@ -69,13 +70,27 @@ def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
 def build_fineweb_binary_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   if config.loop.batch_size == "auto":
     raise ValueError("loop.batch_size must be resolved before building datasets")
-  if config.data.split == "train":
-    raise ValueError("FineWeb binary training requires BOS-aligned document batches")
   paths = sorted(config.data.dataset_root.glob(f"fineweb_{config.data.split}_*.bin"))
   if not paths:
     raise FileNotFoundError(
       f"no FineWeb binary shards found for split {config.data.split!r} "
       f"under {config.data.dataset_root}"
+    )
+  if config.data.split == "train":
+    dataset = FineWebPackedDataset(
+      paths,
+      batch_tokens=config.loop.batch_size,
+      max_seq_len=config.data.seq_len,
+      num_batches=max(
+        config.loop.steps * config.loop.gradient_accumulation_steps,
+        1,
+      ),
+    )
+    return RepoSourceDatasetBundle(
+      dataloader=DataLoader(dataset, batch_size=None),
+      token_count=dataset.source_token_count,
+      file_count=len(paths),
+      byte_count=0,
     )
   token_limit = (
     _SPEEDRUN_VALIDATION_TOKENS

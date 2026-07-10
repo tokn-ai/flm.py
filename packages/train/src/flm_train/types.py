@@ -44,6 +44,7 @@ class ReferenceModelConfig:
 @dataclass(frozen=True)
 class NanoGPTSpeedrunModelConfig:
   kind: Literal["nanogpt_speedrun"] = "nanogpt_speedrun"
+  padded_vocab_size: int | None = None
   d_model: int = 768
   n_layers: int = 11
   n_heads: int = 12
@@ -168,6 +169,7 @@ class SpeedrunStageConfig:
   seq_len: int | None = None
   learning_rate_scale: float = 1.0
   mtp_weights: tuple[float, ...] | None = None
+  mtp_weights_end: tuple[float, ...] | None = None
   short_window: int | None = None
   long_window: int | None = None
 
