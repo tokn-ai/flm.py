@@ -19,6 +19,7 @@ from flm_train.checkpoints import (
   prune_checkpoints,
   save_checkpoint,
 )
+from flm_train.schedules import OptimizerSchedule
 from flm_train.types import CheckpointConfig
 
 
@@ -117,6 +118,7 @@ class LanguageModelTrainer:
     *,
     model: LanguageModel,
     optimizer: torch.optim.Optimizer,
+    optimizer_schedule: OptimizerSchedule | None = None,
     dataloader: DataLoader,
     device: str,
     steps: int,
@@ -137,6 +139,7 @@ class LanguageModelTrainer:
       raise ValueError("steps must be non-negative")
     self.model = model
     self.optimizer = optimizer
+    self.optimizer_schedule = optimizer_schedule
     self.dataloader = dataloader
     self.device = device
     self.steps = steps
@@ -161,6 +164,8 @@ class LanguageModelTrainer:
     self.model.train()
 
     for step in range(checkpoint_state.step + 1, self.steps + 1):
+      if self.optimizer_schedule is not None:
+        self.optimizer_schedule.apply(step)
       input_ids, targets, iterator = self._next_batch(iterator)
       input_ids = input_ids.to(self.device)
       targets = targets.to(self.device)

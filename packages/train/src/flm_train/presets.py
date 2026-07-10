@@ -13,6 +13,7 @@ from flm_modules import configure_adamw, configure_muon
 
 from flm_train.data import build_training_dataset
 from flm_train.models import build_model
+from flm_train.schedules import OptimizerSchedule
 from flm_train.trainer import (
   EvalMetrics,
   LanguageModel,
@@ -55,9 +56,19 @@ def train_language_model(
     )
     eval_bundle = build_training_dataset(eval_config)
   optimizer = _build_optimizer(config, model)
+  schedule = (
+    None
+    if config.loop.steps == 0
+    else OptimizerSchedule(
+      optimizer,
+      total_steps=config.loop.steps,
+      config=config.schedule,
+    )
+  )
   trainer = LanguageModelTrainer(
     model=model,
     optimizer=optimizer,
+    optimizer_schedule=schedule,
     dataloader=dataset_bundle.dataloader,
     device=config.loop.device,
     steps=config.loop.steps,

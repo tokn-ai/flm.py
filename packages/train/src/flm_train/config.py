@@ -18,6 +18,7 @@ from flm_train.types import (
   ModelConfig,
   NanoGPTSpeedrunModelConfig,
   OptimizerConfig,
+  OptimizerScheduleConfig,
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
@@ -143,6 +144,7 @@ class ExperimentConfig:
   data: DataConfig = field(default_factory=DataConfig)
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+  schedule: OptimizerScheduleConfig = field(default_factory=OptimizerScheduleConfig)
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
@@ -168,6 +170,7 @@ class ExperimentConfig:
       data=self.data,
       model=self.model,
       optimizer=self.optimizer,
+      schedule=self.schedule,
       loop=self.loop,
       eval=self.eval,
       rollout=self.rollout,
@@ -261,6 +264,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "data",
     "model",
     "optimizer",
+    "schedule",
     "loop",
     "eval",
     "rollout",
@@ -280,6 +284,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   data = _section(raw, "data")
   model = _section(raw, "model")
   optimizer = _section(raw, "optimizer")
+  schedule = _section(raw, "schedule")
   loop = _section(raw, "loop")
   eval_config = _optional_section(raw, "eval")
   rollout = _optional_section(raw, "rollout")
@@ -298,6 +303,17 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       learning_rate=float(optimizer.get("learning_rate", 3e-4)),
       weight_decay=float(optimizer.get("weight_decay", 0.1)),
       max_grad_norm=_optional_float(optimizer.get("max_grad_norm", 1.0)),
+    ),
+    schedule=OptimizerScheduleConfig(
+      warmup_steps=int(schedule.get("warmup_steps", 0)),
+      cooldown_steps=int(schedule.get("cooldown_steps", 0)),
+      final_lr_scale=float(schedule.get("final_lr_scale", 0.0)),
+      momentum_start=_optional_float(schedule.get("momentum_start")),
+      momentum_end=_optional_float(schedule.get("momentum_end")),
+      momentum_warmup_steps=int(schedule.get("momentum_warmup_steps", 0)),
+      scale_weight_decay_with_lr=bool(
+        schedule.get("scale_weight_decay_with_lr", False)
+      ),
     ),
     loop=LoopConfig(
       seed=int(loop.get("seed", 42)),
@@ -329,6 +345,7 @@ def apply_overrides(
     data=config.data,
     model=config.model,
     optimizer=config.optimizer,
+    schedule=config.schedule,
     loop=LoopConfig(
       seed=config.loop.seed if overrides.seed is None else overrides.seed,
       device=config.loop.device if overrides.device is None else overrides.device,
@@ -385,6 +402,7 @@ def resolve_workspace_paths(
     ),
     model=config.model,
     optimizer=config.optimizer,
+    schedule=config.schedule,
     loop=config.loop,
     eval=config.eval,
     rollout=config.rollout,

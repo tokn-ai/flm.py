@@ -108,6 +108,7 @@ class ExperimentRunner:
       data=resolve_data_config(resolved.data),
       model=resolved.model,
       optimizer=resolved.optimizer,
+      schedule=resolved.schedule,
       loop=resolved.loop,
       eval=resolved.eval,
       rollout=resolved.rollout,

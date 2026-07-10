@@ -1,5 +1,6 @@
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import flm_train.data_cli as data_cli
@@ -30,6 +31,7 @@ from flm_train.types import (
   LoopConfig,
   ModelConfig,
   NanoGPTSpeedrunModelConfig,
+  OptimizerScheduleConfig,
   ReferenceModelConfig,
   TrainConfig,
 )
@@ -695,6 +697,29 @@ def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   assert "train/bpb" in step_metrics[0].to_log_dict()
   assert "train/grad_norm" in step_metrics[0].to_log_dict()
   assert "train/tokens_seen" in step_metrics[0].to_log_dict()
+
+
+def test_train_language_model_applies_optimizer_schedule(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  config = train_config(repo_root=tmp_path, steps=4)
+  config = replace(
+    config,
+    schedule=OptimizerScheduleConfig(
+      warmup_steps=2,
+      cooldown_steps=2,
+      final_lr_scale=0.0,
+    ),
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  train_language_model(config, on_step=step_metrics.append)
+
+  assert [metrics.learning_rate for metrics in step_metrics] == pytest.approx(
+    [1.5e-4, 3e-4, 1.5e-4, 0.0]
+  )
 
 
 def test_train_language_model_resumes_from_checkpoint(tmp_path: Path) -> None:

@@ -49,6 +49,7 @@ from flm_train.types import (
   EvalConfig,
   LoopConfig,
   NanoGPTSpeedrunModelConfig,
+  OptimizerScheduleConfig,
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
@@ -297,6 +298,33 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
     block_skip_from=0,
     block_skip_to=3,
     residual_decay=0.99,
+  )
+
+
+def test_parse_experiment_config_accepts_optimizer_schedule() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "scheduled",
+      "schedule": {
+        "warmup_steps": 10,
+        "cooldown_steps": 20,
+        "final_lr_scale": 0.1,
+        "momentum_start": 0.85,
+        "momentum_end": 0.95,
+        "momentum_warmup_steps": 30,
+        "scale_weight_decay_with_lr": True,
+      },
+    }
+  )
+
+  assert config.schedule == OptimizerScheduleConfig(
+    warmup_steps=10,
+    cooldown_steps=20,
+    final_lr_scale=0.1,
+    momentum_start=0.85,
+    momentum_end=0.95,
+    momentum_warmup_steps=30,
+    scale_weight_decay_with_lr=True,
   )
 
 

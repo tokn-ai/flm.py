@@ -127,6 +127,17 @@ class OptimizerConfig:
 
 
 @dataclass(frozen=True)
+class OptimizerScheduleConfig:
+  warmup_steps: int = 0
+  cooldown_steps: int = 0
+  final_lr_scale: float = 0.0
+  momentum_start: float | None = None
+  momentum_end: float | None = None
+  momentum_warmup_steps: int = 0
+  scale_weight_decay_with_lr: bool = False
+
+
+@dataclass(frozen=True)
 class LoopConfig:
   batch_size: BatchSize = 8
   batch_size_vram_fraction: float = 0.9
@@ -169,6 +180,7 @@ class TrainConfig:
   data: DataConfig = field(default_factory=DataConfig)
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+  schedule: OptimizerScheduleConfig = field(default_factory=OptimizerScheduleConfig)
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
