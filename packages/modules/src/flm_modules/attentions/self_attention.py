@@ -10,7 +10,7 @@ from flm_modules.attentions.backends import (
   AttentionBackend,
   scaled_dot_product_attention,
 )
-from flm_modules.rope import RotaryEmbedding, apply_rotary
+from flm_modules.rope import RotaryEmbedding, SpeedrunYaRN, apply_rotary
 
 
 class SelfAttention(nn.Module):
@@ -86,6 +86,8 @@ class QKNormSelfAttention(nn.Module):
     *,
     zero_init_out: bool = False,
     paired_heads: bool = False,
+    speedrun_yarn: bool = False,
+    max_seq_len: int = 2048,
   ) -> None:
     super().__init__()
     if d_model % n_heads != 0:
@@ -101,8 +103,17 @@ class QKNormSelfAttention(nn.Module):
       raise ValueError("paired-head attention requires an even number of heads")
     self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
     self.out = nn.Linear(d_model, d_model, bias=bias)
-    rope_dim = 2 * self.head_dim if paired_heads else self.head_dim
-    self.rope = RotaryEmbedding(rope_dim, base=rope_base)
+    if speedrun_yarn:
+      self.yarn = SpeedrunYaRN(
+        self.head_dim,
+        max_seq_len,
+        paired=paired_heads,
+      )
+      self.rope = None
+    else:
+      rope_dim = 2 * self.head_dim if paired_heads else self.head_dim
+      self.rope = RotaryEmbedding(rope_dim, base=rope_base)
+      self.yarn = None
     if zero_init_out:
       nn.init.zeros_(self.out.weight)
       if self.out.bias is not None:
@@ -151,9 +162,8 @@ class QKNormSelfAttention(nn.Module):
       k = self._pair_qk(k, batch_size=batch_size, seq_len=seq_len)
       v = self._pair_values(v, batch_size=batch_size, seq_len=seq_len)
     else:
-      cos, sin = self.rope(q)
-      q = apply_rotary(q, cos, sin, layout=self.rope.layout)
-      k = apply_rotary(k, cos, sin, layout=self.rope.layout)
+      q = self._apply_rotary(q)
+      k = self._apply_rotary(k)
       if partial_key_offset and seq_len > 1:
         k = k.clone()
         k[:, :, 1:, self.head_dim // 2 :] = k[:, :, :-1, self.head_dim // 2 :]
@@ -177,6 +187,7 @@ class QKNormSelfAttention(nn.Module):
       backend=self.backend,
       attn_mask=attn_mask,
       causal=self.causal,
+      scale=None if self.yarn is None else self.yarn.attention_scale,
     )
     if self.paired_heads:
       y = self._unpair_output(y, batch_size=batch_size, seq_len=seq_len)
@@ -223,8 +234,7 @@ class QKNormSelfAttention(nn.Module):
       .view(batch_size, seq_len, self.n_heads // 2, 2 * self.head_dim)
       .transpose(1, 2)
     )
-    cos, sin = self.rope(paired)
-    paired = apply_rotary(paired, cos, sin, layout=self.rope.layout)
+    paired = self._apply_rotary(paired)
     return (
       paired.transpose(1, 2)
       .contiguous()
@@ -259,3 +269,15 @@ class QKNormSelfAttention(nn.Module):
       .view(batch_size, seq_len, self.n_heads, self.head_dim)
       .transpose(1, 2)
     )
+
+  def _apply_rotary(self, x: torch.Tensor) -> torch.Tensor:
+    if self.yarn is not None:
+      return self.yarn(x)
+    if self.rope is None:
+      raise RuntimeError("attention rotary embedding is unavailable")
+    cos, sin = self.rope(x)
+    return apply_rotary(x, cos, sin, layout=self.rope.layout)
+
+  def update_yarn_window(self, old_window: int, new_window: int) -> None:
+    if self.yarn is not None and old_window != new_window:
+      self.yarn.apply_window_change(old_window, new_window)

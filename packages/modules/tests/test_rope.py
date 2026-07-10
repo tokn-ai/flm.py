@@ -1,6 +1,12 @@
 import pytest
 import torch
-from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary, rotate_half
+from flm_modules.rope import (
+  RopeLayout,
+  RotaryEmbedding,
+  SpeedrunYaRN,
+  apply_rotary,
+  rotate_half,
+)
 from transformers import LlamaConfig
 from transformers.models.llama.modeling_llama import (
   LlamaRotaryEmbedding,
@@ -191,3 +197,31 @@ def test_apply_rotary_supports_partial_trailing_dimension(random_input) -> None:
   y = apply_rotary(x, cos, sin, rotary_dim=4)
 
   torch.testing.assert_close(y, x)
+
+
+def test_speedrun_yarn_half_truncates_rotary_dimensions(random_input) -> None:
+  yarn = SpeedrunYaRN(head_dim=8, max_seq_len=16)
+  x = random_input(2, 3, 5, 8)
+
+  output = yarn(x)
+
+  assert output.shape == x.shape
+  torch.testing.assert_close(output[..., 4:], x[..., 4:])
+
+
+def test_speedrun_yarn_updates_frequency_and_attention_scale() -> None:
+  yarn = SpeedrunYaRN(head_dim=8, max_seq_len=16)
+  before_frequency = yarn.angular_freq.clone()
+  before_scale = yarn.attention_scale
+
+  yarn.apply_window_change(4, 8)
+
+  assert not torch.equal(yarn.angular_freq, before_frequency)
+  assert yarn.attention_scale > before_scale
+
+
+def test_speedrun_yarn_supports_paired_head_width(random_input) -> None:
+  yarn = SpeedrunYaRN(head_dim=8, max_seq_len=16, paired=True)
+  x = random_input(2, 3, 5, 16)
+
+  assert yarn(x).shape == x.shape

@@ -31,6 +31,8 @@ class NanoGPTSpeedrunBlock(nn.Module):
       backend=config.attention_backend,
       zero_init_out=True,
       paired_heads=layer_index in config.paired_head_layers,
+      speedrun_yarn=True,
+      max_seq_len=config.max_seq_len,
     )
     self.ffn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.ffn = ReLUSquared(
@@ -294,6 +296,15 @@ class NanoGPTSpeedrunModel(nn.Module):
   def set_attention_windows(self, *, short: int, long: int) -> None:
     if short < 1 or long < short:
       raise ValueError("attention windows must satisfy 1 <= short <= long")
+    if self.active_short_window is not None and self.active_long_window is not None:
+      for layer_index, block in enumerate(self.blocks):
+        old_window = (
+          self.active_long_window
+          if layer_index in self.config.long_window_layers
+          else self.active_short_window
+        )
+        new_window = long if layer_index in self.config.long_window_layers else short
+        block.attn.update_yarn_window(old_window, new_window)
     self.active_short_window = short
     self.active_long_window = long
 
