@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import torch
 from flm_llm import ReferenceModel, ReferenceModelConfig
@@ -276,6 +278,63 @@ def test_resolve_export_encoding_name_uses_export_hint(tmp_path: Path) -> None:
     )
     == "unitoken:/tmp/tokenizer"
   )
+
+
+def test_generate_vllm_rollouts_configures_cpu_options(
+  tmp_path: Path,
+  monkeypatch,
+) -> None:
+  engine_options = {}
+  monkeypatch.delenv("VLLM_CPU_KVCACHE_SPACE", raising=False)
+  monkeypatch.delenv("VLLM_CPU_OMP_THREADS_BIND", raising=False)
+
+  class FakeModelRegistry:
+    @staticmethod
+    def register_model(name, model) -> None:
+      del name, model
+
+  class FakeLLM:
+    def __init__(self, **kwargs) -> None:
+      engine_options.update(kwargs)
+
+    def generate(self, requests, sampling):
+      del requests, sampling
+      return []
+
+  class FakeSamplingParams:
+    def __init__(self, **kwargs) -> None:
+      del kwargs
+
+  fake_vllm = ModuleType("vllm")
+  fake_vllm.LLM = FakeLLM
+  fake_vllm.ModelRegistry = FakeModelRegistry
+  fake_vllm.SamplingParams = FakeSamplingParams
+  monkeypatch.setitem(sys.modules, "vllm", fake_vllm)
+  monkeypatch.setattr(
+    "flm_vllm.rollout.get_tokenizer",
+    lambda _: SimpleNamespace(encode_ordinary=lambda value: [len(value)]),
+  )
+
+  batch = generate_vllm_rollouts(
+    model_dir=tmp_path,
+    encoding_name="test",
+    prompts=(),
+    max_new_tokens=4,
+    dtype="bfloat16",
+    cpu_kvcache_space=4,
+    cpu_omp_threads_bind="0-3",
+  )
+
+  assert batch.samples == ()
+  assert engine_options == {
+    "model": str(tmp_path),
+    "tokenizer": None,
+    "skip_tokenizer_init": True,
+    "trust_remote_code": True,
+    "dtype": "bfloat16",
+  }
+  assert os.environ["VLLM_CPU_KVCACHE_SPACE"] == "4"
+  assert os.environ["VLLM_CPU_OMP_THREADS_BIND"] == "0-3"
 
 
 def test_reference_vllm_config_rejects_non_reference_model() -> None:

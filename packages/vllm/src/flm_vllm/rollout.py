@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from flm_datasets import get_tokenizer
@@ -18,7 +19,14 @@ def generate_vllm_rollouts(
   max_new_tokens: int,
   step: int = 0,
   temperature: float = 0.0,
+  dtype: str = "auto",
+  cpu_kvcache_space: int | None = None,
+  cpu_omp_threads_bind: str | None = None,
 ) -> RolloutBatch:
+  _configure_cpu_environment(
+    kvcache_space=cpu_kvcache_space,
+    omp_threads_bind=cpu_omp_threads_bind,
+  )
   try:
     from vllm import LLM, SamplingParams
   except ImportError as exc:  # pragma: no cover - depends on optional vLLM.
@@ -39,6 +47,7 @@ def generate_vllm_rollouts(
     tokenizer=None,
     skip_tokenizer_init=True,
     trust_remote_code=True,
+    dtype=dtype,
   )
   sampling = SamplingParams(
     max_tokens=max_new_tokens,
@@ -59,6 +68,21 @@ def generate_vllm_rollouts(
     for prompt, output in zip(prompts, outputs, strict=True)
   ]
   return RolloutBatch(step=step, samples=tuple(samples))
+
+
+def _configure_cpu_environment(
+  *,
+  kvcache_space: int | None,
+  omp_threads_bind: str | None,
+) -> None:
+  if kvcache_space is not None:
+    if kvcache_space <= 0:
+      raise ValueError("cpu_kvcache_space must be greater than zero")
+    os.environ["VLLM_CPU_KVCACHE_SPACE"] = str(kvcache_space)
+  if omp_threads_bind is not None:
+    if not omp_threads_bind:
+      raise ValueError("cpu_omp_threads_bind must not be empty")
+    os.environ["VLLM_CPU_OMP_THREADS_BIND"] = omp_threads_bind
 
 
 def resolve_export_encoding_name(*, model_dir: Path, encoding_name: str | None) -> str:

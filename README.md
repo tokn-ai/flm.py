@@ -56,3 +56,19 @@ Run artifacts are written to `workspace_root/workspace.runs_dir/experiment/run_i
 ```sh
 uv sync --all-packages
 ```
+
+## vLLM CPU Rollout
+
+Install a CPU-enabled vLLM build for the host platform, then select a
+CPU-compatible dtype and backend tuning explicitly:
+
+```sh
+uv run flm-vllm-rollout MODEL_DIR \
+  --dtype bfloat16 \
+  --cpu-kvcache-space 4 \
+  --cpu-omp-threads-bind auto \
+  --prompt example="Once upon a time"
+```
+
+The rollout command translates the CPU tuning arguments into the environment
+variables required internally by vLLM before initializing the engine.

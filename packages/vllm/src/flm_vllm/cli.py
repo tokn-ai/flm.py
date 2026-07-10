@@ -61,6 +61,9 @@ def rollout_main(argv: list[str] | None = None) -> None:
   parser.add_argument("--max-new-tokens", type=int, default=64)
   parser.add_argument("--step", type=int, default=0)
   parser.add_argument("--temperature", type=float, default=0.0)
+  parser.add_argument("--dtype", default="auto")
+  parser.add_argument("--cpu-kvcache-space", type=int, default=None)
+  parser.add_argument("--cpu-omp-threads-bind", default=None)
   parser.add_argument("--output-dir", type=Path, default=None)
   args = parser.parse_args(argv)
   prompts = tuple(_parse_prompt(value) for value in args.prompt)
@@ -71,6 +74,9 @@ def rollout_main(argv: list[str] | None = None) -> None:
     max_new_tokens=args.max_new_tokens,
     step=args.step,
     temperature=args.temperature,
+    dtype=args.dtype,
+    cpu_kvcache_space=args.cpu_kvcache_space,
+    cpu_omp_threads_bind=args.cpu_omp_threads_bind,
   )
   output_dir = args.output_dir or (args.model_dir / "rollouts")
   details_dir = output_dir / "details"
