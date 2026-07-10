@@ -9,7 +9,12 @@ from pathlib import Path
 
 import torch
 from flm_datasets import get_tokenizer
-from flm_modules import configure_adamw, configure_muon, configure_normuon
+from flm_modules import (
+  configure_adamw,
+  configure_muon,
+  configure_normuon,
+  configure_speedrun_normuon,
+)
 
 from flm_train.data import build_training_dataset
 from flm_train.models import build_model
@@ -370,6 +375,8 @@ def _build_optimizer(
       learning_rate=config.optimizer.learning_rate,
       weight_decay=config.optimizer.weight_decay,
     )
+  if config.optimizer.kind == "speedrun_normuon":
+    return configure_speedrun_normuon(model)
   raise ValueError(f"unsupported optimizer.kind: {config.optimizer.kind}")
 
 

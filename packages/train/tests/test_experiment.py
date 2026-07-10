@@ -288,6 +288,21 @@ def test_parse_experiment_config_accepts_normuon_optimizer() -> None:
   assert config.to_train_config().optimizer.kind == "normuon"
 
 
+def test_parse_experiment_config_accepts_speedrun_normuon_optimizer() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "speedrun",
+      "optimizer": {
+        "kind": "speedrun_normuon",
+        "secondary_update_every": 2,
+      },
+    }
+  )
+
+  assert config.to_train_config().optimizer.kind == "speedrun_normuon"
+  assert config.to_train_config().optimizer.secondary_update_every == 2
+
+
 def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
   config = parse_experiment_config(
     {

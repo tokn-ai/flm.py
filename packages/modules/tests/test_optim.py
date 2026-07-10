@@ -8,6 +8,7 @@ from flm_modules import (
   configure_adamw,
   configure_muon,
   configure_normuon,
+  configure_speedrun_normuon,
 )
 from torch import nn
 
@@ -18,6 +19,17 @@ class TinyModel(nn.Module):
     self.linear = nn.Linear(3, 2)
     self.norm = nn.LayerNorm(2)
     self.frozen = nn.Parameter(torch.ones(2), requires_grad=False)
+
+
+class TinySpeedrunModel(nn.Module):
+  def __init__(self) -> None:
+    super().__init__()
+    self.token_embedding = nn.Embedding(16, 4)
+    self.lm_head = nn.Linear(4, 16, bias=False)
+    self.ffn = nn.Module()
+    self.ffn.down = nn.Linear(8, 4, bias=False)
+    self.qkv = nn.Linear(4, 12, bias=False)
+    self.residual_scales = nn.Parameter(torch.ones(2, 2))
 
 
 def test_configure_adamw_sets_hyperparameters() -> None:
@@ -157,6 +169,24 @@ def test_cautious_adamw_decays_only_updates_aligned_with_parameters() -> None:
   optimizer.step()
 
   torch.testing.assert_close(parameter, torch.tensor([0.85, 1.1]))
+
+
+def test_configure_speedrun_normuon_applies_parameter_recipe() -> None:
+  model = TinySpeedrunModel()
+
+  optimizer = configure_speedrun_normuon(model)
+  normuon, adam = optimizer.optimizers
+  normuon_groups = {group["name"]: group for group in normuon.param_groups}
+  adam_groups = {group["name"]: group for group in adam.param_groups}
+
+  assert normuon_groups["qkv.weight"]["lr"] == 0.023
+  assert normuon_groups["ffn.down.weight"]["lr"] == 0.046
+  assert normuon_groups["qkv.weight"]["weight_decay"] == 1.2
+  assert adam_groups["token_embedding.weight"]["lr"] == 0.008
+  assert adam_groups["token_embedding.weight"]["weight_decay"] == 0.75
+  assert adam_groups["token_embedding.weight"]["betas"] == (0.5, 0.95)
+  assert adam_groups["residual_scales"]["lr"] == 0.04
+  assert adam_groups["residual_scales"]["weight_decay"] == 0.0
 
 
 def test_muon_step_updates_muon_and_adamw_parameters() -> None:

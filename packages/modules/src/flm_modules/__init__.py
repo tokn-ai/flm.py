@@ -43,6 +43,7 @@ from flm_modules.optim import (
   configure_adamw,
   configure_muon,
   configure_normuon,
+  configure_speedrun_normuon,
 )
 from flm_modules.rope import RopeLayout, RotaryEmbedding, SpeedrunYaRN, apply_rotary
 from flm_modules.speedrun import (
@@ -93,6 +94,7 @@ __all__ = [
   "configure_adamw",
   "configure_muon",
   "configure_normuon",
+  "configure_speedrun_normuon",
   "scaled_dot_product_attention",
   "tilelang_flash_attention",
   "tilelang_linear_cross_entropy",

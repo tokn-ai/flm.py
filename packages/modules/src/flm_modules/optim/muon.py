@@ -254,14 +254,112 @@ def configure_normuon(
   return CompositeOptimizer(optimizers)
 
 
+def configure_speedrun_normuon(
+  model: nn.Module,
+  *,
+  adam_learning_rate: float = 0.008,
+  matrix_learning_rate: float = 0.023,
+  adam_weight_decay: float = 0.005,
+  matrix_weight_decay: float = 1.2,
+  momentum: float = 0.95,
+  beta2: float = 0.9,
+  adam_eps: float = 1e-10,
+) -> CompositeOptimizer:
+  """Configure the current short-track per-parameter optimizer recipe."""
+
+  matrix_groups = []
+  adam_groups = []
+  for name, param in model.named_parameters():
+    if not param.requires_grad:
+      continue
+    if _use_matrix_optimizer(name, param):
+      lr_scale = 2.0 if name.endswith("ffn.down.weight") else 1.0
+      matrix_groups.append(
+        {
+          "params": [param],
+          "lr": matrix_learning_rate * lr_scale,
+          "weight_decay": matrix_weight_decay,
+          "name": name,
+        }
+      )
+      continue
+    lr_scale, wd_scale, betas = _speedrun_adam_settings(name)
+    adam_groups.append(
+      {
+        "params": [param],
+        "lr": adam_learning_rate * lr_scale,
+        "weight_decay": adam_weight_decay * wd_scale,
+        "betas": betas,
+        "name": name,
+      }
+    )
+
+  optimizers: list[torch.optim.Optimizer] = []
+  if matrix_groups:
+    optimizers.append(
+      NorMuon(
+        matrix_groups,
+        lr=matrix_learning_rate,
+        momentum=momentum,
+        beta2=beta2,
+        weight_decay=matrix_weight_decay,
+      )
+    )
+  if adam_groups:
+    optimizers.append(
+      CautiousAdamW(
+        adam_groups,
+        lr=adam_learning_rate,
+        eps=adam_eps,
+        weight_decay=adam_weight_decay,
+      )
+    )
+  return CompositeOptimizer(optimizers)
+
+
 def _use_matrix_optimizer(name: str, param: nn.Parameter) -> bool:
   if param.ndim != 2:
     return False
-  return not (
-    "embedding" in name
-    or name.endswith("lm_head.weight")
-    or name.endswith("value_embeddings")
-  )
+  if any(token in name for token in ("embedding", "lm_head", "gate", "norm")):
+    return False
+  if name in {
+    "residual_scales",
+    "post_scales",
+    "xsa_alphas",
+  }:
+    return False
+  return not (name.startswith("mudd.") or name.endswith("value_embeddings"))
+
+
+def _speedrun_adam_settings(
+  name: str,
+) -> tuple[float, float, tuple[float, float]]:
+  if name in {"token_embedding.weight", "lm_head.weight"}:
+    return 1.0, 150.0, (0.5, 0.95)
+  if name == "bigram_embedding.embedding.weight":
+    return 75.0, 5.0, (0.75, 0.95)
+  if name == "value_embeddings":
+    return 75.0, 5.0, (0.75, 0.95)
+  if name == "token_smear.gate.weight":
+    return 0.01, 0.0, (0.9, 0.99)
+  if name == "block_skip_gate.weight":
+    return 0.05, 0.0, (0.9, 0.99)
+  if name.startswith("mudd."):
+    wd_scale = 0.0 if name == "mudd.bias" else 1.0
+    return 0.25, wd_scale, (0.9, 0.99)
+  if name in {"attention_gate_weights", "value_gate_weights"}:
+    return 1.0, 1.0, (0.9, 0.99)
+  if name in {"residual_scales", "token_smear.scale", "block_skip_logit"}:
+    return 5.0, 0.0, (0.9, 0.95)
+  if name in {
+    "post_scales",
+    "embedding_skip_weights",
+    "bigram_injection_weights",
+    "value_mix_logits",
+    "xsa_alphas",
+  }:
+    return 1.0, 0.0, (0.9, 0.95)
+  return 1.0, 1.0, (0.9, 0.99)
 
 
 def _orthogonalize_update(update: torch.Tensor, *, ns_steps: int) -> torch.Tensor:

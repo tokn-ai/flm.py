@@ -2,7 +2,13 @@
 
 from flm_modules.optim.adamw import CautiousAdamW, configure_adamw
 from flm_modules.optim.composite import CompositeOptimizer
-from flm_modules.optim.muon import Muon, NorMuon, configure_muon, configure_normuon
+from flm_modules.optim.muon import (
+  Muon,
+  NorMuon,
+  configure_muon,
+  configure_normuon,
+  configure_speedrun_normuon,
+)
 
 __all__ = [
   "CompositeOptimizer",
@@ -12,4 +18,5 @@ __all__ = [
   "configure_adamw",
   "configure_muon",
   "configure_normuon",
+  "configure_speedrun_normuon",
 ]
