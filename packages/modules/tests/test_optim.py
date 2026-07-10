@@ -179,6 +179,29 @@ def test_composite_optimizer_round_trips_state() -> None:
   assert "exp_avg_sq" in restored_optimizer.state[restored.linear.bias]
 
 
+def test_composite_optimizer_can_accumulate_secondary_gradients() -> None:
+  model = TinyModel()
+  optimizer = configure_normuon(model, learning_rate=1e-2, weight_decay=0.0)
+  before_weight = model.linear.weight.detach().clone()
+  before_bias = model.linear.bias.detach().clone()
+
+  model.linear(torch.ones(2, 3)).sum().backward()
+  optimizer.step(primary_only=True)
+  optimizer.zero_grad(primary_only=True)
+
+  assert not torch.equal(model.linear.weight, before_weight)
+  torch.testing.assert_close(model.linear.bias, before_bias)
+  accumulated_bias_grad = model.linear.bias.grad.clone()
+
+  model.linear(torch.ones(2, 3)).sum().backward()
+  torch.testing.assert_close(model.linear.bias.grad, 2 * accumulated_bias_grad)
+  optimizer.step()
+  optimizer.zero_grad()
+
+  assert not torch.equal(model.linear.bias, before_bias)
+  assert model.linear.bias.grad is None
+
+
 def test_muon_matrix_step_matches_torch_muon() -> None:
   torch_muon = getattr(torch.optim, "Muon", None)
   if torch_muon is None:

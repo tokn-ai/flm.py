@@ -83,6 +83,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "learning_rate": 1.0e-3,
         "weight_decay": 0.01,
         "max_grad_norm": 0.5,
+        "secondary_update_every": 2,
       },
       "loop": {
         "seed": 7,
@@ -91,6 +92,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "batch_size": 2,
         "batch_size_vram_fraction": 0.75,
         "steps": 5,
+        "gradient_accumulation_steps": 3,
       },
       "eval": {
         "split": "test",
@@ -179,9 +181,11 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.optimizer.learning_rate == 1.0e-3
   assert train_config.optimizer.weight_decay == 0.01
   assert train_config.optimizer.max_grad_norm == 0.5
+  assert train_config.optimizer.secondary_update_every == 2
   assert train_config.loop.seed == 7
   assert train_config.loop.device == "cpu"
   assert train_config.loop.dtype == "bfloat16"
+  assert train_config.loop.gradient_accumulation_steps == 3
   assert train_config.eval == EvalConfig(
     split="test",
     every_steps=2,

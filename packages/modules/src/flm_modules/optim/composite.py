@@ -34,17 +34,31 @@ class CompositeOptimizer(torch.optim.Optimizer):
     self._state = state
 
   @torch.no_grad()
-  def step(self, closure: Callable[[], object] | None = None) -> object | None:
+  def step(
+    self,
+    closure: Callable[[], object] | None = None,
+    *,
+    primary_only: bool = False,
+  ) -> object | None:
     loss = None
     for index, optimizer in enumerate(self.optimizers):
+      if primary_only and index > 0:
+        continue
       if index == 0:
         loss = optimizer.step(closure)
       else:
         optimizer.step()
     return loss
 
-  def zero_grad(self, set_to_none: bool = True) -> None:
-    for optimizer in self.optimizers:
+  def zero_grad(
+    self,
+    set_to_none: bool = True,
+    *,
+    primary_only: bool = False,
+  ) -> None:
+    for index, optimizer in enumerate(self.optimizers):
+      if primary_only and index > 0:
+        continue
       optimizer.zero_grad(set_to_none=set_to_none)
 
   def state_dict(self) -> dict[str, object]:

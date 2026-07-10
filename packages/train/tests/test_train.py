@@ -31,6 +31,7 @@ from flm_train.types import (
   LoopConfig,
   ModelConfig,
   NanoGPTSpeedrunModelConfig,
+  OptimizerConfig,
   OptimizerScheduleConfig,
   ReferenceModelConfig,
   SpeedrunScheduleConfig,
@@ -730,6 +731,47 @@ def test_train_language_model_applies_optimizer_schedule(tmp_path: Path) -> None
   assert [metrics.learning_rate for metrics in step_metrics] == pytest.approx(
     [1.5e-4, 3e-4, 1.5e-4, 0.0]
   )
+
+
+def test_train_language_model_accumulates_microbatches(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  config = train_config(repo_root=tmp_path, steps=2)
+  config = replace(
+    config,
+    loop=replace(config.loop, gradient_accumulation_steps=2),
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  train_language_model(config, on_step=step_metrics.append)
+
+  assert [metrics.tokens for metrics in step_metrics] == [32, 32]
+  assert [metrics.tokens_seen for metrics in step_metrics] == [32, 64]
+
+
+def test_train_language_model_accumulates_secondary_optimizer(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  config = train_config(repo_root=tmp_path, steps=2)
+  config = replace(
+    config,
+    optimizer=OptimizerConfig(
+      kind="normuon",
+      learning_rate=1e-3,
+      weight_decay=0.0,
+      max_grad_norm=None,
+      secondary_update_every=2,
+    ),
+  )
+
+  result = train_language_model(config)
+
+  assert len(result.losses) == 2
+  assert all(math.isfinite(loss) for loss in result.losses)
 
 
 def test_train_language_model_applies_speedrun_stages(tmp_path: Path) -> None:

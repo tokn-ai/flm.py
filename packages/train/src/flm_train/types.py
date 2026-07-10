@@ -146,6 +146,7 @@ class OptimizerConfig:
   learning_rate: float = 3e-4
   weight_decay: float = 0.1
   max_grad_norm: float | None = 1.0
+  secondary_update_every: int = 1
 
 
 @dataclass(frozen=True)
@@ -184,6 +185,7 @@ class LoopConfig:
   device: str = "cpu"
   seed: int = 42
   dtype: TorchDType = "float32"
+  gradient_accumulation_steps: int = 1
 
 
 @dataclass(frozen=True)

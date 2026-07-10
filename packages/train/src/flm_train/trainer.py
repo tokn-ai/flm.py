@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 import torch
+from flm_modules import CompositeOptimizer
 from torch.utils.data import DataLoader
 
 from flm_train.checkpoints import (
@@ -129,6 +130,8 @@ class LanguageModelTrainer:
     device: str,
     steps: int,
     bytes_per_token: float,
+    gradient_accumulation_steps: int = 1,
+    secondary_optimizer_update_every: int = 1,
     max_grad_norm: float | None = 1.0,
     on_step: StepCallback | None = None,
     eval_every_steps: int | None = None,
@@ -143,6 +146,15 @@ class LanguageModelTrainer:
   ) -> None:
     if steps < 0:
       raise ValueError("steps must be non-negative")
+    if gradient_accumulation_steps < 1:
+      raise ValueError("gradient_accumulation_steps must be positive")
+    if secondary_optimizer_update_every < 1:
+      raise ValueError("secondary_optimizer_update_every must be positive")
+    if secondary_optimizer_update_every > 1:
+      if not isinstance(optimizer, CompositeOptimizer):
+        raise ValueError("secondary optimizer cadence requires CompositeOptimizer")
+      if steps % secondary_optimizer_update_every:
+        raise ValueError("steps must end on a secondary optimizer update")
     self.model = model
     self.optimizer = optimizer
     self.optimizer_schedule = optimizer_schedule
@@ -152,6 +164,8 @@ class LanguageModelTrainer:
     self.device = device
     self.steps = steps
     self.bytes_per_token = bytes_per_token
+    self.gradient_accumulation_steps = gradient_accumulation_steps
+    self.secondary_optimizer_update_every = secondary_optimizer_update_every
     self.max_grad_norm = max_grad_norm
     self.on_step = on_step
     self.eval_every_steps = eval_every_steps
@@ -171,6 +185,7 @@ class LanguageModelTrainer:
     checkpoint_state = self._load_checkpoint_if_requested()
     tokens_seen = checkpoint_state.tokens_seen
     self.model.train()
+    self.optimizer.zero_grad(set_to_none=True)
 
     for step in range(checkpoint_state.step + 1, self.steps + 1):
       stage_state = (
@@ -190,34 +205,38 @@ class LanguageModelTrainer:
       if step_dataloader is not active_dataloader:
         active_dataloader = step_dataloader
         iterator = iter(active_dataloader)
-      input_ids, targets, iterator = self._next_batch(iterator)
-      input_ids = input_ids.to(self.device)
-      targets = targets.to(self.device)
-
       started_at = time.perf_counter()
-      self.optimizer.zero_grad(set_to_none=True)
-      _, loss = self.model(input_ids, targets, return_logits=False)
-      if loss is None:
-        raise RuntimeError("training loss was not produced")
-      loss.backward()
+      token_count = 0
+      loss_sum = 0.0
+      for _ in range(self.gradient_accumulation_steps):
+        input_ids, targets, iterator = self._next_batch(iterator)
+        input_ids = input_ids.to(self.device)
+        targets = targets.to(self.device)
+        _, loss = self.model(input_ids, targets, return_logits=False)
+        if loss is None:
+          raise RuntimeError("training loss was not produced")
+        (loss / self.gradient_accumulation_steps).backward()
+        microbatch_tokens = int(input_ids.numel())
+        token_count += microbatch_tokens
+        loss_sum += float(loss.detach().cpu()) * microbatch_tokens
       grad_norm = _clip_or_measure_grad_norm(
         self.model.parameters(),
         self.max_grad_norm,
       )
-      self.optimizer.step()
+      self._step_optimizer(step)
       step_time_sec = time.perf_counter() - started_at
 
-      token_count = int(input_ids.numel())
+      loss_value = loss_sum / token_count
       tokens_seen += token_count
       step_metrics = TrainStepMetrics(
         step=step,
-        loss=float(loss.detach().cpu()),
+        loss=loss_value,
         learning_rate=_learning_rate(self.optimizer),
         tokens=token_count,
         tokens_seen=tokens_seen,
         grad_norm=grad_norm,
         bits_per_byte=_loss_to_bits_per_byte(
-          loss=float(loss.detach().cpu()),
+          loss=loss_value,
           bytes_per_token=self.bytes_per_token,
         ),
         step_time_sec=step_time_sec,
@@ -242,6 +261,18 @@ class LanguageModelTrainer:
           self.on_checkpoint(path, step)
 
     return metrics
+
+  def _step_optimizer(self, step: int) -> None:
+    update_secondary = step % self.secondary_optimizer_update_every == 0
+    if isinstance(self.optimizer, CompositeOptimizer):
+      self.optimizer.step(primary_only=not update_secondary)
+      self.optimizer.zero_grad(
+        set_to_none=True,
+        primary_only=not update_secondary,
+      )
+      return
+    self.optimizer.step()
+    self.optimizer.zero_grad(set_to_none=True)
 
   def _dataloader_for_step(self, step: int) -> DataLoader:
     for end_step, dataloader in self.stage_dataloaders:
@@ -297,6 +328,7 @@ class LanguageModelTrainer:
       and self.checkpoint_dir is not None
       and self.checkpoint.every_steps > 0
       and step % self.checkpoint.every_steps == 0
+      and step % self.secondary_optimizer_update_every == 0
     )
 
   def _save_checkpoint(self, *, step: int, tokens_seen: int) -> Path:

@@ -311,6 +311,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       learning_rate=float(optimizer.get("learning_rate", 3e-4)),
       weight_decay=float(optimizer.get("weight_decay", 0.1)),
       max_grad_norm=_optional_float(optimizer.get("max_grad_norm", 1.0)),
+      secondary_update_every=int(optimizer.get("secondary_update_every", 1)),
     ),
     schedule=OptimizerScheduleConfig(
       warmup_steps=int(schedule.get("warmup_steps", 0)),
@@ -331,6 +332,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       batch_size=_parse_batch_size(loop.get("batch_size", 8)),
       batch_size_vram_fraction=float(loop.get("batch_size_vram_fraction", 0.9)),
       steps=int(loop.get("steps", 10)),
+      gradient_accumulation_steps=int(loop.get("gradient_accumulation_steps", 1)),
     ),
     eval=_parse_eval(eval_config),
     rollout=_parse_rollout(rollout),
@@ -363,6 +365,7 @@ def apply_overrides(
       batch_size=config.loop.batch_size,
       batch_size_vram_fraction=config.loop.batch_size_vram_fraction,
       steps=config.loop.steps if overrides.steps is None else overrides.steps,
+      gradient_accumulation_steps=config.loop.gradient_accumulation_steps,
     ),
     eval=config.eval,
     rollout=config.rollout,

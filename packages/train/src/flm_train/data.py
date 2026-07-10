@@ -77,7 +77,9 @@ def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
     dataset = RandomTokenWindowDataset(
       dataset,
       num_samples=max(
-        config.loop.steps * config.loop.batch_size,
+        config.loop.steps
+        * config.loop.batch_size
+        * config.loop.gradient_accumulation_steps,
         config.loop.batch_size,
       ),
       seed=config.loop.seed,

@@ -92,6 +92,8 @@ def train_language_model(
       dataset_bundle.byte_count,
       dataset_bundle.token_count,
     ),
+    gradient_accumulation_steps=config.loop.gradient_accumulation_steps,
+    secondary_optimizer_update_every=config.optimizer.secondary_update_every,
     max_grad_norm=config.optimizer.max_grad_norm,
     on_step=on_step,
     eval_every_steps=config.eval.every_steps if config.eval is not None else None,
