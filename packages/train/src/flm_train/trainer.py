@@ -250,6 +250,7 @@ class LanguageModelTrainer:
       if self.on_step is not None:
         self.on_step(step_metrics)
       if self._should_eval(step) and self.evaluate is not None:
+        self._apply_final_eval_stage(step)
         eval_metrics = self.evaluate(step, self.model)
         if self.on_eval is not None:
           self.on_eval(eval_metrics)
@@ -341,6 +342,19 @@ class LanguageModelTrainer:
       ),
     )
 
+  def _apply_final_eval_stage(self, step: int) -> None:
+    if self.speedrun_schedule is None or step != self.steps:
+      return
+    config = self.speedrun_schedule.config
+    if config.final_eval_short_window is None:
+      return
+    setter = getattr(self.model, "set_attention_windows", None)
+    if callable(setter):
+      setter(
+        short=config.final_eval_short_window,
+        long=config.final_eval_long_window,
+      )
+
   def _next_batch(
     self,
     iterator: Iterator[tuple[torch.Tensor, torch.Tensor]],
@@ -356,7 +370,7 @@ class LanguageModelTrainer:
     return (
       self.eval_every_steps is not None
       and self.eval_every_steps > 0
-      and step % self.eval_every_steps == 0
+      and (step == self.steps or step % self.eval_every_steps == 0)
     )
 
   def _should_rollout(self, step: int) -> bool:

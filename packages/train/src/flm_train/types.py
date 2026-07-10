@@ -155,10 +155,12 @@ class OptimizerConfig:
 class OptimizerScheduleConfig:
   warmup_steps: int = 0
   cooldown_steps: int = 0
+  cooldown_end_step: int | None = None
   final_lr_scale: float = 0.0
   momentum_start: float | None = None
   momentum_end: float | None = None
   momentum_warmup_steps: int = 0
+  momentum_cooldown_steps: int = 0
   scale_weight_decay_with_lr: bool = False
 
 
@@ -178,6 +180,8 @@ class SpeedrunStageConfig:
 class SpeedrunScheduleConfig:
   stages: tuple[SpeedrunStageConfig, ...] = ()
   untie_step: int | None = None
+  final_eval_short_window: int | None = None
+  final_eval_long_window: int | None = None
 
 
 @dataclass(frozen=True)

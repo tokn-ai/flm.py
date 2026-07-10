@@ -32,10 +32,10 @@ def test_optimizer_schedule_applies_warmup_cooldown_and_momentum() -> None:
 
   first = schedule.apply(1)
   assert first.learning_rate_scale == 0.5
-  assert first.momentum == pytest.approx(0.875)
+  assert first.momentum == pytest.approx(0.8)
   assert optimizer.param_groups[0]["lr"] == 1.0
   assert optimizer.param_groups[0]["weight_decay"] == 0.25
-  assert optimizer.param_groups[0]["momentum"] == pytest.approx(0.875)
+  assert optimizer.param_groups[0]["momentum"] == pytest.approx(0.8)
 
   last = schedule.apply(10)
   assert last.learning_rate_scale == pytest.approx(0.1)
@@ -170,3 +170,42 @@ def test_optimizer_schedule_applies_stage_multiplier() -> None:
   assert state.weight_decay_scale == 1.5
   assert optimizer.param_groups[0]["lr"] == 3.0
   assert optimizer.param_groups[0]["weight_decay"] == 0.75
+
+
+def test_optimizer_cooldown_blends_to_absolute_final_scale() -> None:
+  parameter = torch.nn.Parameter(torch.ones(()))
+  optimizer = torch.optim.SGD([parameter], lr=2.0)
+  schedule = OptimizerSchedule(
+    optimizer,
+    total_steps=10,
+    config=OptimizerScheduleConfig(
+      cooldown_steps=4,
+      cooldown_end_step=8,
+      final_lr_scale=0.1,
+    ),
+  )
+
+  middle = schedule.apply(6, learning_rate_multiplier=2.0)
+  after = schedule.apply(10, learning_rate_multiplier=2.0)
+
+  assert middle.learning_rate_scale == pytest.approx(1.05)
+  assert after.learning_rate_scale == pytest.approx(0.1)
+
+
+def test_optimizer_schedule_cools_momentum_back_to_start() -> None:
+  parameter = torch.nn.Parameter(torch.ones(()))
+  optimizer = torch.optim.SGD([parameter], lr=1.0, momentum=0.8)
+  schedule = OptimizerSchedule(
+    optimizer,
+    total_steps=10,
+    config=OptimizerScheduleConfig(
+      momentum_start=0.8,
+      momentum_end=0.95,
+      momentum_warmup_steps=2,
+      momentum_cooldown_steps=2,
+    ),
+  )
+
+  assert schedule.state_at(1).momentum == pytest.approx(0.8)
+  assert schedule.state_at(5).momentum == pytest.approx(0.95)
+  assert schedule.state_at(10).momentum == pytest.approx(0.8)

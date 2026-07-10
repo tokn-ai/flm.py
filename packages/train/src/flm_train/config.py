@@ -321,10 +321,12 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     schedule=OptimizerScheduleConfig(
       warmup_steps=int(schedule.get("warmup_steps", 0)),
       cooldown_steps=int(schedule.get("cooldown_steps", 0)),
+      cooldown_end_step=_optional_int(schedule.get("cooldown_end_step")),
       final_lr_scale=float(schedule.get("final_lr_scale", 0.0)),
       momentum_start=_optional_float(schedule.get("momentum_start")),
       momentum_end=_optional_float(schedule.get("momentum_end")),
       momentum_warmup_steps=int(schedule.get("momentum_warmup_steps", 0)),
+      momentum_cooldown_steps=int(schedule.get("momentum_cooldown_steps", 0)),
       scale_weight_decay_with_lr=bool(
         schedule.get("scale_weight_decay_with_lr", False)
       ),
@@ -741,6 +743,8 @@ def _parse_speedrun_schedule(value: dict[str, Any]) -> SpeedrunScheduleConfig:
   return SpeedrunScheduleConfig(
     stages=tuple(stages),
     untie_step=_optional_int(value.get("untie_step")),
+    final_eval_short_window=_optional_int(value.get("final_eval_short_window")),
+    final_eval_long_window=_optional_int(value.get("final_eval_long_window")),
   )
 
 

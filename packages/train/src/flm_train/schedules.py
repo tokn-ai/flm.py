@@ -34,12 +34,17 @@ class OptimizerSchedule:
       raise ValueError("total_steps must be positive")
     if config.warmup_steps < 0 or config.cooldown_steps < 0:
       raise ValueError("schedule step counts must be non-negative")
-    if config.warmup_steps + config.cooldown_steps > total_steps:
+    cooldown_end = config.cooldown_end_step or total_steps
+    if not 1 <= cooldown_end <= total_steps:
+      raise ValueError("cooldown_end_step must be within training steps")
+    if config.warmup_steps + config.cooldown_steps > cooldown_end:
       raise ValueError("warmup and cooldown cannot exceed total steps")
     if not 0 <= config.final_lr_scale <= 1:
       raise ValueError("final_lr_scale must be in [0, 1]")
-    if config.momentum_warmup_steps < 0:
-      raise ValueError("momentum_warmup_steps must be non-negative")
+    if config.momentum_warmup_steps < 0 or config.momentum_cooldown_steps < 0:
+      raise ValueError("momentum schedule steps must be non-negative")
+    if config.momentum_warmup_steps + config.momentum_cooldown_steps > total_steps:
+      raise ValueError("momentum warmup and cooldown cannot exceed total steps")
     for momentum in (config.momentum_start, config.momentum_end):
       if momentum is not None and not 0 <= momentum < 1:
         raise ValueError("scheduled momentum must be in [0, 1)")
@@ -63,10 +68,16 @@ class OptimizerSchedule:
     if learning_rate_multiplier <= 0:
       raise ValueError("learning_rate_multiplier must be positive")
     state = self.state_at(step)
-    learning_rate_scale = state.learning_rate_scale * learning_rate_multiplier
-    weight_decay_scale = state.weight_decay_scale
-    if self.config.scale_weight_decay_with_lr:
-      weight_decay_scale *= learning_rate_multiplier
+    cooldown_progress = self._cooldown_progress(step)
+    learning_rate_scale = (
+      state.learning_rate_scale * learning_rate_multiplier
+      if cooldown_progress == 0
+      else learning_rate_multiplier * (1 - cooldown_progress)
+      + self.config.final_lr_scale * cooldown_progress
+    )
+    weight_decay_scale = (
+      learning_rate_scale if self.config.scale_weight_decay_with_lr else 1.0
+    )
     state = OptimizerScheduleState(
       learning_rate_scale=learning_rate_scale,
       momentum=state.momentum,
@@ -100,11 +111,19 @@ class OptimizerSchedule:
   def _learning_rate_scale(self, step: int) -> float:
     if self.config.warmup_steps and step <= self.config.warmup_steps:
       return step / self.config.warmup_steps
-    cooldown_start = self.total_steps - self.config.cooldown_steps
-    if self.config.cooldown_steps and step > cooldown_start:
-      progress = (step - cooldown_start) / self.config.cooldown_steps
+    progress = self._cooldown_progress(step)
+    if progress:
       return 1.0 + progress * (self.config.final_lr_scale - 1.0)
     return 1.0
+
+  def _cooldown_progress(self, step: int) -> float:
+    if not self.config.cooldown_steps:
+      return 0.0
+    cooldown_end = self.config.cooldown_end_step or self.total_steps
+    cooldown_start = cooldown_end - self.config.cooldown_steps
+    if step <= cooldown_start:
+      return 0.0
+    return min((step - cooldown_start) / self.config.cooldown_steps, 1.0)
 
   def _momentum(self, step: int) -> float | None:
     start = self.config.momentum_start
@@ -116,8 +135,15 @@ class OptimizerSchedule:
     warmup_steps = self.config.momentum_warmup_steps
     if warmup_steps == 0:
       return end
-    progress = min(step / warmup_steps, 1.0)
-    return start + progress * (end - start)
+    if step <= warmup_steps:
+      progress = (step - 1) / warmup_steps
+      return start + progress * (end - start)
+    cooldown_steps = self.config.momentum_cooldown_steps
+    cooldown_start = self.total_steps - cooldown_steps
+    if cooldown_steps and step > cooldown_start:
+      progress = (step - cooldown_start) / cooldown_steps
+      return end + progress * (start - end)
+    return end
 
 
 @dataclass(frozen=True)
@@ -182,6 +208,14 @@ class SpeedrunStageSchedule:
       raise ValueError("untie_step requires at least one speedrun stage")
     if config.untie_step is not None and not 1 <= config.untie_step <= total_steps:
       raise ValueError("untie_step must be within training steps")
+    if (config.final_eval_short_window is None) != (
+      config.final_eval_long_window is None
+    ):
+      raise ValueError("final eval attention windows must both be set")
+    if config.final_eval_short_window is not None and not (
+      1 <= config.final_eval_short_window <= config.final_eval_long_window
+    ):
+      raise ValueError("final eval attention windows are invalid")
 
   def state_at(self, step: int) -> SpeedrunStageState | None:
     if not 1 <= step <= self.total_steps:

@@ -26,6 +26,22 @@ Run an experiment from a YAML config:
 uv run flm-train-experiment experiments/16m_repo.yaml
 ```
 
+### Portable nanoGPT speedrun baseline
+
+The eager-PyTorch baseline follows the current short-track architecture,
+optimizer recipe, training stages, canonical FineWeb token stream, and exact
+10,485,760-token validation target. Download the official pre-tokenized shards
+and run it with:
+
+```sh
+uv run python scripts/download_nanogpt_speedrun_data.py --run
+uv run flm-train-experiment experiments/nanogpt_speedrun.yaml
+```
+
+This is the portable semantic baseline. Distributed execution, FP8,
+FlashAttention 3, and the fused H100 kernels required for sub-90-second timing
+are intentionally outside this configuration.
+
 Workspace-specific directories can live outside the experiment config. A local
 `flm.workspace.yaml` in the current directory or one of its parents is loaded
 automatically and is ignored by git:

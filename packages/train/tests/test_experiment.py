@@ -358,10 +358,12 @@ def test_parse_experiment_config_accepts_optimizer_schedule() -> None:
       "schedule": {
         "warmup_steps": 10,
         "cooldown_steps": 20,
+        "cooldown_end_step": 90,
         "final_lr_scale": 0.1,
         "momentum_start": 0.85,
         "momentum_end": 0.95,
         "momentum_warmup_steps": 30,
+        "momentum_cooldown_steps": 5,
         "scale_weight_decay_with_lr": True,
       },
     }
@@ -370,10 +372,12 @@ def test_parse_experiment_config_accepts_optimizer_schedule() -> None:
   assert config.schedule == OptimizerScheduleConfig(
     warmup_steps=10,
     cooldown_steps=20,
+    cooldown_end_step=90,
     final_lr_scale=0.1,
     momentum_start=0.85,
     momentum_end=0.95,
     momentum_warmup_steps=30,
+    momentum_cooldown_steps=5,
     scale_weight_decay_with_lr=True,
   )
 
@@ -384,6 +388,8 @@ def test_parse_experiment_config_accepts_speedrun_stages() -> None:
       "name": "staged",
       "speedrun_schedule": {
         "untie_step": 3,
+        "final_eval_short_window": 8,
+        "final_eval_long_window": 32,
         "stages": [
           {
             "end_step": 2,
@@ -416,6 +422,8 @@ def test_parse_experiment_config_accepts_speedrun_stages() -> None:
       SpeedrunStageConfig(end_step=4, batch_size=4, seq_len=16),
     ),
     untie_step=3,
+    final_eval_short_window=8,
+    final_eval_long_window=32,
   )
 
 
