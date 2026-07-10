@@ -140,8 +140,7 @@ def _safetensors_state(
   # Safetensors intentionally rejects shared storage. FLM ties embedding and
   # lm_head weights, so clone tensors into an explicit flat serving payload.
   return {
-    name: tensor.detach().cpu().contiguous().clone()
-    for name, tensor in state.items()
+    name: tensor.detach().cpu().contiguous().clone() for name, tensor in state.items()
   }
 
 

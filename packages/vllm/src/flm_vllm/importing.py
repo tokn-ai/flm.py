@@ -70,8 +70,7 @@ def _validate_export_config(config: dict[str, Any]) -> None:
   architectures = config.get("architectures")
   if architectures != ["FlmReferenceForCausalLM"]:
     raise ValueError(
-      "expected a FlmReferenceForCausalLM export, "
-      f"got architectures={architectures!r}"
+      f"expected a FlmReferenceForCausalLM export, got architectures={architectures!r}"
     )
   if bool(config.get("tie_word_embeddings", True)) is not True:
     raise ValueError("FLM reference exports require tied word embeddings")

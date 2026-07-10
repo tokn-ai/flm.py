@@ -65,8 +65,7 @@ def _ffn_down_weight_names(names: list[str]) -> list[str]:
   return [
     name
     for name in names
-    if name.startswith("blocks.")
-    and name.endswith(".ffn.down.weight")
+    if name.startswith("blocks.") and name.endswith(".ffn.down.weight")
   ]
 
 
