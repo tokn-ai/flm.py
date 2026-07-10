@@ -1,7 +1,10 @@
-from dataclasses import replace
 from pathlib import Path
 
-from flm_train.config import load_experiment_config
+from flm_train.config import (
+  ExperimentOverrides,
+  apply_overrides,
+  load_experiment_config,
+)
 from flm_train.models import build_model
 from flm_train.presets import _config_with_resolved_intervals
 
@@ -62,12 +65,11 @@ def test_16m_speedrun_uses_automatic_workflow_cadence() -> None:
 def test_automatic_workflow_cadence_scales_with_total_steps() -> None:
   experiment = load_experiment_config(FULL_CONFIG)
   config_1k = _config_with_resolved_intervals(experiment.to_train_config())
-  config_10k = _config_with_resolved_intervals(
-    replace(
-      experiment.to_train_config(),
-      loop=replace(experiment.loop, steps=10_000),
-    )
+  experiment_10k = apply_overrides(
+    experiment,
+    ExperimentOverrides(steps=10_000),
   )
+  config_10k = _config_with_resolved_intervals(experiment_10k.to_train_config())
 
   assert config_1k.eval is not None
   assert config_1k.rollout is not None
@@ -79,3 +81,14 @@ def test_automatic_workflow_cadence_scales_with_total_steps() -> None:
   assert config_10k.eval.every_steps == 100
   assert config_10k.rollout.every_steps == 200
   assert config_10k.checkpoint.every_steps == 500
+  assert config_10k.schedule.cooldown_steps == 5_940
+  assert config_10k.schedule.cooldown_end_step == 9_900
+  assert config_10k.schedule.momentum_warmup_steps == 2_160
+  assert config_10k.schedule.momentum_cooldown_steps == 360
+  assert config_10k.speedrun_schedule.untie_step == 6_620
+  assert [stage.end_step for stage in config_10k.speedrun_schedule.stages] == [
+    3_300,
+    6_600,
+    9_900,
+    10_000,
+  ]

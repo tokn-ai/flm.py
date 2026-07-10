@@ -358,20 +358,25 @@ def apply_overrides(
   config: ExperimentConfig,
   overrides: ExperimentOverrides,
 ) -> ExperimentConfig:
+  target_steps = config.loop.steps if overrides.steps is None else overrides.steps
+  schedule, speedrun_schedule = _scaled_schedules(
+    config,
+    target_steps=target_steps,
+  )
   return ExperimentConfig(
     name=config.name,
     data=config.data,
     model=config.model,
     optimizer=config.optimizer,
-    schedule=config.schedule,
-    speedrun_schedule=config.speedrun_schedule,
+    schedule=schedule,
+    speedrun_schedule=speedrun_schedule,
     loop=LoopConfig(
       seed=config.loop.seed if overrides.seed is None else overrides.seed,
       device=config.loop.device if overrides.device is None else overrides.device,
       dtype=config.loop.dtype,
       batch_size=config.loop.batch_size,
       batch_size_vram_fraction=config.loop.batch_size_vram_fraction,
-      steps=config.loop.steps if overrides.steps is None else overrides.steps,
+      steps=target_steps,
       gradient_accumulation_steps=config.loop.gradient_accumulation_steps,
     ),
     eval=config.eval,
@@ -385,6 +390,46 @@ def apply_overrides(
     else OutputConfig(root_dir=overrides.root_dir),
     sinks=config.sinks,
   )
+
+
+def _scaled_schedules(
+  config: ExperimentConfig,
+  *,
+  target_steps: int,
+) -> tuple[OptimizerScheduleConfig, SpeedrunScheduleConfig]:
+  source_steps = config.loop.steps
+  if target_steps == source_steps:
+    return config.schedule, config.speedrun_schedule
+  if source_steps < 1 or target_steps < 1:
+    raise ValueError("loop.steps must be positive when scaling schedules")
+
+  def scale(steps: int) -> int:
+    if steps == 0:
+      return 0
+    return max(1, round(steps * target_steps / source_steps))
+
+  schedule = replace(
+    config.schedule,
+    warmup_steps=scale(config.schedule.warmup_steps),
+    cooldown_steps=scale(config.schedule.cooldown_steps),
+    cooldown_end_step=None
+    if config.schedule.cooldown_end_step is None
+    else scale(config.schedule.cooldown_end_step),
+    momentum_warmup_steps=scale(config.schedule.momentum_warmup_steps),
+    momentum_cooldown_steps=scale(config.schedule.momentum_cooldown_steps),
+  )
+  stages_by_end: dict[int, SpeedrunStageConfig] = {}
+  for stage in config.speedrun_schedule.stages:
+    end_step = min(target_steps, scale(stage.end_step))
+    stages_by_end[end_step] = replace(stage, end_step=end_step)
+  speedrun_schedule = replace(
+    config.speedrun_schedule,
+    stages=tuple(stages_by_end.values()),
+    untie_step=None
+    if config.speedrun_schedule.untie_step is None
+    else min(target_steps, scale(config.speedrun_schedule.untie_step)),
+  )
+  return schedule, speedrun_schedule
 
 
 def apply_workspace_overrides(
