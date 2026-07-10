@@ -90,11 +90,9 @@ loop:
 
 eval:
   split: test
-  every_steps: 100
   max_batches: 8
 
 rollout:
-  every_steps: 100
   max_new_tokens: 64
   prompts:
     - name: i_am
@@ -106,7 +104,6 @@ rollout:
 
 checkpoint:
   enabled: true
-  every_steps: 100
   keep_last: 3
   resume: auto
 

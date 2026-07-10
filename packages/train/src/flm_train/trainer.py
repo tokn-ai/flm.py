@@ -396,16 +396,21 @@ class LanguageModelTrainer:
     return (
       self.rollout_every_steps is not None
       and self.rollout_every_steps > 0
-      and step % self.rollout_every_steps == 0
+      and (step == self.steps or step % self.rollout_every_steps == 0)
     )
 
   def _should_checkpoint(self, step: int) -> bool:
     return (
       self.checkpoint.enabled
       and self.checkpoint_dir is not None
-      and self.checkpoint.every_steps > 0
-      and step % self.checkpoint.every_steps == 0
-      and step % self.secondary_optimizer_update_every == 0
+      and self.checkpoint.every_steps is not None
+      and (
+        step == self.steps
+        or (
+          step % self.checkpoint.every_steps == 0
+          and step % self.secondary_optimizer_update_every == 0
+        )
+      )
     )
 
   def _save_checkpoint(self, *, step: int, tokens_seen: int) -> Path:

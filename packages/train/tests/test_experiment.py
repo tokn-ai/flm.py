@@ -1042,7 +1042,7 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
       run=RunConfig(id="run-123"),
       data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
-      loop=LoopConfig(batch_size=2, steps=2),
+      loop=LoopConfig(batch_size=2, steps=3),
       eval=EvalConfig(split="test", every_steps=1, max_batches=1),
       rollout=RolloutConfig(
         every_steps=2,
@@ -1057,7 +1057,7 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   eval_metrics = [
     json.loads(line) for line in metrics_lines if "eval/test_loss" in line
   ]
-  assert [metrics["step"] for metrics in eval_metrics] == [1, 2]
+  assert [metrics["step"] for metrics in eval_metrics] == [1, 2, 3]
   assert all(metrics["eval/test_loss"] > 0 for metrics in eval_metrics)
   assert all(metrics["eval/test_bpb"] > 0 for metrics in eval_metrics)
   assert all("eval/test_perplexity" not in metrics for metrics in eval_metrics)
@@ -1088,7 +1088,8 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   summary_lines = (
     (run_dir / "rollouts" / "fib.jsonl").read_text(encoding="utf-8").splitlines()
   )
-  assert len(summary_lines) == 1
+  assert len(summary_lines) == 2
+  assert [json.loads(line)["step"] for line in summary_lines] == [2, 3]
   summary = json.loads(summary_lines[0])
   assert summary["step"] == 2
   assert summary["prompt"] == "def fib(n):"
@@ -1102,6 +1103,7 @@ def test_run_experiment_logs_eval_and_rollout(tmp_path: Path) -> None:
   assert isinstance(summary["prompt_mean_log_prob"], float)
   artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
   assert "rollouts/details/step-00000002.json" in artifacts
+  assert "rollouts/details/step-00000003.json" in artifacts
   assert "rollouts/fib.jsonl" in artifacts
 
 
@@ -1161,23 +1163,23 @@ def test_run_experiment_writes_checkpoints(tmp_path: Path) -> None:
       run=RunConfig(id="run-123"),
       data=DataConfig(dataset_root=dataset_root, seq_len=8),
       model=ReferenceModelConfig(d_model=8, n_layers=1, n_heads=2, d_ff=16),
-      loop=LoopConfig(batch_size=2, steps=2),
-      checkpoint=CheckpointConfig(enabled=True, every_steps=1, keep_last=1),
+      loop=LoopConfig(batch_size=2, steps=3),
+      checkpoint=CheckpointConfig(enabled=True, every_steps=2, keep_last=1),
       output=OutputConfig(root_dir=tmp_path / "runs"),
     )
   )
 
   checkpoint_dir = run_dir / "checkpoints"
   latest = checkpoint_dir / "latest"
-  assert latest.read_text(encoding="utf-8").strip() == "step-00000002"
-  assert not (checkpoint_dir / "step-00000001").exists()
-  checkpoint = checkpoint_dir / "step-00000002"
+  assert latest.read_text(encoding="utf-8").strip() == "step-00000003"
+  assert not (checkpoint_dir / "step-00000002").exists()
+  checkpoint = checkpoint_dir / "step-00000003"
   assert (checkpoint / "model.npz").is_file()
   assert (checkpoint / "optimizer.npz").is_file()
   assert (checkpoint / "trainer_state.json").is_file()
   manifest = json.loads((checkpoint / "manifest.json").read_text(encoding="utf-8"))
   assert manifest["format"] == "flm-checkpoint-v2"
-  assert manifest["step"] == 2
+  assert manifest["step"] == 3
   model_state = json.loads(
     (checkpoint / "model_state.json").read_text(encoding="utf-8")
   )
@@ -1191,7 +1193,7 @@ def test_run_experiment_writes_checkpoints(tmp_path: Path) -> None:
   assert first_tensor["dtype"].startswith("torch.")
   assert first_tensor["device"] == "cpu"
   artifacts = (run_dir / "artifacts.jsonl").read_text(encoding="utf-8")
-  assert "checkpoints/step-00000002" in artifacts
+  assert "checkpoints/step-00000003" in artifacts
 
 
 def test_run_experiment_uses_custom_files_sink_paths(tmp_path: Path) -> None:

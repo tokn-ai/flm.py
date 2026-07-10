@@ -198,7 +198,9 @@ class LoopConfig:
 @dataclass(frozen=True)
 class EvalConfig:
   split: Literal["val", "test"] = "test"
-  every_steps: int = 100
+  every_steps: int | None = None
+  every_fraction: float = 0.01
+  min_every_steps: int = 50
   max_batches: int = 8
   batch_tokens: int | None = None
 
@@ -211,7 +213,9 @@ class RolloutPromptConfig:
 
 @dataclass(frozen=True)
 class RolloutConfig:
-  every_steps: int = 100
+  every_steps: int | None = None
+  every_fraction: float = 0.02
+  min_every_steps: int = 100
   max_new_tokens: int = 64
   prompts: tuple[RolloutPromptConfig, ...] = ()
 
@@ -219,7 +223,9 @@ class RolloutConfig:
 @dataclass(frozen=True)
 class CheckpointConfig:
   enabled: bool = False
-  every_steps: int = 100
+  every_steps: int | None = None
+  every_fraction: float = 0.05
+  min_every_steps: int = 200
   keep_last: int = 3
   resume: str | None = None
 

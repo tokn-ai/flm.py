@@ -613,16 +613,34 @@ def _parse_batch_size(value: Any) -> int | Literal["auto"]:
 def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
   if value is None:
     return None
-  allowed = {"split", "every_steps", "max_batches", "batch_tokens"}
+  allowed = {
+    "split",
+    "every_steps",
+    "every_fraction",
+    "min_every_steps",
+    "max_batches",
+    "batch_tokens",
+  }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown eval config keys: {sorted(unknown)}")
   split = str(value.get("split", "test"))
   if split not in {"val", "test"}:
     raise ValueError(f"unsupported eval.split: {split}")
+  every_steps = _optional_int(value.get("every_steps"))
+  every_fraction = float(value.get("every_fraction", 0.01))
+  min_every_steps = int(value.get("min_every_steps", 50))
+  _validate_interval_config(
+    section="eval",
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
+  )
   return EvalConfig(
     split=split,
-    every_steps=int(value.get("every_steps", 100)),
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
     max_batches=int(value.get("max_batches", 8)),
     batch_tokens=_optional_int(value.get("batch_tokens")),
   )
@@ -631,34 +649,81 @@ def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
 def _parse_rollout(value: dict[str, Any] | None) -> RolloutConfig | None:
   if value is None:
     return None
-  allowed = {"every_steps", "max_new_tokens", "prompts"}
+  allowed = {
+    "every_steps",
+    "every_fraction",
+    "min_every_steps",
+    "max_new_tokens",
+    "prompts",
+  }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown rollout config keys: {sorted(unknown)}")
+  every_steps = _optional_int(value.get("every_steps"))
+  every_fraction = float(value.get("every_fraction", 0.02))
+  min_every_steps = int(value.get("min_every_steps", 100))
+  _validate_interval_config(
+    section="rollout",
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
+  )
   return RolloutConfig(
-    every_steps=int(value.get("every_steps", 100)),
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
     max_new_tokens=int(value.get("max_new_tokens", 64)),
     prompts=_parse_rollout_prompts(value.get("prompts")),
   )
 
 
 def _parse_checkpoint(value: dict[str, Any]) -> CheckpointConfig:
-  allowed = {"enabled", "every_steps", "keep_last", "resume"}
+  allowed = {
+    "enabled",
+    "every_steps",
+    "every_fraction",
+    "min_every_steps",
+    "keep_last",
+    "resume",
+  }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown checkpoint config keys: {sorted(unknown)}")
-  every_steps = int(value.get("every_steps", 100))
+  every_steps = _optional_int(value.get("every_steps"))
+  every_fraction = float(value.get("every_fraction", 0.05))
+  min_every_steps = int(value.get("min_every_steps", 200))
   keep_last = int(value.get("keep_last", 3))
-  if every_steps <= 0:
-    raise ValueError("checkpoint.every_steps must be positive")
+  _validate_interval_config(
+    section="checkpoint",
+    every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
+  )
   if keep_last < 0:
     raise ValueError("checkpoint.keep_last must be non-negative")
   return CheckpointConfig(
     enabled=bool(value.get("enabled", False)),
     every_steps=every_steps,
+    every_fraction=every_fraction,
+    min_every_steps=min_every_steps,
     keep_last=keep_last,
     resume=_optional_str(value.get("resume")),
   )
+
+
+def _validate_interval_config(
+  *,
+  section: str,
+  every_steps: int | None,
+  every_fraction: float,
+  min_every_steps: int,
+) -> None:
+  if every_steps is not None and every_steps <= 0:
+    raise ValueError(f"{section}.every_steps must be positive")
+  if not 0 < every_fraction <= 1:
+    raise ValueError(f"{section}.every_fraction must be in (0, 1]")
+  if min_every_steps < 1:
+    raise ValueError(f"{section}.min_every_steps must be positive")
 
 
 def _parse_system_metrics(value: dict[str, Any]) -> SystemMetricsConfig:

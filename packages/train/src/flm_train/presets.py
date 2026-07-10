@@ -48,6 +48,7 @@ def train_language_model(
     vocab_size=encoding.n_vocab,
     on_batch_size_resolved=on_batch_size_resolved,
   )
+  config = _config_with_resolved_intervals(config)
   model_build_config = _config_with_stage_max_seq_len(config)
   model = build_model(
     model_build_config,
@@ -172,6 +173,71 @@ def _config_with_stage_max_seq_len(config: TrainConfig) -> TrainConfig:
   if max_seq_len == config.data.seq_len:
     return config
   return replace(config, data=replace(config.data, seq_len=max_seq_len))
+
+
+def _config_with_resolved_intervals(config: TrainConfig) -> TrainConfig:
+  eval_config = config.eval
+  if eval_config is not None:
+    eval_config = replace(
+      eval_config,
+      every_steps=_resolve_interval(
+        total_steps=config.loop.steps,
+        every_steps=eval_config.every_steps,
+        every_fraction=eval_config.every_fraction,
+        min_every_steps=eval_config.min_every_steps,
+      ),
+    )
+  rollout = config.rollout
+  if rollout is not None:
+    rollout = replace(
+      rollout,
+      every_steps=_resolve_interval(
+        total_steps=config.loop.steps,
+        every_steps=rollout.every_steps,
+        every_fraction=rollout.every_fraction,
+        min_every_steps=rollout.min_every_steps,
+      ),
+    )
+  checkpoint = replace(
+    config.checkpoint,
+    every_steps=_resolve_interval(
+      total_steps=config.loop.steps,
+      every_steps=config.checkpoint.every_steps,
+      every_fraction=config.checkpoint.every_fraction,
+      min_every_steps=config.checkpoint.min_every_steps,
+      cadence=config.optimizer.secondary_update_every,
+    ),
+  )
+  return replace(
+    config,
+    eval=eval_config,
+    rollout=rollout,
+    checkpoint=checkpoint,
+  )
+
+
+def _resolve_interval(
+  *,
+  total_steps: int,
+  every_steps: int | None,
+  every_fraction: float,
+  min_every_steps: int,
+  cadence: int = 1,
+) -> int:
+  if every_steps is not None and every_steps < 1:
+    raise ValueError("every_steps must be positive")
+  if not 0 < every_fraction <= 1:
+    raise ValueError("every_fraction must be in (0, 1]")
+  if min_every_steps < 1:
+    raise ValueError("min_every_steps must be positive")
+  if cadence < 1:
+    raise ValueError("cadence must be positive")
+  interval = (
+    every_steps
+    if every_steps is not None
+    else max(min_every_steps, math.ceil(total_steps * every_fraction))
+  )
+  return math.ceil(interval / cadence) * cadence
 
 
 def _build_stage_dataloaders(
