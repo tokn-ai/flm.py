@@ -20,6 +20,7 @@ class CautiousAdamW(Optimizer):
     betas: tuple[float, float] = (0.9, 0.95),
     eps: float = 1e-8,
     weight_decay: float = 0.1,
+    weight_decay_lr_power: int = 1,
   ) -> None:
     beta1, beta2 = betas
     if lr < 0:
@@ -28,6 +29,8 @@ class CautiousAdamW(Optimizer):
       raise ValueError("Adam betas must be in [0, 1)")
     if eps < 0 or weight_decay < 0:
       raise ValueError("eps and weight_decay must be non-negative")
+    if weight_decay_lr_power not in {1, 2}:
+      raise ValueError("weight_decay_lr_power must be 1 or 2")
     super().__init__(
       params,
       {
@@ -35,6 +38,7 @@ class CautiousAdamW(Optimizer):
         "betas": betas,
         "eps": eps,
         "weight_decay": weight_decay,
+        "weight_decay_lr_power": weight_decay_lr_power,
       },
     )
 
@@ -71,7 +75,9 @@ class CautiousAdamW(Optimizer):
           mask = (update * param.float()) >= 0
           param.add_(
             param * mask,
-            alpha=-(group["lr"] * group["weight_decay"]),
+            alpha=-(
+              group["lr"] ** group["weight_decay_lr_power"] * group["weight_decay"]
+            ),
           )
         param.add_(update.to(param.dtype), alpha=-group["lr"])
     return loss

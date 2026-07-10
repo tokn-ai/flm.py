@@ -38,7 +38,7 @@ schedule:
   momentum_end: 0.95
   momentum_warmup_steps: 300
   momentum_cooldown_steps: 50
-  scale_weight_decay_with_lr: true
+  scale_weight_decay_with_lr: false
 
 speedrun_schedule:
   untie_step: 922

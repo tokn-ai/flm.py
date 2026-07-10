@@ -98,6 +98,8 @@ class NorMuon(Optimizer):
     momentum: float = 0.95,
     beta2: float = 0.95,
     weight_decay: float = 0.1,
+    decay_base_lr: float | None = None,
+    track_bfloat16_mantissa: bool = False,
   ) -> None:
     if not 0 <= momentum < 1:
       raise ValueError(f"invalid momentum value: {momentum}")
@@ -108,6 +110,8 @@ class NorMuon(Optimizer):
       "momentum": momentum,
       "beta2": beta2,
       "weight_decay": weight_decay,
+      "decay_base_lr": decay_base_lr,
+      "track_bfloat16_mantissa": track_bfloat16_mantissa,
     }
     super().__init__(params, defaults)
     for group in self.param_groups:
@@ -161,9 +165,25 @@ class NorMuon(Optimizer):
       red_dim=red_dim,
     )
 
+    decay_base_lr = group["decay_base_lr"]
+    decay_lr = 1.0 if decay_base_lr is None else float(decay_base_lr)
+    if bool(group["track_bfloat16_mantissa"]) and param.dtype == torch.bfloat16:
+      mantissa = state.setdefault(
+        "mantissa",
+        torch.zeros_like(param, dtype=torch.uint16),
+      )
+      _precise_bfloat16_update(
+        param,
+        mantissa,
+        update,
+        lr=lr,
+        weight_decay=weight_decay,
+        decay_lr=decay_lr,
+      )
+      return
     if weight_decay:
       cautious_mask = (update * param.float()) >= 0
-      param.add_(param * cautious_mask, alpha=-(lr * weight_decay))
+      param.add_(param * cautious_mask, alpha=-(lr * decay_lr * weight_decay))
     param.add_(update.to(param.dtype), alpha=-lr)
 
 
@@ -272,12 +292,13 @@ def configure_speedrun_normuon(
     if not param.requires_grad:
       continue
     if _use_matrix_optimizer(name, param):
-      lr_scale = 2.0 if name.endswith("ffn.down.weight") else 1.0
+      lr_scale = 4.0 if name.endswith("ffn.down.weight") else 1.0
       matrix_groups.append(
         {
           "params": [param],
           "lr": matrix_learning_rate * lr_scale,
           "weight_decay": matrix_weight_decay,
+          "decay_base_lr": matrix_learning_rate,
           "name": name,
         }
       )
@@ -302,6 +323,7 @@ def configure_speedrun_normuon(
         momentum=momentum,
         beta2=beta2,
         weight_decay=matrix_weight_decay,
+        track_bfloat16_mantissa=True,
       )
     )
   if adam_groups:
@@ -311,6 +333,7 @@ def configure_speedrun_normuon(
         lr=adam_learning_rate,
         eps=adam_eps,
         weight_decay=adam_weight_decay,
+        weight_decay_lr_power=2,
       )
     )
   return CompositeOptimizer(optimizers)
@@ -442,3 +465,25 @@ def _adjust_muon_lr(lr: float, shape: torch.Size) -> float:
   rows = shape[-2]
   cols = shape[-1]
   return lr * max(1.0, rows / cols) ** 0.5
+
+
+def _precise_bfloat16_update(
+  param: nn.Parameter,
+  mantissa: torch.Tensor,
+  update: torch.Tensor,
+  *,
+  lr: float,
+  weight_decay: float,
+  decay_lr: float,
+) -> None:
+  precise_bits = (
+    param.view(torch.uint16).to(torch.int64) * 65_536 + mantissa.to(torch.int64)
+  ).to(torch.int32)
+  precise = precise_bits.view(torch.float32)
+  if weight_decay:
+    cautious_mask = (update * precise) >= 0
+    precise.sub_(precise * cautious_mask, alpha=lr * decay_lr * weight_decay)
+  precise.add_(update.float(), alpha=-lr)
+  updated_bits = precise.view(torch.int32).to(torch.int64).remainder_(2**32)
+  param.view(torch.uint16).copy_((updated_bits // 65_536).to(torch.uint16))
+  mantissa.copy_(updated_bits.remainder(65_536).to(torch.uint16))

@@ -185,6 +185,23 @@ def test_cautious_adamw_decays_only_updates_aligned_with_parameters() -> None:
   torch.testing.assert_close(parameter, torch.tensor([0.85, 1.1]))
 
 
+def test_cautious_adamw_supports_speedrun_lr_squared_decay() -> None:
+  parameter = nn.Parameter(torch.ones(1))
+  optimizer = CautiousAdamW(
+    [parameter],
+    lr=0.1,
+    betas=(0.0, 0.0),
+    eps=0.0,
+    weight_decay=0.5,
+    weight_decay_lr_power=2,
+  )
+  parameter.grad = torch.ones_like(parameter)
+
+  optimizer.step()
+
+  torch.testing.assert_close(parameter, torch.tensor([0.895]))
+
+
 def test_configure_speedrun_normuon_applies_parameter_recipe() -> None:
   model = TinySpeedrunModel()
 
@@ -194,13 +211,29 @@ def test_configure_speedrun_normuon_applies_parameter_recipe() -> None:
   adam_groups = {group["name"]: group for group in adam.param_groups}
 
   assert normuon_groups["qkv.weight"]["lr"] == 0.023
-  assert normuon_groups["ffn.down.weight"]["lr"] == 0.046
+  assert normuon_groups["ffn.down.weight"]["lr"] == 0.092
   assert normuon_groups["qkv.weight"]["weight_decay"] == 1.2
   assert adam_groups["token_embedding.weight"]["lr"] == 0.008
   assert adam_groups["token_embedding.weight"]["weight_decay"] == 0.75
   assert adam_groups["token_embedding.weight"]["betas"] == (0.5, 0.95)
   assert adam_groups["residual_scales"]["lr"] == 0.04
   assert adam_groups["residual_scales"]["weight_decay"] == 0.0
+
+
+def test_normuon_tracks_low_bfloat16_mantissa_bits() -> None:
+  parameter = nn.Parameter(torch.ones(2, 2, dtype=torch.bfloat16))
+  optimizer = NorMuon(
+    [parameter],
+    lr=1e-5,
+    weight_decay=0.0,
+    track_bfloat16_mantissa=True,
+  )
+  parameter.grad = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.bfloat16)
+
+  optimizer.step()
+
+  assert "mantissa" in optimizer.state[parameter]
+  assert torch.count_nonzero(optimizer.state[parameter]["mantissa"].int()) > 0
 
 
 def test_muon_step_updates_muon_and_adamw_parameters() -> None:
