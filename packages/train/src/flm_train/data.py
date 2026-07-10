@@ -14,6 +14,8 @@ from typing import Any
 import numpy as np
 from flm_datasets import (
   SOURCE_CORPUS_SEPARATOR,
+  FineWebPackedDataset,
+  FineWebValidationDataset,
   RandomTokenWindowDataset,
   ShardedTokenDataset,
   SourceCorpusConfig,
@@ -33,6 +35,7 @@ from flm_train.types import DataConfig, TrainConfig
 _PUBLISHED_DATASET_VERSION = 1
 _TOKEN_CACHE_DTYPE = "int32"
 _FINEWEB_TOKEN_SHARD_SIZE = 256 * 1024 * 1024
+_SPEEDRUN_VALIDATION_TOKENS = 10_485_760
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,55 @@ class PublishedDatasetInfo:
 def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   if config.data.kind == "token_dataset":
     return build_token_dataset(config)
+  if config.data.kind == "fineweb_binary":
+    return build_fineweb_binary_dataset(config)
   raise ValueError(f"unsupported data.kind: {config.data.kind}")
+
+
+def build_fineweb_binary_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
+  if config.loop.batch_size == "auto":
+    raise ValueError("loop.batch_size must be resolved before building datasets")
+  paths = sorted(config.data.dataset_root.glob(f"fineweb_{config.data.split}_*.bin"))
+  if not paths:
+    raise FileNotFoundError(
+      f"no FineWeb binary shards found for split {config.data.split!r} "
+      f"under {config.data.dataset_root}"
+    )
+  if config.data.split == "train":
+    dataset = FineWebPackedDataset(
+      paths,
+      batch_tokens=config.loop.batch_size,
+      max_seq_len=config.data.seq_len,
+      num_batches=max(
+        config.loop.steps * config.loop.gradient_accumulation_steps,
+        1,
+      ),
+    )
+    return RepoSourceDatasetBundle(
+      dataloader=DataLoader(dataset, batch_size=None),
+      token_count=dataset.source_token_count,
+      file_count=len(paths),
+      byte_count=0,
+    )
+  token_limit = (
+    _SPEEDRUN_VALIDATION_TOKENS
+    if config.data.token_limit is None and config.data.split == "val"
+    else config.data.token_limit
+  )
+  dataset = FineWebValidationDataset(
+    paths,
+    batch_tokens=config.loop.batch_size,
+    token_limit=token_limit,
+  )
+  return RepoSourceDatasetBundle(
+    dataloader=DataLoader(
+      dataset,
+      batch_size=None,
+    ),
+    token_count=dataset.token_limit,
+    file_count=len(paths),
+    byte_count=0,
+  )
 
 
 def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
@@ -77,7 +128,9 @@ def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
     dataset = RandomTokenWindowDataset(
       dataset,
       num_samples=max(
-        config.loop.steps * config.loop.batch_size,
+        config.loop.steps
+        * config.loop.batch_size
+        * config.loop.gradient_accumulation_steps,
         config.loop.batch_size,
       ),
       seed=config.loop.seed,
@@ -109,6 +162,7 @@ def resolve_data_config(config: DataConfig) -> DataConfig:
     version=config.version,
     split=config.split,
     resolved_version=version,
+    token_limit=config.token_limit,
   )
 
 

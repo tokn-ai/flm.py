@@ -14,7 +14,7 @@ from flm_modules.attentions.deepseek_v4 import (
 )
 from flm_modules.attentions.dsa import DeepSeekDSA, DeepSeekDSAIndexer
 from flm_modules.attentions.mla import DeepSeekMLA
-from flm_modules.attentions.self_attention import SelfAttention
+from flm_modules.attentions.self_attention import QKNormSelfAttention, SelfAttention
 
 __all__ = [
   "AttentionBackend",
@@ -28,5 +28,6 @@ __all__ = [
   "DeepSeekV4Indexer",
   "DeepSeekV4IndexerScorer",
   "SelfAttention",
+  "QKNormSelfAttention",
   "scaled_dot_product_attention",
 ]

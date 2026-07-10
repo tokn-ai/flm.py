@@ -48,9 +48,13 @@ from flm_train.types import (
   DataConfig,
   EvalConfig,
   LoopConfig,
+  NanoGPTSpeedrunModelConfig,
+  OptimizerScheduleConfig,
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
   TrainingResult,
 )
 
@@ -79,6 +83,7 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "learning_rate": 1.0e-3,
         "weight_decay": 0.01,
         "max_grad_norm": 0.5,
+        "secondary_update_every": 2,
       },
       "loop": {
         "seed": 7,
@@ -87,11 +92,13 @@ def test_parse_experiment_config_derives_train_config() -> None:
         "batch_size": 2,
         "batch_size_vram_fraction": 0.75,
         "steps": 5,
+        "gradient_accumulation_steps": 3,
       },
       "eval": {
         "split": "test",
         "every_steps": 2,
         "max_batches": 3,
+        "batch_tokens": 1024,
       },
       "rollout": {
         "every_steps": 2,
@@ -175,13 +182,16 @@ def test_parse_experiment_config_derives_train_config() -> None:
   assert train_config.optimizer.learning_rate == 1.0e-3
   assert train_config.optimizer.weight_decay == 0.01
   assert train_config.optimizer.max_grad_norm == 0.5
+  assert train_config.optimizer.secondary_update_every == 2
   assert train_config.loop.seed == 7
   assert train_config.loop.device == "cpu"
   assert train_config.loop.dtype == "bfloat16"
+  assert train_config.loop.gradient_accumulation_steps == 3
   assert train_config.eval == EvalConfig(
     split="test",
     every_steps=2,
     max_batches=3,
+    batch_tokens=1024,
   )
   assert train_config.rollout == RolloutConfig(
     every_steps=2,
@@ -263,6 +273,160 @@ def test_parse_experiment_config_accepts_muon_optimizer() -> None:
   assert train_config.optimizer.kind == "muon"
   assert train_config.optimizer.learning_rate == 1.0e-3
   assert train_config.optimizer.weight_decay == 0.01
+
+
+def test_parse_experiment_config_accepts_normuon_optimizer() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "tiny",
+      "optimizer": {
+        "kind": "normuon",
+        "learning_rate": 1.0e-3,
+        "weight_decay": 0.01,
+      },
+    }
+  )
+
+  assert config.to_train_config().optimizer.kind == "normuon"
+
+
+def test_parse_experiment_config_accepts_speedrun_normuon_optimizer() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "speedrun",
+      "optimizer": {
+        "kind": "speedrun_normuon",
+        "secondary_update_every": 2,
+      },
+    }
+  )
+
+  assert config.to_train_config().optimizer.kind == "speedrun_normuon"
+  assert config.to_train_config().optimizer.secondary_update_every == 2
+
+
+def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "speedrun",
+      "model": {
+        "kind": "nanogpt_speedrun",
+        "padded_vocab_size": 96,
+        "d_model": 64,
+        "n_layers": 4,
+        "n_heads": 4,
+        "d_ff": 256,
+        "logit_softcap": 12.0,
+        "embedding_skip": True,
+        "value_residual": True,
+        "block_skip_from": 0,
+        "block_skip_to": 3,
+        "residual_decay": 0.99,
+        "mtp_weights": [1.0, 0.25],
+        "value_embedding_layers": [1, 2, 3],
+        "long_window_layers": [3],
+        "shared_attention_source_layer": 1,
+        "shared_attention_start_layer": 2,
+        "mudd": False,
+      },
+    }
+  )
+
+  assert config.model == NanoGPTSpeedrunModelConfig(
+    padded_vocab_size=96,
+    d_model=64,
+    n_layers=4,
+    n_heads=4,
+    d_ff=256,
+    logit_softcap=12.0,
+    embedding_skip=True,
+    value_residual=True,
+    block_skip_from=0,
+    block_skip_to=3,
+    residual_decay=0.99,
+    mtp_weights=(1.0, 0.25),
+    value_embedding_layers=(1, 2, 3),
+    long_window_layers=(3,),
+    shared_attention_source_layer=1,
+    shared_attention_start_layer=2,
+    mudd=False,
+  )
+
+
+def test_parse_experiment_config_accepts_optimizer_schedule() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "scheduled",
+      "schedule": {
+        "warmup_steps": 10,
+        "cooldown_steps": 20,
+        "cooldown_end_step": 90,
+        "final_lr_scale": 0.1,
+        "momentum_start": 0.85,
+        "momentum_end": 0.95,
+        "momentum_warmup_steps": 30,
+        "momentum_cooldown_steps": 5,
+        "scale_weight_decay_with_lr": True,
+      },
+    }
+  )
+
+  assert config.schedule == OptimizerScheduleConfig(
+    warmup_steps=10,
+    cooldown_steps=20,
+    cooldown_end_step=90,
+    final_lr_scale=0.1,
+    momentum_start=0.85,
+    momentum_end=0.95,
+    momentum_warmup_steps=30,
+    momentum_cooldown_steps=5,
+    scale_weight_decay_with_lr=True,
+  )
+
+
+def test_parse_experiment_config_accepts_speedrun_stages() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "staged",
+      "speedrun_schedule": {
+        "untie_step": 3,
+        "final_eval_short_window": 8,
+        "final_eval_long_window": 32,
+        "stages": [
+          {
+            "end_step": 2,
+            "batch_size": 2,
+            "seq_len": 8,
+            "learning_rate_scale": 1.2,
+            "mtp_weights": [1.0, 0.5],
+            "mtp_weights_end": [1.0, 0.0],
+            "short_window": 2,
+            "long_window": 4,
+          },
+          {"end_step": 4, "batch_size": 4, "seq_len": 16},
+        ],
+      },
+    }
+  )
+
+  assert config.speedrun_schedule == SpeedrunScheduleConfig(
+    stages=(
+      SpeedrunStageConfig(
+        end_step=2,
+        batch_size=2,
+        seq_len=8,
+        learning_rate_scale=1.2,
+        mtp_weights=(1.0, 0.5),
+        mtp_weights_end=(1.0, 0.0),
+        short_window=2,
+        long_window=4,
+      ),
+      SpeedrunStageConfig(end_step=4, batch_size=4, seq_len=16),
+    ),
+    untie_step=3,
+    final_eval_short_window=8,
+    final_eval_long_window=32,
+  )
 
 
 def test_parse_experiment_config_accepts_auto_batch_size() -> None:
@@ -504,6 +668,27 @@ def test_parse_experiment_config_reads_token_dataset_config() -> None:
   assert config.data.version == "latest"
   assert config.data.split == "val"
   assert config.data.seq_len == 512
+
+
+def test_parse_experiment_config_reads_fineweb_binary_config() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "speedrun",
+      "data": {
+        "kind": "fineweb_binary",
+        "dataset_root": "data/fineweb10B",
+        "split": "val",
+        "encoding_name": "gpt2",
+        "seq_len": 2048,
+        "token_limit": 10_485_760,
+      },
+    }
+  )
+
+  assert config.data.kind == "fineweb_binary"
+  assert config.data.dataset_root == Path("data/fineweb10B")
+  assert config.data.encoding_name == "gpt2"
+  assert config.data.token_limit == 10_485_760
 
 
 def test_parse_args_accepts_cli_overrides() -> None:

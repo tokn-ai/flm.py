@@ -2,7 +2,12 @@ import importlib.util
 
 import pytest
 import torch
-from flm_modules import AttentionBackend, SelfAttention, apply_rotary
+from flm_modules import (
+  AttentionBackend,
+  QKNormSelfAttention,
+  SelfAttention,
+  apply_rotary,
+)
 from torch.nn import functional as F
 
 try:
@@ -123,6 +128,134 @@ def test_self_attention_supports_non_causal_attention(random_input) -> None:
 def test_self_attention_rejects_unknown_backend() -> None:
   with pytest.raises(ValueError):
     SelfAttention(d_model=8, n_heads=2, backend="unknown")
+
+
+def test_qk_norm_attention_preserves_shape_and_returns_values(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  y, values = layer(x)
+
+  assert y.shape == x.shape
+  assert values.shape == (3, 2, 5, 4)
+
+
+def test_qk_norm_attention_zero_initialized_output_is_residual_safe(
+  random_input,
+) -> None:
+  layer = QKNormSelfAttention(
+    d_model=8,
+    n_heads=2,
+    zero_init_out=True,
+  )
+  x = random_input(3, 5, 8)
+
+  y, _ = layer(x)
+
+  torch.testing.assert_close(y, torch.zeros_like(x))
+
+
+def test_qk_norm_attention_mixes_value_residual(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+  value_residual = random_input(3, 2, 5, 4)
+
+  residual_only, _ = layer(
+    x,
+    value_residual=value_residual,
+    value_mix=0.0,
+  )
+  current_only, _ = layer(
+    x,
+    value_residual=value_residual,
+    value_mix=1.0,
+  )
+
+  assert not torch.equal(residual_only, current_only)
+
+
+def test_qk_norm_attention_adds_auxiliary_values(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+  auxiliary_values = random_input(3, 2, 5, 4)
+
+  regular, _ = layer(x)
+  augmented, _ = layer(x, auxiliary_values=auxiliary_values)
+
+  assert not torch.equal(regular, augmented)
+
+
+def test_qk_norm_attention_rejects_invalid_value_residual(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  with pytest.raises(ValueError, match="same shape"):
+    layer(x, value_residual=random_input(3, 5, 8))
+
+
+def test_qk_norm_attention_partial_key_offset_changes_attention(
+  random_input,
+) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  regular, _ = layer(x)
+  offset, _ = layer(x, partial_key_offset=True)
+
+  assert not torch.equal(regular, offset)
+
+
+def test_qk_norm_attention_applies_output_gate_and_xsa(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+  gate_weight = torch.zeros(2, 4)
+  xsa_alpha = torch.ones(2)
+
+  regular, _ = layer(x)
+  gated, _ = layer(
+    x,
+    output_gate_weight=gate_weight,
+    xsa_alpha=xsa_alpha,
+  )
+
+  assert not torch.equal(regular, gated)
+
+
+def test_qk_norm_attention_supports_paired_heads(random_input) -> None:
+  regular = QKNormSelfAttention(d_model=8, n_heads=4)
+  paired = QKNormSelfAttention(d_model=8, n_heads=4, paired_heads=True)
+  paired.load_state_dict(regular.state_dict())
+  x = random_input(3, 5, 8)
+
+  regular_output, regular_values = regular(x)
+  paired_output, paired_values = paired(x)
+
+  assert paired_output.shape == x.shape
+  assert paired_values.shape == regular_values.shape
+  assert not torch.equal(paired_output, regular_output)
+
+
+def test_qk_norm_attention_validates_paired_head_features(random_input) -> None:
+  with pytest.raises(ValueError, match="even number"):
+    QKNormSelfAttention(d_model=9, n_heads=3, paired_heads=True)
+
+  layer = QKNormSelfAttention(d_model=8, n_heads=4, paired_heads=True)
+  x = random_input(3, 5, 8)
+  with pytest.raises(ValueError, match="partial key offset"):
+    layer(x, partial_key_offset=True)
+  with pytest.raises(ValueError, match="XSA"):
+    layer(x, xsa_alpha=torch.zeros(4))
+
+
+def test_qk_norm_attention_supports_sliding_windows(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  dense, _ = layer(x)
+  windowed, _ = layer(x, attention_window=2)
+
+  assert windowed.shape == dense.shape
+  assert not torch.equal(windowed, dense)
 
 
 def test_self_attention_flash_attention2_requires_package(

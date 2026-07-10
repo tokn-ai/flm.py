@@ -9,10 +9,16 @@ from pathlib import Path
 
 import torch
 from flm_datasets import get_tokenizer
-from flm_modules import configure_adamw, configure_muon
+from flm_modules import (
+  configure_adamw,
+  configure_muon,
+  configure_normuon,
+  configure_speedrun_normuon,
+)
 
 from flm_train.data import build_training_dataset
 from flm_train.models import build_model
+from flm_train.schedules import OptimizerSchedule, SpeedrunStageSchedule
 from flm_train.trainer import (
   EvalMetrics,
   LanguageModel,
@@ -42,22 +48,52 @@ def train_language_model(
     vocab_size=encoding.n_vocab,
     on_batch_size_resolved=on_batch_size_resolved,
   )
+  model_build_config = _config_with_stage_max_seq_len(config)
   model = build_model(
-    config,
+    model_build_config,
     vocab_size=encoding.n_vocab,
   ).to(device=config.loop.device, dtype=_torch_dtype(config.loop.dtype))
   dataset_bundle = build_training_dataset(config)
+  stage_dataloaders = _build_stage_dataloaders(config)
   eval_bundle = None
   if config.eval is not None:
+    eval_loop = config.loop
+    if config.data.kind == "fineweb_binary" and config.eval.batch_tokens is not None:
+      eval_loop = replace(config.loop, batch_size=config.eval.batch_tokens)
     eval_config = replace(
       config,
       data=replace(config.data, split=config.eval.split),
+      loop=eval_loop,
     )
     eval_bundle = build_training_dataset(eval_config)
   optimizer = _build_optimizer(config, model)
+  schedule = (
+    None
+    if config.loop.steps == 0
+    else OptimizerSchedule(
+      optimizer,
+      total_steps=config.loop.steps,
+      config=config.schedule,
+    )
+  )
+  speedrun_schedule = (
+    None
+    if config.loop.steps == 0
+    or (
+      not config.speedrun_schedule.stages
+      and config.speedrun_schedule.untie_step is None
+    )
+    else SpeedrunStageSchedule(
+      total_steps=config.loop.steps,
+      config=config.speedrun_schedule,
+    )
+  )
   trainer = LanguageModelTrainer(
     model=model,
     optimizer=optimizer,
+    optimizer_schedule=schedule,
+    speedrun_schedule=speedrun_schedule,
+    stage_dataloaders=stage_dataloaders,
     dataloader=dataset_bundle.dataloader,
     device=config.loop.device,
     steps=config.loop.steps,
@@ -65,6 +101,8 @@ def train_language_model(
       dataset_bundle.byte_count,
       dataset_bundle.token_count,
     ),
+    gradient_accumulation_steps=config.loop.gradient_accumulation_steps,
+    secondary_optimizer_update_every=config.optimizer.secondary_update_every,
     max_grad_norm=config.optimizer.max_grad_norm,
     on_step=on_step,
     eval_every_steps=config.eval.every_steps if config.eval is not None else None,
@@ -79,7 +117,11 @@ def train_language_model(
         eval_bundle.byte_count,
         eval_bundle.token_count,
       ),
-      max_batches=config.eval.max_batches,
+      max_batches=(
+        len(eval_bundle.dataloader)
+        if config.data.kind == "fineweb_binary"
+        else config.eval.max_batches
+      ),
       step=step,
     ),
     on_eval=on_eval,
@@ -112,6 +154,58 @@ def train_language_model(
   )
 
 
+def _config_with_stage_max_seq_len(config: TrainConfig) -> TrainConfig:
+  max_seq_len = max(
+    (config.data.seq_len,)
+    + tuple(
+      stage.seq_len
+      for stage in config.speedrun_schedule.stages
+      if stage.seq_len is not None
+    )
+  )
+  if (
+    config.data.kind == "fineweb_binary"
+    and config.eval is not None
+    and config.eval.batch_tokens is not None
+  ):
+    max_seq_len = max(max_seq_len, config.eval.batch_tokens)
+  if max_seq_len == config.data.seq_len:
+    return config
+  return replace(config, data=replace(config.data, seq_len=max_seq_len))
+
+
+def _build_stage_dataloaders(
+  config: TrainConfig,
+) -> tuple[tuple[int, torch.utils.data.DataLoader], ...]:
+  if config.data.kind == "fineweb_binary":
+    return ()
+  dataloaders = []
+  cache = {}
+  for stage_index, stage in enumerate(config.speedrun_schedule.stages):
+    batch_size = (
+      config.loop.batch_size if stage.batch_size is None else stage.batch_size
+    )
+    if batch_size == "auto":
+      raise ValueError("staged dataloaders require a resolved batch size")
+    seq_len = config.data.seq_len if stage.seq_len is None else stage.seq_len
+    key = (batch_size, seq_len)
+    dataloader = cache.get(key)
+    if dataloader is None:
+      stage_config = replace(
+        config,
+        data=replace(config.data, seq_len=seq_len),
+        loop=replace(
+          config.loop,
+          batch_size=batch_size,
+          seed=config.loop.seed + stage_index,
+        ),
+      )
+      dataloader = build_training_dataset(stage_config).dataloader
+      cache[key] = dataloader
+    dataloaders.append((stage.end_step, dataloader))
+  return tuple(dataloaders)
+
+
 def _config_with_resolved_batch_size(
   config: TrainConfig,
   *,
@@ -120,6 +214,8 @@ def _config_with_resolved_batch_size(
 ) -> TrainConfig:
   if config.loop.batch_size != "auto":
     return config
+  if config.data.kind == "fineweb_binary":
+    raise ValueError("fineweb_binary requires an explicit token batch size")
   batch_size = probe_auto_batch_size(
     config=config,
     vocab_size=vocab_size,
@@ -291,6 +387,14 @@ def _build_optimizer(
       learning_rate=config.optimizer.learning_rate,
       weight_decay=config.optimizer.weight_decay,
     )
+  if config.optimizer.kind == "normuon":
+    return configure_normuon(
+      model,
+      learning_rate=config.optimizer.learning_rate,
+      weight_decay=config.optimizer.weight_decay,
+    )
+  if config.optimizer.kind == "speedrun_normuon":
+    return configure_speedrun_normuon(model)
   raise ValueError(f"unsupported optimizer.kind: {config.optimizer.kind}")
 
 
@@ -311,13 +415,23 @@ def evaluate_language_model(
   total_tokens = 0
   total_batches = 0
   with torch.no_grad():
-    for input_ids, targets in dataloader:
+    for batch in dataloader:
+      if len(batch) == 2:
+        input_ids, targets = batch
+        previous_token_ids = None
+      else:
+        input_ids, targets, previous_token_ids = batch
       input_ids = input_ids.to(device)
       targets = targets.to(device)
-      _, loss = model(input_ids, targets, return_logits=False)
+      model_kwargs = (
+        {}
+        if previous_token_ids is None
+        else {"previous_token_ids": previous_token_ids.to(device)}
+      )
+      _, loss = model(input_ids, targets, return_logits=False, **model_kwargs)
       if loss is None:
         raise RuntimeError("eval loss was not produced")
-      token_count = int(input_ids.numel())
+      token_count = int(targets.ne(-100).sum())
       total_loss += float(loss.detach().cpu()) * token_count
       total_tokens += token_count
       total_batches += 1

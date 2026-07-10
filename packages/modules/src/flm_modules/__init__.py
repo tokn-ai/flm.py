@@ -11,10 +11,11 @@ from flm_modules.attentions import (
   DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
   DeepSeekV4IndexerScorer,
+  QKNormSelfAttention,
   SelfAttention,
   scaled_dot_product_attention,
 )
-from flm_modules.feed_forward import SwiGLU
+from flm_modules.feed_forward import ReLUSquared, SwiGLU
 from flm_modules.hyper import (
   DeepSeekV4HyperConnection,
   DeepSeekV4HyperHead,
@@ -34,12 +35,28 @@ from flm_modules.moe import (
   RouterScoring,
 )
 from flm_modules.norm import RMSNorm
-from flm_modules.optim import CompositeOptimizer, Muon, configure_adamw, configure_muon
-from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
+from flm_modules.optim import (
+  CautiousAdamW,
+  CompositeOptimizer,
+  Muon,
+  NorMuon,
+  configure_adamw,
+  configure_muon,
+  configure_normuon,
+  configure_speedrun_normuon,
+)
+from flm_modules.rope import RopeLayout, RotaryEmbedding, SpeedrunYaRN, apply_rotary
+from flm_modules.speedrun import (
+  BigramHashEmbedding,
+  MultiwayDynamicDenseConnections,
+  TokenSmear,
+)
 
 __all__ = [
   "AttentionBackend",
+  "BigramHashEmbedding",
   "CompositeOptimizer",
+  "CautiousAdamW",
   "DeepSeekDSA",
   "DeepSeekDSAIndexer",
   "DeepSeekMLA",
@@ -60,16 +77,24 @@ __all__ = [
   "linear_cross_entropy",
   "LossBackend",
   "Muon",
+  "MultiwayDynamicDenseConnections",
+  "NorMuon",
   "RMSNorm",
+  "ReLUSquared",
   "RouterScoring",
   "RopeLayout",
   "RotaryEmbedding",
   "SelfAttention",
+  "QKNormSelfAttention",
   "SwiGLU",
+  "SpeedrunYaRN",
+  "TokenSmear",
   "UnweightedRMSNorm",
   "apply_rotary",
   "configure_adamw",
   "configure_muon",
+  "configure_normuon",
+  "configure_speedrun_normuon",
   "scaled_dot_product_attention",
   "tilelang_flash_attention",
   "tilelang_linear_cross_entropy",

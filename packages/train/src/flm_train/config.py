@@ -16,10 +16,14 @@ from flm_train.types import (
   EvalConfig,
   LoopConfig,
   ModelConfig,
+  NanoGPTSpeedrunModelConfig,
   OptimizerConfig,
+  OptimizerScheduleConfig,
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
   TorchDType,
   TrainConfig,
 )
@@ -142,6 +146,10 @@ class ExperimentConfig:
   data: DataConfig = field(default_factory=DataConfig)
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+  schedule: OptimizerScheduleConfig = field(default_factory=OptimizerScheduleConfig)
+  speedrun_schedule: SpeedrunScheduleConfig = field(
+    default_factory=SpeedrunScheduleConfig
+  )
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
@@ -159,14 +167,21 @@ class ExperimentConfig:
     return self.output.root_dir / self.name / self.run.id
 
   def to_train_config(self) -> TrainConfig:
-    if self.data.kind != "token_dataset":
+    if self.data.kind not in {"token_dataset", "fineweb_binary"}:
       raise ValueError(f"unsupported data.kind: {self.data.kind}")
-    if self.optimizer.kind not in {"adamw", "muon"}:
+    if self.optimizer.kind not in {
+      "adamw",
+      "muon",
+      "normuon",
+      "speedrun_normuon",
+    }:
       raise ValueError(f"unsupported optimizer.kind: {self.optimizer.kind}")
     return TrainConfig(
       data=self.data,
       model=self.model,
       optimizer=self.optimizer,
+      schedule=self.schedule,
+      speedrun_schedule=self.speedrun_schedule,
       loop=self.loop,
       eval=self.eval,
       rollout=self.rollout,
@@ -260,6 +275,8 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "data",
     "model",
     "optimizer",
+    "schedule",
+    "speedrun_schedule",
     "loop",
     "eval",
     "rollout",
@@ -279,6 +296,8 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   data = _section(raw, "data")
   model = _section(raw, "model")
   optimizer = _section(raw, "optimizer")
+  schedule = _section(raw, "schedule")
+  speedrun_schedule = _section(raw, "speedrun_schedule")
   loop = _section(raw, "loop")
   eval_config = _optional_section(raw, "eval")
   rollout = _optional_section(raw, "rollout")
@@ -297,7 +316,22 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       learning_rate=float(optimizer.get("learning_rate", 3e-4)),
       weight_decay=float(optimizer.get("weight_decay", 0.1)),
       max_grad_norm=_optional_float(optimizer.get("max_grad_norm", 1.0)),
+      secondary_update_every=int(optimizer.get("secondary_update_every", 1)),
     ),
+    schedule=OptimizerScheduleConfig(
+      warmup_steps=int(schedule.get("warmup_steps", 0)),
+      cooldown_steps=int(schedule.get("cooldown_steps", 0)),
+      cooldown_end_step=_optional_int(schedule.get("cooldown_end_step")),
+      final_lr_scale=float(schedule.get("final_lr_scale", 0.0)),
+      momentum_start=_optional_float(schedule.get("momentum_start")),
+      momentum_end=_optional_float(schedule.get("momentum_end")),
+      momentum_warmup_steps=int(schedule.get("momentum_warmup_steps", 0)),
+      momentum_cooldown_steps=int(schedule.get("momentum_cooldown_steps", 0)),
+      scale_weight_decay_with_lr=bool(
+        schedule.get("scale_weight_decay_with_lr", False)
+      ),
+    ),
+    speedrun_schedule=_parse_speedrun_schedule(speedrun_schedule),
     loop=LoopConfig(
       seed=int(loop.get("seed", 42)),
       device=str(loop.get("device", "cpu")),
@@ -305,6 +339,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
       batch_size=_parse_batch_size(loop.get("batch_size", 8)),
       batch_size_vram_fraction=float(loop.get("batch_size_vram_fraction", 0.9)),
       steps=int(loop.get("steps", 10)),
+      gradient_accumulation_steps=int(loop.get("gradient_accumulation_steps", 1)),
     ),
     eval=_parse_eval(eval_config),
     rollout=_parse_rollout(rollout),
@@ -328,6 +363,8 @@ def apply_overrides(
     data=config.data,
     model=config.model,
     optimizer=config.optimizer,
+    schedule=config.schedule,
+    speedrun_schedule=config.speedrun_schedule,
     loop=LoopConfig(
       seed=config.loop.seed if overrides.seed is None else overrides.seed,
       device=config.loop.device if overrides.device is None else overrides.device,
@@ -335,6 +372,7 @@ def apply_overrides(
       batch_size=config.loop.batch_size,
       batch_size_vram_fraction=config.loop.batch_size_vram_fraction,
       steps=config.loop.steps if overrides.steps is None else overrides.steps,
+      gradient_accumulation_steps=config.loop.gradient_accumulation_steps,
     ),
     eval=config.eval,
     rollout=config.rollout,
@@ -384,6 +422,8 @@ def resolve_workspace_paths(
     ),
     model=config.model,
     optimizer=config.optimizer,
+    schedule=config.schedule,
+    speedrun_schedule=config.speedrun_schedule,
     loop=config.loop,
     eval=config.eval,
     rollout=config.rollout,
@@ -523,12 +563,13 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     "version",
     "split",
     "resolved_version",
+    "token_limit",
   }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown data config keys: {sorted(unknown)}")
   kind = value.get("kind", "token_dataset")
-  if kind != "token_dataset":
+  if kind not in {"token_dataset", "fineweb_binary"}:
     raise ValueError(f"unsupported data.kind: {kind}")
   split = str(value.get("split", "train"))
   if split not in {"train", "val", "test"}:
@@ -541,6 +582,7 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     version=str(value.get("version", "latest")),
     split=split,
     resolved_version=value.get("resolved_version"),
+    token_limit=_optional_int(value.get("token_limit")),
   )
 
 
@@ -571,7 +613,7 @@ def _parse_batch_size(value: Any) -> int | Literal["auto"]:
 def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
   if value is None:
     return None
-  allowed = {"split", "every_steps", "max_batches"}
+  allowed = {"split", "every_steps", "max_batches", "batch_tokens"}
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown eval config keys: {sorted(unknown)}")
@@ -582,6 +624,7 @@ def _parse_eval(value: dict[str, Any] | None) -> EvalConfig | None:
     split=split,
     every_steps=int(value.get("every_steps", 100)),
     max_batches=int(value.get("max_batches", 8)),
+    batch_tokens=_optional_int(value.get("batch_tokens")),
   )
 
 
@@ -672,6 +715,40 @@ def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
   return tuple(prompts)
 
 
+def _parse_speedrun_schedule(value: dict[str, Any]) -> SpeedrunScheduleConfig:
+  raw_stages = value.get("stages", ())
+  if not isinstance(raw_stages, list | tuple):
+    raise ValueError("speedrun_schedule.stages must be a list")
+  stages = []
+  for raw_stage in raw_stages:
+    if not isinstance(raw_stage, dict):
+      raise ValueError("speedrun schedule stage must be a mapping")
+    if "end_step" not in raw_stage:
+      raise ValueError("speedrun schedule stage requires end_step")
+    stages.append(
+      SpeedrunStageConfig(
+        end_step=int(raw_stage["end_step"]),
+        batch_size=_optional_int(raw_stage.get("batch_size")),
+        seq_len=_optional_int(raw_stage.get("seq_len")),
+        learning_rate_scale=float(raw_stage.get("learning_rate_scale", 1.0)),
+        mtp_weights=None
+        if raw_stage.get("mtp_weights") is None
+        else _float_tuple(raw_stage["mtp_weights"]),
+        mtp_weights_end=None
+        if raw_stage.get("mtp_weights_end") is None
+        else _float_tuple(raw_stage["mtp_weights_end"]),
+        short_window=_optional_int(raw_stage.get("short_window")),
+        long_window=_optional_int(raw_stage.get("long_window")),
+      )
+    )
+  return SpeedrunScheduleConfig(
+    stages=tuple(stages),
+    untie_step=_optional_int(value.get("untie_step")),
+    final_eval_short_window=_optional_int(value.get("final_eval_short_window")),
+    final_eval_long_window=_optional_int(value.get("final_eval_long_window")),
+  )
+
+
 def _parse_model(value: dict[str, Any]) -> ModelConfig:
   kind = value.get("kind", "reference")
   attention_backend = str(value.get("attention_backend", "torch"))
@@ -697,6 +774,55 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       attention_backend=attention_backend,
       loss_backend=loss_backend,
       loss_chunk_size=loss_chunk_size,
+    )
+  if kind == "nanogpt_speedrun":
+    return NanoGPTSpeedrunModelConfig(
+      padded_vocab_size=_optional_int(value.get("padded_vocab_size")),
+      d_model=int(value.get("d_model", 768)),
+      n_layers=int(value.get("n_layers", 11)),
+      n_heads=int(value.get("n_heads", 6)),
+      d_ff=int(value.get("d_ff", 3072)),
+      attention_backend=attention_backend,
+      loss_backend=loss_backend,
+      loss_chunk_size=loss_chunk_size,
+      logit_softcap=_optional_float(value.get("logit_softcap", 30.0)),
+      logit_scale=float(value.get("logit_scale", 1.0)),
+      logit_sigmoid_scale=_optional_float(value.get("logit_sigmoid_scale", 23.0)),
+      logit_sigmoid_bias=float(value.get("logit_sigmoid_bias", 5.0)),
+      logit_sigmoid_temperature=float(value.get("logit_sigmoid_temperature", 7.5)),
+      token_smear=bool(value.get("token_smear", True)),
+      smear_gate_dim=int(value.get("smear_gate_dim", 12)),
+      partial_key_offset_layers=_int_tuple(
+        value.get("partial_key_offset_layers", (3, 10))
+      ),
+      attention_gate_dim=int(value.get("attention_gate_dim", 12)),
+      xsa=bool(value.get("xsa", True)),
+      attention_free_layer=_optional_int(value.get("attention_free_layer", 6)),
+      paired_head_layers=_int_tuple(value.get("paired_head_layers", (0, 2, 5, 9))),
+      long_window_layers=_int_tuple(value.get("long_window_layers", (3, 10))),
+      shared_attention_source_layer=_optional_int(
+        value.get("shared_attention_source_layer", 7)
+      ),
+      shared_attention_start_layer=_optional_int(
+        value.get("shared_attention_start_layer", 8)
+      ),
+      value_embedding_layers=_int_tuple(
+        value.get("value_embedding_layers", (1, 2, 8, 9, 10))
+      ),
+      value_embedding_gate_dim=int(value.get("value_embedding_gate_dim", 12)),
+      mudd=bool(value.get("mudd", True)),
+      mudd_hidden_dim=int(value.get("mudd_hidden_dim", 64)),
+      mudd_scale=float(value.get("mudd_scale", 0.1)),
+      bigram_vocab_size=_optional_int(value.get("bigram_vocab_size")),
+      bigram_dim=int(value.get("bigram_dim", 192)),
+      bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),
+      mtp_weights=_float_tuple(value.get("mtp_weights", (1.0, 0.5, 0.25))),
+      embedding_skip=bool(value.get("embedding_skip", True)),
+      value_residual=bool(value.get("value_residual", False)),
+      block_skip_from=_optional_int(value.get("block_skip_from", 3)),
+      block_skip_to=_optional_int(value.get("block_skip_to", 6)),
+      residual_decay=float(value.get("residual_decay", 1.1)),
+      tie_embeddings=bool(value.get("tie_embeddings", True)),
     )
   if kind == "ds_tiny":
     return DSTinyModelConfig(
@@ -753,6 +879,24 @@ def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:
   if not isinstance(value, list | tuple):
     raise ValueError("attention_layer_types must be a list")
   return tuple(str(item) for item in value)
+
+
+def _int_tuple(value: Any) -> tuple[int, ...]:
+  if not isinstance(value, list | tuple):
+    raise ValueError("expected a list of integers")
+  return tuple(int(item) for item in value)
+
+
+def _float_tuple(value: Any) -> tuple[float, ...]:
+  if not isinstance(value, list | tuple):
+    raise ValueError("expected a list of numbers")
+  return tuple(float(item) for item in value)
+
+
+def _optional_float(value: Any) -> float | None:
+  if value is None:
+    return None
+  return float(value)
 
 
 def _optional_str(value: Any) -> str | None:

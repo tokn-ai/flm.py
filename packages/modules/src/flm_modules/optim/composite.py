@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Sequence
 
 import torch
@@ -34,17 +35,31 @@ class CompositeOptimizer(torch.optim.Optimizer):
     self._state = state
 
   @torch.no_grad()
-  def step(self, closure: Callable[[], object] | None = None) -> object | None:
+  def step(
+    self,
+    closure: Callable[[], object] | None = None,
+    *,
+    primary_only: bool = False,
+  ) -> object | None:
     loss = None
     for index, optimizer in enumerate(self.optimizers):
+      if primary_only and index > 0:
+        continue
       if index == 0:
         loss = optimizer.step(closure)
       else:
         optimizer.step()
     return loss
 
-  def zero_grad(self, set_to_none: bool = True) -> None:
-    for optimizer in self.optimizers:
+  def zero_grad(
+    self,
+    set_to_none: bool = True,
+    *,
+    primary_only: bool = False,
+  ) -> None:
+    for index, optimizer in enumerate(self.optimizers):
+      if primary_only and index > 0:
+        continue
       optimizer.zero_grad(set_to_none=set_to_none)
 
   def state_dict(self) -> dict[str, object]:
@@ -65,3 +80,26 @@ class CompositeOptimizer(torch.optim.Optimizer):
       self.optimizers, optimizer_states, strict=True
     ):
       optimizer.load_state_dict(optimizer_state)
+
+  def copy_parameter_state(
+    self,
+    source: torch.nn.Parameter,
+    target: torch.nn.Parameter,
+  ) -> None:
+    for optimizer in self.optimizers:
+      parameters = {
+        parameter for group in optimizer.param_groups for parameter in group["params"]
+      }
+      if source not in parameters or target not in parameters:
+        continue
+      source_state = optimizer.state.get(source)
+      if not source_state:
+        return
+      optimizer.state[target] = {
+        key: value.detach().clone()
+        if isinstance(value, torch.Tensor)
+        else copy.deepcopy(value)
+        for key, value in source_state.items()
+      }
+      return
+    raise ValueError("source and target parameters do not share a child optimizer")

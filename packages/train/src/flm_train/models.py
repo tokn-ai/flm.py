@@ -8,6 +8,8 @@ from flm_llm import (
   DeepSeekV4Config,
   DSTiny,
   DSTinyConfig,
+  NanoGPTSpeedrunConfig,
+  NanoGPTSpeedrunModel,
   ReferenceModel,
   ReferenceModelConfig,
 )
@@ -17,6 +19,57 @@ from flm_train.types import TrainConfig
 
 def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
   model_config = config.model
+  if model_config.kind == "nanogpt_speedrun":
+    effective_vocab_size = (
+      vocab_size
+      if model_config.padded_vocab_size is None
+      else model_config.padded_vocab_size
+    )
+    if effective_vocab_size < vocab_size:
+      raise ValueError("model.padded_vocab_size cannot be smaller than tokenizer vocab")
+    return NanoGPTSpeedrunModel(
+      NanoGPTSpeedrunConfig(
+        vocab_size=effective_vocab_size,
+        max_seq_len=config.data.seq_len,
+        d_model=model_config.d_model,
+        n_layers=model_config.n_layers,
+        n_heads=model_config.n_heads,
+        d_ff=model_config.d_ff,
+        attention_backend=model_config.attention_backend,
+        loss_backend=model_config.loss_backend,
+        loss_chunk_size=model_config.loss_chunk_size,
+        logit_softcap=model_config.logit_softcap,
+        logit_scale=model_config.logit_scale,
+        logit_sigmoid_scale=model_config.logit_sigmoid_scale,
+        logit_sigmoid_bias=model_config.logit_sigmoid_bias,
+        logit_sigmoid_temperature=model_config.logit_sigmoid_temperature,
+        token_smear=model_config.token_smear,
+        smear_gate_dim=model_config.smear_gate_dim,
+        partial_key_offset_layers=model_config.partial_key_offset_layers,
+        attention_gate_dim=model_config.attention_gate_dim,
+        xsa=model_config.xsa,
+        attention_free_layer=model_config.attention_free_layer,
+        paired_head_layers=model_config.paired_head_layers,
+        long_window_layers=model_config.long_window_layers,
+        shared_attention_source_layer=model_config.shared_attention_source_layer,
+        shared_attention_start_layer=model_config.shared_attention_start_layer,
+        value_embedding_layers=model_config.value_embedding_layers,
+        value_embedding_gate_dim=model_config.value_embedding_gate_dim,
+        mudd=model_config.mudd,
+        mudd_hidden_dim=model_config.mudd_hidden_dim,
+        mudd_scale=model_config.mudd_scale,
+        bigram_vocab_size=model_config.bigram_vocab_size,
+        bigram_dim=model_config.bigram_dim,
+        bigram_sign_table_rows=model_config.bigram_sign_table_rows,
+        mtp_weights=model_config.mtp_weights,
+        embedding_skip=model_config.embedding_skip,
+        value_residual=model_config.value_residual,
+        block_skip_from=model_config.block_skip_from,
+        block_skip_to=model_config.block_skip_to,
+        residual_decay=model_config.residual_decay,
+        tie_embeddings=model_config.tie_embeddings,
+      )
+    )
   if model_config.kind == "reference":
     return ReferenceModel(
       ReferenceModelConfig(

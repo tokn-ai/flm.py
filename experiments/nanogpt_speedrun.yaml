@@ -1,0 +1,99 @@
+name: nanogpt_speedrun_portable
+
+data:
+  kind: fineweb_binary
+  dataset_root: data/fineweb10B
+  split: train
+  encoding_name: gpt2
+  seq_len: 896
+
+model:
+  kind: nanogpt_speedrun
+  padded_vocab_size: 50304
+  d_model: 768
+  n_layers: 11
+  n_heads: 6
+  d_ff: 3072
+  attention_backend: torch
+  loss_backend: cross_entropy
+  logit_softcap: null
+  logit_sigmoid_scale: 23.0
+  logit_sigmoid_bias: 5.0
+  logit_sigmoid_temperature: 7.5
+  bigram_vocab_size: 754560
+  bigram_dim: 192
+  bigram_sign_table_rows: 8192
+  value_residual: false
+
+optimizer:
+  kind: speedrun_normuon
+  secondary_update_every: 2
+  max_grad_norm: null
+
+schedule:
+  cooldown_steps: 828
+  cooldown_end_step: 1380
+  final_lr_scale: 0.15
+  momentum_start: 0.85
+  momentum_end: 0.95
+  momentum_warmup_steps: 300
+  momentum_cooldown_steps: 50
+  scale_weight_decay_with_lr: false
+
+speedrun_schedule:
+  untie_step: 922
+  final_eval_short_window: 768
+  final_eval_long_window: 2560
+  stages:
+    - end_step: 460
+      batch_size: 131072
+      seq_len: 896
+      learning_rate_scale: 1.0
+      mtp_weights: [1.0, 0.5, 0.25]
+      mtp_weights_end: [1.0, 0.5, 0.0]
+      short_window: 128
+      long_window: 384
+    - end_step: 920
+      batch_size: 262144
+      seq_len: 2048
+      learning_rate_scale: 1.52
+      mtp_weights: [1.0, 0.5]
+      mtp_weights_end: [1.0, 0.0]
+      short_window: 384
+      long_window: 896
+    - end_step: 1380
+      batch_size: 393216
+      seq_len: 2048
+      learning_rate_scale: 1.73
+      mtp_weights: [1.0]
+      mtp_weights_end: [1.0]
+      short_window: 640
+      long_window: 1408
+    - end_step: 1390
+      batch_size: 393216
+      seq_len: 2048
+      learning_rate_scale: 1.0
+      mtp_weights: [1.0]
+      mtp_weights_end: [1.0]
+      short_window: 768
+      long_window: 1664
+
+loop:
+  seed: 42
+  device: cuda
+  dtype: bfloat16
+  batch_size: 131072
+  steps: 1390
+  gradient_accumulation_steps: 1
+
+eval:
+  split: val
+  every_steps: 250
+  max_batches: 1
+  batch_tokens: 262144
+
+checkpoint:
+  enabled: false
+
+sinks:
+  - kind: files

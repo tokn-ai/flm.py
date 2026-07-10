@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 import torch
+from flm_modules import CompositeOptimizer
 from torch.utils.data import DataLoader
 
 from flm_train.checkpoints import (
@@ -18,6 +19,11 @@ from flm_train.checkpoints import (
   load_checkpoint,
   prune_checkpoints,
   save_checkpoint,
+)
+from flm_train.schedules import (
+  OptimizerSchedule,
+  SpeedrunStageSchedule,
+  SpeedrunStageState,
 )
 from flm_train.types import CheckpointConfig
 
@@ -36,6 +42,7 @@ class LanguageModel(Protocol):
     input_ids: torch.Tensor,
     targets: torch.Tensor | None = None,
     *,
+    previous_token_ids: torch.Tensor | None = None,
     return_logits: bool = True,
   ) -> tuple[torch.Tensor | None, torch.Tensor | None]: ...
 
@@ -117,10 +124,15 @@ class LanguageModelTrainer:
     *,
     model: LanguageModel,
     optimizer: torch.optim.Optimizer,
+    optimizer_schedule: OptimizerSchedule | None = None,
+    speedrun_schedule: SpeedrunStageSchedule | None = None,
+    stage_dataloaders: tuple[tuple[int, DataLoader], ...] = (),
     dataloader: DataLoader,
     device: str,
     steps: int,
     bytes_per_token: float,
+    gradient_accumulation_steps: int = 1,
+    secondary_optimizer_update_every: int = 1,
     max_grad_norm: float | None = 1.0,
     on_step: StepCallback | None = None,
     eval_every_steps: int | None = None,
@@ -135,12 +147,26 @@ class LanguageModelTrainer:
   ) -> None:
     if steps < 0:
       raise ValueError("steps must be non-negative")
+    if gradient_accumulation_steps < 1:
+      raise ValueError("gradient_accumulation_steps must be positive")
+    if secondary_optimizer_update_every < 1:
+      raise ValueError("secondary_optimizer_update_every must be positive")
+    if secondary_optimizer_update_every > 1:
+      if not isinstance(optimizer, CompositeOptimizer):
+        raise ValueError("secondary optimizer cadence requires CompositeOptimizer")
+      if steps % secondary_optimizer_update_every:
+        raise ValueError("steps must end on a secondary optimizer update")
     self.model = model
     self.optimizer = optimizer
+    self.optimizer_schedule = optimizer_schedule
+    self.speedrun_schedule = speedrun_schedule
+    self.stage_dataloaders = stage_dataloaders
     self.dataloader = dataloader
     self.device = device
     self.steps = steps
     self.bytes_per_token = bytes_per_token
+    self.gradient_accumulation_steps = gradient_accumulation_steps
+    self.secondary_optimizer_update_every = secondary_optimizer_update_every
     self.max_grad_norm = max_grad_norm
     self.on_step = on_step
     self.eval_every_steps = eval_every_steps
@@ -155,40 +181,80 @@ class LanguageModelTrainer:
 
   def train(self) -> list[TrainStepMetrics]:
     metrics: list[TrainStepMetrics] = []
-    iterator = iter(self.dataloader)
+    active_dataloader = self.dataloader
+    iterator = iter(active_dataloader)
     checkpoint_state = self._load_checkpoint_if_requested()
     tokens_seen = checkpoint_state.tokens_seen
     self.model.train()
+    self.optimizer.zero_grad(set_to_none=True)
 
     for step in range(checkpoint_state.step + 1, self.steps + 1):
-      input_ids, targets, iterator = self._next_batch(iterator)
-      input_ids = input_ids.to(self.device)
-      targets = targets.to(self.device)
-
+      stage_state = (
+        None
+        if self.speedrun_schedule is None
+        else self.speedrun_schedule.state_at(step)
+      )
+      if self.optimizer_schedule is not None:
+        self.optimizer_schedule.apply(
+          step,
+          learning_rate_multiplier=1.0
+          if stage_state is None
+          else stage_state.stage.learning_rate_scale,
+        )
+      self._apply_model_stage(stage_state)
+      self._apply_data_stage(stage_state)
+      step_dataloader = self._dataloader_for_step(step)
+      if step_dataloader is not active_dataloader:
+        active_dataloader = step_dataloader
+        iterator = iter(active_dataloader)
       started_at = time.perf_counter()
-      self.optimizer.zero_grad(set_to_none=True)
-      _, loss = self.model(input_ids, targets, return_logits=False)
-      if loss is None:
-        raise RuntimeError("training loss was not produced")
-      loss.backward()
+      token_count = 0
+      loss_sum = 0.0
+      for _ in range(self.gradient_accumulation_steps):
+        input_ids, targets, previous_token_ids, iterator = self._next_batch(iterator)
+        input_ids = input_ids.to(self.device)
+        targets = targets.to(self.device)
+        previous_token_ids = (
+          None if previous_token_ids is None else previous_token_ids.to(self.device)
+        )
+        model_kwargs = (
+          {}
+          if previous_token_ids is None
+          else {"previous_token_ids": previous_token_ids}
+        )
+        _, loss = self.model(
+          input_ids,
+          targets,
+          return_logits=False,
+          **model_kwargs,
+        )
+        if loss is None:
+          raise RuntimeError("training loss was not produced")
+        (loss / self.gradient_accumulation_steps).backward()
+        microbatch_tokens = int(targets.ne(-100).sum())
+        token_count += microbatch_tokens
+        loss_sum += float(loss.detach().cpu()) * microbatch_tokens
+      prepare_optimizer_step = getattr(self.model, "prepare_optimizer_step", None)
+      if callable(prepare_optimizer_step):
+        prepare_optimizer_step()
       grad_norm = _clip_or_measure_grad_norm(
         self.model.parameters(),
         self.max_grad_norm,
       )
-      self.optimizer.step()
+      self._step_optimizer(step)
       step_time_sec = time.perf_counter() - started_at
 
-      token_count = int(input_ids.numel())
+      loss_value = loss_sum / token_count
       tokens_seen += token_count
       step_metrics = TrainStepMetrics(
         step=step,
-        loss=float(loss.detach().cpu()),
+        loss=loss_value,
         learning_rate=_learning_rate(self.optimizer),
         tokens=token_count,
         tokens_seen=tokens_seen,
         grad_norm=grad_norm,
         bits_per_byte=_loss_to_bits_per_byte(
-          loss=float(loss.detach().cpu()),
+          loss=loss_value,
           bytes_per_token=self.bytes_per_token,
         ),
         step_time_sec=step_time_sec,
@@ -198,6 +264,7 @@ class LanguageModelTrainer:
       if self.on_step is not None:
         self.on_step(step_metrics)
       if self._should_eval(step) and self.evaluate is not None:
+        self._apply_final_eval_stage(step)
         eval_metrics = self.evaluate(step, self.model)
         if self.on_eval is not None:
           self.on_eval(eval_metrics)
@@ -214,22 +281,115 @@ class LanguageModelTrainer:
 
     return metrics
 
+  def _step_optimizer(self, step: int) -> None:
+    update_secondary = step % self.secondary_optimizer_update_every == 0
+    if isinstance(self.optimizer, CompositeOptimizer):
+      self.optimizer.step(primary_only=not update_secondary)
+      self.optimizer.zero_grad(
+        set_to_none=True,
+        primary_only=not update_secondary,
+      )
+    else:
+      self.optimizer.step()
+      self.optimizer.zero_grad(set_to_none=True)
+    finalize_optimizer_step = getattr(self.model, "finalize_optimizer_step", None)
+    if callable(finalize_optimizer_step):
+      finalize_optimizer_step()
+    self._untie_embeddings_after_step(step)
+
+  def _untie_embeddings_after_step(self, step: int) -> None:
+    if (
+      self.speedrun_schedule is None or self.speedrun_schedule.config.untie_step != step
+    ):
+      return
+    untie = getattr(self.model, "untie_embeddings", None)
+    if not callable(untie):
+      return
+    source = getattr(getattr(self.model, "lm_head", None), "weight", None)
+    target = getattr(getattr(self.model, "token_embedding", None), "weight", None)
+    if (
+      isinstance(self.optimizer, CompositeOptimizer)
+      and isinstance(source, torch.nn.Parameter)
+      and isinstance(target, torch.nn.Parameter)
+    ):
+      self.optimizer.copy_parameter_state(source, target)
+    untie()
+
+  def _dataloader_for_step(self, step: int) -> DataLoader:
+    for end_step, dataloader in self.stage_dataloaders:
+      if step <= end_step:
+        return dataloader
+    return self.dataloader
+
+  def _apply_model_stage(self, state: SpeedrunStageState | None) -> None:
+    if state is None:
+      return
+    stage = state.stage
+    if state.mtp_weights is not None:
+      setter = getattr(self.model, "set_mtp_weights", None)
+      if callable(setter):
+        setter(state.mtp_weights)
+    if stage.short_window is not None and stage.long_window is not None:
+      setter = getattr(self.model, "set_attention_windows", None)
+      if callable(setter):
+        setter(short=stage.short_window, long=stage.long_window)
+    if state.embeddings_untied and not state.should_untie:
+      untie = getattr(self.model, "untie_embeddings", None)
+      if callable(untie):
+        untie()
+
+  def _apply_data_stage(self, state: SpeedrunStageState | None) -> None:
+    if state is None:
+      return
+    dataset = self.dataloader.dataset
+    setter = getattr(dataset, "set_batch_shape", None)
+    if not callable(setter):
+      return
+    setter(
+      batch_tokens=(
+        dataset.batch_tokens
+        if state.stage.batch_size is None
+        else state.stage.batch_size
+      ),
+      max_seq_len=(
+        dataset.max_seq_len if state.stage.seq_len is None else state.stage.seq_len
+      ),
+    )
+
+  def _apply_final_eval_stage(self, step: int) -> None:
+    if self.speedrun_schedule is None or step != self.steps:
+      return
+    config = self.speedrun_schedule.config
+    if config.final_eval_short_window is None:
+      return
+    setter = getattr(self.model, "set_attention_windows", None)
+    if callable(setter):
+      setter(
+        short=config.final_eval_short_window,
+        long=config.final_eval_long_window,
+      )
+
   def _next_batch(
     self,
-    iterator: Iterator[tuple[torch.Tensor, torch.Tensor]],
-  ) -> tuple[torch.Tensor, torch.Tensor, Iterator[tuple[torch.Tensor, torch.Tensor]]]:
+    iterator: Iterator,
+  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, Iterator]:
     try:
-      input_ids, targets = next(iterator)
+      batch = next(iterator)
     except StopIteration:
       iterator = iter(self.dataloader)
-      input_ids, targets = next(iterator)
-    return input_ids, targets, iterator
+      batch = next(iterator)
+    if len(batch) == 2:
+      input_ids, targets = batch
+      previous_token_ids = None
+    else:
+      input_ids, targets, previous_token_ids = batch
+    return input_ids, targets, previous_token_ids, iterator
 
   def _should_eval(self, step: int) -> bool:
     return (
       self.eval_every_steps is not None
       and self.eval_every_steps > 0
-      and step % self.eval_every_steps == 0
+      and (step == self.steps or step % self.eval_every_steps == 0)
     )
 
   def _should_rollout(self, step: int) -> bool:
@@ -245,6 +405,7 @@ class LanguageModelTrainer:
       and self.checkpoint_dir is not None
       and self.checkpoint.every_steps > 0
       and step % self.checkpoint.every_steps == 0
+      and step % self.secondary_optimizer_update_every == 0
     )
 
   def _save_checkpoint(self, *, step: int, tokens_seen: int) -> Path:

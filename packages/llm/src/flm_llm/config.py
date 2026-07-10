@@ -31,6 +31,54 @@ class ReferenceModelConfig:
 
 
 @dataclass(frozen=True)
+class NanoGPTSpeedrunConfig:
+  """Eager reference configuration for the nanoGPT short-track model."""
+
+  vocab_size: int = 50_304
+  max_seq_len: int = 1024
+  d_model: int = 768
+  n_layers: int = 11
+  n_heads: int = 6
+  d_ff: int = 3072
+  bias: bool = False
+  rope_base: float = 10_000.0
+  norm_eps: float = 1e-6
+  attention_backend: AttentionBackend | str = AttentionBackend.TORCH
+  loss_backend: LossBackend = "cross_entropy"
+  loss_chunk_size: int = 512
+  logit_softcap: float | None = 30.0
+  logit_scale: float = 1.0
+  logit_sigmoid_scale: float | None = 23.0
+  logit_sigmoid_bias: float = 5.0
+  logit_sigmoid_temperature: float = 7.5
+  token_smear: bool = True
+  smear_gate_dim: int = 12
+  partial_key_offset_layers: tuple[int, ...] = (3, 10)
+  attention_gate_dim: int = 12
+  xsa: bool = True
+  attention_free_layer: int | None = 6
+  paired_head_layers: tuple[int, ...] = (0, 2, 5, 9)
+  long_window_layers: tuple[int, ...] = (3, 10)
+  shared_attention_source_layer: int | None = 7
+  shared_attention_start_layer: int | None = 8
+  value_embedding_layers: tuple[int, ...] = (1, 2, 8, 9, 10)
+  value_embedding_gate_dim: int = 12
+  mudd: bool = True
+  mudd_hidden_dim: int = 64
+  mudd_scale: float = 0.1
+  bigram_vocab_size: int | None = None
+  bigram_dim: int = 192
+  bigram_sign_table_rows: int = 8192
+  mtp_weights: tuple[float, ...] = (1.0, 0.5, 0.25)
+  embedding_skip: bool = True
+  value_residual: bool = False
+  block_skip_from: int | None = 3
+  block_skip_to: int | None = 6
+  residual_decay: float = 1.1
+  tie_embeddings: bool = True
+
+
+@dataclass(frozen=True)
 class DSTinyConfig:
   vocab_size: int
   max_seq_len: int = 2048

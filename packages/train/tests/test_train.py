@@ -1,12 +1,18 @@
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import flm_train.data_cli as data_cli
 import numpy as np
 import pytest
 import torch
-from flm_datasets import RandomTokenWindowDataset
+from flm_datasets import (
+  FINEWEB_HEADER_INTS,
+  FineWebPackedDataset,
+  FineWebValidationDataset,
+  RandomTokenWindowDataset,
+)
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
 from flm_train.config import WorkspaceConfig
 from flm_train.data import (
@@ -19,6 +25,7 @@ from flm_train.data import (
   publish_repo_source_dataset,
 )
 from flm_train.data_cli import parse_args, run_from_args
+from flm_train.models import build_model
 from flm_train.presets import auto_batch_size, train_language_model
 from flm_train.svd import checkpoint_ffn_down_svd_metrics
 from flm_train.trainer import TrainStepMetrics
@@ -29,7 +36,12 @@ from flm_train.types import (
   DSTinyModelConfig,
   LoopConfig,
   ModelConfig,
+  NanoGPTSpeedrunModelConfig,
+  OptimizerConfig,
+  OptimizerScheduleConfig,
   ReferenceModelConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
   TrainConfig,
 )
 
@@ -79,6 +91,37 @@ def test_train_language_model_runs_one_step(tmp_path: Path) -> None:
   assert result.token_count > result.file_count
   assert len(result.losses) == 1
   assert result.losses[0] > 0
+
+
+def test_train_language_model_runs_nanogpt_speedrun_model(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  model = NanoGPTSpeedrunModelConfig(
+    d_model=8,
+    n_layers=2,
+    n_heads=2,
+    d_ff=16,
+    smear_gate_dim=4,
+    attention_gate_dim=4,
+    paired_head_layers=(0,),
+    long_window_layers=(1,),
+    shared_attention_source_layer=None,
+    shared_attention_start_layer=None,
+    value_embedding_layers=(1,),
+    mudd=False,
+    block_skip_from=None,
+    block_skip_to=None,
+    logit_softcap=10.0,
+  )
+
+  result = train_language_model(
+    train_config(repo_root=tmp_path, model=model),
+  )
+
+  assert len(result.losses) == 1
+  assert math.isfinite(result.losses[0])
 
 
 def test_publish_repo_source_dataset_writes_versioned_artifacts(tmp_path: Path) -> None:
@@ -238,6 +281,107 @@ def test_train_token_dataset_uses_random_windows_without_loader_shuffle(
   assert isinstance(bundle.dataloader.dataset, RandomTokenWindowDataset)
   assert len(bundle.dataloader.dataset) == 6
   assert type(bundle.dataloader.sampler).__name__ == "SequentialSampler"
+
+
+def test_build_fineweb_binary_validation_dataset_uses_exact_stream(
+  tmp_path: Path,
+) -> None:
+  header = np.zeros(FINEWEB_HEADER_INTS, dtype="<i4")
+  header[:3] = (20240520, 1, 17)
+  tokens = np.asarray(
+    [50256, 1, 2, 50256, 3, 4, 5, 50256, 6, 7, 8, 9, 50256, 10, 11, 12, 13],
+    dtype="<u2",
+  )
+  path = tmp_path / "fineweb_val_000000.bin"
+  path.write_bytes(header.tobytes() + tokens.tobytes())
+
+  bundle = build_training_dataset(
+    TrainConfig(
+      data=DataConfig(
+        kind="fineweb_binary",
+        dataset_root=tmp_path,
+        split="val",
+        encoding_name="gpt2",
+        seq_len=4,
+        token_limit=16,
+      ),
+      loop=LoopConfig(batch_size=8, steps=0),
+    )
+  )
+
+  assert isinstance(bundle.dataloader.dataset, FineWebValidationDataset)
+  assert bundle.token_count == 16
+  input_ids, targets, previous_input_ids = next(iter(bundle.dataloader))
+  torch.testing.assert_close(
+    input_ids,
+    torch.tensor(
+      [[50256, 1, 2, 50256], [50256, 3, 4, 5], [50256, 50256, 50256, 50256]]
+    ),
+  )
+  assert int((targets != -100).sum()) == 8
+  assert previous_input_ids[1, 0] == 2
+
+
+def test_build_fineweb_binary_training_dataset_uses_token_budget(
+  tmp_path: Path,
+) -> None:
+  header = np.zeros(FINEWEB_HEADER_INTS, dtype="<i4")
+  tokens = np.asarray(
+    [50256, 1, 2, 50256, 3, 4, 50256, 5, 6, 50256, 7, 8],
+    dtype="<u2",
+  )
+  header[:3] = (20240520, 1, len(tokens))
+  path = tmp_path / "fineweb_train_000001.bin"
+  path.write_bytes(header.tobytes() + tokens.tobytes())
+
+  bundle = build_training_dataset(
+    TrainConfig(
+      data=DataConfig(
+        kind="fineweb_binary",
+        dataset_root=tmp_path,
+        split="train",
+        encoding_name="gpt2",
+        seq_len=3,
+      ),
+      loop=LoopConfig(batch_size=4, steps=1),
+    )
+  )
+
+  assert isinstance(bundle.dataloader.dataset, FineWebPackedDataset)
+  input_ids, targets, previous_input_ids = next(iter(bundle.dataloader))
+  assert input_ids.ndim == targets.ndim == 2
+  assert int((targets != -100).sum()) == 4
+  assert previous_input_ids[1, 0] == input_ids[0, -1]
+
+
+def test_build_speedrun_model_supports_padded_vocabulary() -> None:
+  model = build_model(
+    TrainConfig(
+      model=NanoGPTSpeedrunModelConfig(
+        padded_vocab_size=64,
+        d_model=8,
+        n_layers=2,
+        n_heads=2,
+        d_ff=16,
+        smear_gate_dim=4,
+        attention_gate_dim=4,
+        attention_free_layer=None,
+        paired_head_layers=(),
+        long_window_layers=(),
+        shared_attention_source_layer=None,
+        shared_attention_start_layer=None,
+        value_embedding_layers=(1,),
+        value_embedding_gate_dim=4,
+        mudd=False,
+        block_skip_from=None,
+        block_skip_to=None,
+      )
+    ),
+    vocab_size=32,
+  )
+
+  assert model.token_embedding.num_embeddings == 64
+  assert model.lm_head.out_features == 64
 
 
 def test_auto_batch_size_selects_largest_fitting_batch(
@@ -671,6 +815,131 @@ def test_train_language_model_emits_step_metrics(tmp_path: Path) -> None:
   assert "train/bpb" in step_metrics[0].to_log_dict()
   assert "train/grad_norm" in step_metrics[0].to_log_dict()
   assert "train/tokens_seen" in step_metrics[0].to_log_dict()
+
+
+def test_train_language_model_applies_optimizer_schedule(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  config = train_config(repo_root=tmp_path, steps=4)
+  config = replace(
+    config,
+    schedule=OptimizerScheduleConfig(
+      warmup_steps=2,
+      cooldown_steps=2,
+      final_lr_scale=0.0,
+    ),
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  train_language_model(config, on_step=step_metrics.append)
+
+  assert [metrics.learning_rate for metrics in step_metrics] == pytest.approx(
+    [1.5e-4, 3e-4, 1.5e-4, 0.0]
+  )
+
+
+def test_train_language_model_accumulates_microbatches(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  config = train_config(repo_root=tmp_path, steps=2)
+  config = replace(
+    config,
+    loop=replace(config.loop, gradient_accumulation_steps=2),
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  train_language_model(config, on_step=step_metrics.append)
+
+  assert [metrics.tokens for metrics in step_metrics] == [32, 32]
+  assert [metrics.tokens_seen for metrics in step_metrics] == [32, 64]
+
+
+def test_train_language_model_accumulates_secondary_optimizer(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  config = train_config(repo_root=tmp_path, steps=2)
+  config = replace(
+    config,
+    optimizer=OptimizerConfig(
+      kind="normuon",
+      learning_rate=1e-3,
+      weight_decay=0.0,
+      max_grad_norm=None,
+      secondary_update_every=2,
+    ),
+  )
+
+  result = train_language_model(config)
+
+  assert len(result.losses) == 2
+  assert all(math.isfinite(loss) for loss in result.losses)
+
+
+def test_train_language_model_applies_speedrun_stages(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  model = NanoGPTSpeedrunModelConfig(
+    d_model=8,
+    n_layers=2,
+    n_heads=2,
+    d_ff=16,
+    smear_gate_dim=4,
+    attention_gate_dim=4,
+    paired_head_layers=(0,),
+    long_window_layers=(1,),
+    shared_attention_source_layer=None,
+    shared_attention_start_layer=None,
+    value_embedding_layers=(1,),
+    value_embedding_gate_dim=4,
+    block_skip_from=None,
+    block_skip_to=None,
+    attention_free_layer=None,
+    mudd=False,
+    logit_sigmoid_scale=5.0,
+  )
+  config = train_config(repo_root=tmp_path, model=model, steps=3)
+  config = replace(
+    config,
+    speedrun_schedule=SpeedrunScheduleConfig(
+      stages=(
+        SpeedrunStageConfig(
+          end_step=1,
+          batch_size=1,
+          seq_len=4,
+          learning_rate_scale=0.5,
+          mtp_weights=(1.0, 0.5),
+          short_window=2,
+          long_window=4,
+        ),
+        SpeedrunStageConfig(
+          end_step=3,
+          batch_size=2,
+          seq_len=8,
+          learning_rate_scale=2.0,
+          mtp_weights=(1.0,),
+          short_window=4,
+          long_window=8,
+        ),
+      ),
+      untie_step=2,
+    ),
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  train_language_model(config, on_step=step_metrics.append)
+
+  assert [metrics.tokens for metrics in step_metrics] == [4, 16, 16]
+  assert [metrics.learning_rate for metrics in step_metrics] == pytest.approx(
+    [1.5e-4, 6e-4, 6e-4]
+  )
 
 
 def test_train_language_model_resumes_from_checkpoint(tmp_path: Path) -> None:
