@@ -31,6 +31,32 @@ class ReferenceModelConfig:
 
 
 @dataclass(frozen=True)
+class NanoGPTSpeedrunConfig:
+  """Eager reference configuration for the nanoGPT short-track model."""
+
+  vocab_size: int = 50_304
+  max_seq_len: int = 1024
+  d_model: int = 768
+  n_layers: int = 12
+  n_heads: int = 12
+  d_ff: int = 3072
+  bias: bool = False
+  rope_base: float = 10_000.0
+  norm_eps: float = 1e-6
+  attention_backend: AttentionBackend | str = AttentionBackend.TORCH
+  loss_backend: LossBackend = "cross_entropy"
+  loss_chunk_size: int = 512
+  logit_softcap: float | None = 30.0
+  logit_scale: float = 1.0
+  embedding_skip: bool = True
+  value_residual: bool = True
+  block_skip_from: int | None = 2
+  block_skip_to: int | None = 5
+  residual_decay: float = 1.0
+  tie_embeddings: bool = True
+
+
+@dataclass(frozen=True)
 class DSTinyConfig:
   vocab_size: int
   max_seq_len: int = 2048

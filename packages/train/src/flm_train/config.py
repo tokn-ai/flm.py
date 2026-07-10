@@ -16,6 +16,7 @@ from flm_train.types import (
   EvalConfig,
   LoopConfig,
   ModelConfig,
+  NanoGPTSpeedrunModelConfig,
   OptimizerConfig,
   ReferenceModelConfig,
   RolloutConfig,
@@ -698,6 +699,24 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       loss_backend=loss_backend,
       loss_chunk_size=loss_chunk_size,
     )
+  if kind == "nanogpt_speedrun":
+    return NanoGPTSpeedrunModelConfig(
+      d_model=int(value.get("d_model", 768)),
+      n_layers=int(value.get("n_layers", 12)),
+      n_heads=int(value.get("n_heads", 12)),
+      d_ff=int(value.get("d_ff", 3072)),
+      attention_backend=attention_backend,
+      loss_backend=loss_backend,
+      loss_chunk_size=loss_chunk_size,
+      logit_softcap=_optional_float(value.get("logit_softcap", 30.0)),
+      logit_scale=float(value.get("logit_scale", 1.0)),
+      embedding_skip=bool(value.get("embedding_skip", True)),
+      value_residual=bool(value.get("value_residual", True)),
+      block_skip_from=_optional_int(value.get("block_skip_from", 2)),
+      block_skip_to=_optional_int(value.get("block_skip_to", 5)),
+      residual_decay=float(value.get("residual_decay", 1.0)),
+      tie_embeddings=bool(value.get("tie_embeddings", True)),
+    )
   if kind == "ds_tiny":
     return DSTinyModelConfig(
       d_model=int(value.get("d_model", 128)),
@@ -753,6 +772,12 @@ def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:
   if not isinstance(value, list | tuple):
     raise ValueError("attention_layer_types must be a list")
   return tuple(str(item) for item in value)
+
+
+def _optional_float(value: Any) -> float | None:
+  if value is None:
+    return None
+  return float(value)
 
 
 def _optional_str(value: Any) -> str | None:

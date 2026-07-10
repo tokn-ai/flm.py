@@ -41,6 +41,26 @@ class ReferenceModelConfig:
 
 
 @dataclass(frozen=True)
+class NanoGPTSpeedrunModelConfig:
+  kind: Literal["nanogpt_speedrun"] = "nanogpt_speedrun"
+  d_model: int = 768
+  n_layers: int = 12
+  n_heads: int = 12
+  d_ff: int = 3072
+  attention_backend: AttentionBackend = "torch"
+  loss_backend: LossBackend = "cross_entropy"
+  loss_chunk_size: int = 512
+  logit_softcap: float | None = 30.0
+  logit_scale: float = 1.0
+  embedding_skip: bool = True
+  value_residual: bool = True
+  block_skip_from: int | None = 2
+  block_skip_to: int | None = 5
+  residual_decay: float = 1.0
+  tie_embeddings: bool = True
+
+
+@dataclass(frozen=True)
 class DSTinyModelConfig:
   kind: Literal["ds_tiny"] = "ds_tiny"
   d_model: int = 128
@@ -90,7 +110,12 @@ class DeepSeekV4ModelConfig:
   loss_chunk_size: int = 512
 
 
-ModelConfig = ReferenceModelConfig | DSTinyModelConfig | DeepSeekV4ModelConfig
+ModelConfig = (
+  ReferenceModelConfig
+  | NanoGPTSpeedrunModelConfig
+  | DSTinyModelConfig
+  | DeepSeekV4ModelConfig
+)
 
 
 @dataclass(frozen=True)

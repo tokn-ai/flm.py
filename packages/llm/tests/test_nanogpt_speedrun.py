@@ -1,0 +1,82 @@
+import pytest
+import torch
+from flm_llm import NanoGPTSpeedrunConfig, NanoGPTSpeedrunModel
+
+
+def test_nanogpt_speedrun_model_returns_softcapped_logits_and_loss() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+  input_ids = torch.randint(0, 32, (2, 8))
+  targets = torch.randint(0, 32, (2, 8))
+
+  logits, loss = model(input_ids, targets)
+
+  assert logits is not None
+  assert logits.shape == (2, 8, 32)
+  assert logits.abs().max() <= 5.0
+  assert loss is not None
+  assert torch.isfinite(loss)
+
+
+def test_nanogpt_speedrun_model_ties_embedding_and_head() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+
+  assert model.token_embedding.weight is model.lm_head.weight
+
+
+def test_nanogpt_speedrun_model_zero_initializes_residual_projections() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+
+  for block in model.blocks:
+    torch.testing.assert_close(
+      block.attn.out.weight,
+      torch.zeros_like(block.attn.out.weight),
+    )
+    torch.testing.assert_close(
+      block.ffn.down.weight,
+      torch.zeros_like(block.ffn.down.weight),
+    )
+
+
+def test_nanogpt_speedrun_model_uses_value_and_embedding_skips() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+
+  assert model.embedding_skip_weights is not None
+  assert model.embedding_skip_weights.shape == (2,)
+  assert model.value_mix_logits is not None
+  assert model.value_mix_logits.shape == (1,)
+
+
+def test_nanogpt_speedrun_model_supports_chunked_loss_without_softcap() -> None:
+  config = _config(logit_softcap=None, loss_backend="linear_cross_entropy")
+  model = NanoGPTSpeedrunModel(config)
+  input_ids = torch.randint(0, 32, (2, 8))
+  targets = torch.randint(0, 32, (2, 8))
+
+  logits, loss = model(input_ids, targets, return_logits=False)
+
+  assert logits is None
+  assert loss is not None
+  assert torch.isfinite(loss)
+
+
+def test_nanogpt_speedrun_model_validates_block_skip_endpoints() -> None:
+  with pytest.raises(ValueError, match="both be set"):
+    NanoGPTSpeedrunModel(
+      _config(block_skip_from=0, block_skip_to=None)
+    )
+
+
+def _config(**overrides) -> NanoGPTSpeedrunConfig:
+  values = {
+    "vocab_size": 32,
+    "max_seq_len": 8,
+    "d_model": 16,
+    "n_layers": 2,
+    "n_heads": 2,
+    "d_ff": 32,
+    "block_skip_from": None,
+    "block_skip_to": None,
+    "logit_softcap": 5.0,
+  }
+  values.update(overrides)
+  return NanoGPTSpeedrunConfig(**values)

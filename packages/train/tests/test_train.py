@@ -29,6 +29,7 @@ from flm_train.types import (
   DSTinyModelConfig,
   LoopConfig,
   ModelConfig,
+  NanoGPTSpeedrunModelConfig,
   ReferenceModelConfig,
   TrainConfig,
 )
@@ -79,6 +80,29 @@ def test_train_language_model_runs_one_step(tmp_path: Path) -> None:
   assert result.token_count > result.file_count
   assert len(result.losses) == 1
   assert result.losses[0] > 0
+
+
+def test_train_language_model_runs_nanogpt_speedrun_model(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  model = NanoGPTSpeedrunModelConfig(
+    d_model=8,
+    n_layers=2,
+    n_heads=2,
+    d_ff=16,
+    block_skip_from=None,
+    block_skip_to=None,
+    logit_softcap=10.0,
+  )
+
+  result = train_language_model(
+    train_config(repo_root=tmp_path, model=model),
+  )
+
+  assert len(result.losses) == 1
+  assert math.isfinite(result.losses[0])
 
 
 def test_publish_repo_source_dataset_writes_versioned_artifacts(tmp_path: Path) -> None:

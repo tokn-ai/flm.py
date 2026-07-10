@@ -48,6 +48,7 @@ from flm_train.types import (
   DataConfig,
   EvalConfig,
   LoopConfig,
+  NanoGPTSpeedrunModelConfig,
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
@@ -263,6 +264,40 @@ def test_parse_experiment_config_accepts_muon_optimizer() -> None:
   assert train_config.optimizer.kind == "muon"
   assert train_config.optimizer.learning_rate == 1.0e-3
   assert train_config.optimizer.weight_decay == 0.01
+
+
+def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "speedrun",
+      "model": {
+        "kind": "nanogpt_speedrun",
+        "d_model": 64,
+        "n_layers": 4,
+        "n_heads": 4,
+        "d_ff": 256,
+        "logit_softcap": 12.0,
+        "embedding_skip": True,
+        "value_residual": True,
+        "block_skip_from": 0,
+        "block_skip_to": 3,
+        "residual_decay": 0.99,
+      },
+    }
+  )
+
+  assert config.model == NanoGPTSpeedrunModelConfig(
+    d_model=64,
+    n_layers=4,
+    n_heads=4,
+    d_ff=256,
+    logit_softcap=12.0,
+    embedding_skip=True,
+    value_residual=True,
+    block_skip_from=0,
+    block_skip_to=3,
+    residual_decay=0.99,
+  )
 
 
 def test_parse_experiment_config_accepts_auto_batch_size() -> None:
