@@ -129,11 +129,13 @@ class QKNormSelfAttention(nn.Module):
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
+    qkv_scale: torch.Tensor | float = 1.0,
+    output_scale: torch.Tensor | float = 1.0,
     attention_window: int | None = None,
     attn_mask: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_len, _ = x.shape
-    q, k, v = self.qkv(x).chunk(3, dim=-1)
+    q, k, v = (qkv_scale * self.qkv(x)).chunk(3, dim=-1)
     q = self._split_heads(q)
     k = self._split_heads(k)
     v = self._split_heads(v)
@@ -207,7 +209,7 @@ class QKNormSelfAttention(nn.Module):
       gate = torch.sigmoid(F.linear(x[..., :gate_dim], output_gate_weight))
       y = y * gate.transpose(1, 2).unsqueeze(-1)
     y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
-    return self.out(y), current_values
+    return output_scale * self.out(y), current_values
 
   def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
     batch_size, seq_len, _ = x.shape

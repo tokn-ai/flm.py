@@ -8,7 +8,6 @@ from flm_modules import (
   MultiwayDynamicDenseConnections,
   QKNormSelfAttention,
   ReLUSquared,
-  RMSNorm,
   TokenSmear,
 )
 from flm_modules.losses import language_model_loss
@@ -18,10 +17,13 @@ from torch.nn import functional as F
 from flm_llm.config import NanoGPTSpeedrunConfig
 
 
+def _speedrun_norm(x: torch.Tensor) -> torch.Tensor:
+  return F.rms_norm(x, (x.shape[-1],))
+
+
 class NanoGPTSpeedrunBlock(nn.Module):
   def __init__(self, config: NanoGPTSpeedrunConfig, *, layer_index: int) -> None:
     super().__init__()
-    self.attn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.attn = QKNormSelfAttention(
       d_model=config.d_model,
       n_heads=config.n_heads,
@@ -29,18 +31,21 @@ class NanoGPTSpeedrunBlock(nn.Module):
       rope_base=config.rope_base,
       norm_eps=config.norm_eps,
       backend=config.attention_backend,
-      zero_init_out=True,
+      zero_init_out=False,
       paired_heads=layer_index in config.paired_head_layers,
       speedrun_yarn=True,
       max_seq_len=config.max_seq_len,
     )
-    self.ffn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.ffn = ReLUSquared(
       d_model=config.d_model,
       d_ff=config.d_ff,
       bias=config.bias,
       zero_init_down=True,
     )
+    bound = 3**0.5 * 0.5 * config.d_model**-0.5
+    nn.init.uniform_(self.attn.qkv.weight, -bound, bound)
+    nn.init.uniform_(self.attn.out.weight, -bound, bound)
+    nn.init.uniform_(self.ffn.up.weight, -bound, bound)
 
   def forward(
     self,
@@ -54,6 +59,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
+    attention_scales: torch.Tensor | None = None,
     attention_window: int | None = None,
     skip_attention: bool = False,
     residual_scales: torch.Tensor | None = None,
@@ -74,7 +80,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
         )
       )
     else:
-      attn_input = self.attn_norm(x if attention_input is None else attention_input)
+      attn_input = _speedrun_norm(x if attention_input is None else attention_input)
       auxiliary_values = self._value_embedding_residual(
         attn_input,
         token_value_embedding=token_value_embedding,
@@ -94,14 +100,18 @@ class NanoGPTSpeedrunBlock(nn.Module):
         partial_key_offset=partial_key_offset,
         output_gate_weight=output_gate_weight,
         xsa_alpha=xsa_alpha,
+        qkv_scale=1.0 if attention_scales is None else attention_scales[0],
+        output_scale=1.0 if attention_scales is None else attention_scales[1],
         attention_window=attention_window,
       )
+      residual_scales = x.new_ones(2) if residual_scales is None else residual_scales
+      post_scales = x.new_ones(2) if post_scales is None else post_scales
+      x = residual_scales[0] * x + post_scales[0] * attn_output
+      if residual_injection is not None:
+        x = x + residual_injection
     residual_scales = x.new_ones(2) if residual_scales is None else residual_scales
     post_scales = x.new_ones(2) if post_scales is None else post_scales
-    x = residual_scales[0] * x + post_scales[0] * attn_output
-    if residual_injection is not None:
-      x = x + residual_injection
-    x = residual_scales[1] * x + post_scales[1] * self.ffn(self.ffn_norm(x))
+    x = residual_scales[1] * x + post_scales[1] * self.ffn(_speedrun_norm(x))
     return x, values
 
   def _value_embedding_residual(
@@ -243,6 +253,9 @@ class NanoGPTSpeedrunModel(nn.Module):
     self.attention_gate_weights = nn.Parameter(
       torch.zeros(config.n_layers, config.n_heads, config.attention_gate_dim)
     )
+    self.attention_scales = nn.Parameter(
+      torch.tensor((0.5, 1.0)).repeat(config.n_layers, 1)
+    )
     if config.xsa:
       self.xsa_alphas = nn.Parameter(torch.zeros(config.n_layers, config.n_heads))
     else:
@@ -279,7 +292,6 @@ class NanoGPTSpeedrunModel(nn.Module):
     residual_init = config.residual_decay**0.5
     self.residual_scales = nn.Parameter(torch.full((config.n_layers, 2), residual_init))
     self.post_scales = nn.Parameter(torch.ones(config.n_layers, 2))
-    self.norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
     with torch.no_grad():
       self.lm_head.weight.copy_(self.token_embedding.weight)
@@ -375,6 +387,8 @@ class NanoGPTSpeedrunModel(nn.Module):
 
     embeddings = self.token_embedding(input_ids)
     x = self.token_smear(embeddings) if self.token_smear is not None else embeddings
+    x0 = _speedrun_norm(x)
+    x = x0
     bigram_values = (
       self.bigram_embedding(input_ids) if self.bigram_embedding is not None else None
     )
@@ -388,13 +402,22 @@ class NanoGPTSpeedrunModel(nn.Module):
     )
     first_values = None
     block_skip = None
-    skip_gate_input = F.rms_norm(embeddings, (self.config.d_model,))
+    skip_gate_input = x0
+    if padded_bigram_values is not None and self.bigram_injection_weights is not None:
+      x = x.clone()
+      x[..., : self.config.bigram_dim] += (
+        self.bigram_injection_weights[0] * bigram_values
+      )
     cache = {0: x}
     for layer_index, block in enumerate(self.blocks):
       residual_injection = None
       if self.embedding_skip_weights is not None:
-        residual_injection = self.embedding_skip_weights[layer_index] * embeddings
-      if padded_bigram_values is not None and self.bigram_injection_weights is not None:
+        residual_injection = self.embedding_skip_weights[layer_index] * x0
+      if (
+        layer_index > 0
+        and padded_bigram_values is not None
+        and self.bigram_injection_weights is not None
+      ):
         bigram_injection = (
           self.bigram_injection_weights[layer_index] * padded_bigram_values
         )
@@ -490,6 +513,7 @@ class NanoGPTSpeedrunModel(nn.Module):
         xsa_alpha=None
         if self.xsa_alphas is None or block.attn.paired_heads
         else self.xsa_alphas[layer_index],
+        attention_scales=self.attention_scales[layer_index],
         attention_window=(
           self.active_long_window
           if layer_index in self.config.long_window_layers
@@ -528,7 +552,7 @@ class NanoGPTSpeedrunModel(nn.Module):
         + coefficients[4] * cache[3]
       )
 
-    hidden_states = self.norm(x)
+    hidden_states = _speedrun_norm(x)
     needs_logits_for_loss = targets is not None and (
       self.config.logit_sigmoid_scale is not None
       or self.config.logit_softcap is not None

@@ -23,6 +23,7 @@ model:
   bigram_vocab_size: 754560
   bigram_dim: 192
   bigram_sign_table_rows: 8192
+  value_residual: false
 
 optimizer:
   kind: speedrun_normuon

@@ -326,6 +326,7 @@ def _use_matrix_optimizer(name: str, param: nn.Parameter) -> bool:
     "residual_scales",
     "post_scales",
     "xsa_alphas",
+    "attention_scales",
   }:
     return False
   return not (name.startswith("mudd.") or name.endswith("value_embeddings"))

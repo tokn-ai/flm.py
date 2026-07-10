@@ -817,7 +817,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),
       mtp_weights=_float_tuple(value.get("mtp_weights", (1.0, 0.5, 0.25))),
       embedding_skip=bool(value.get("embedding_skip", True)),
-      value_residual=bool(value.get("value_residual", True)),
+      value_residual=bool(value.get("value_residual", False)),
       block_skip_from=_optional_int(value.get("block_skip_from", 3)),
       block_skip_to=_optional_int(value.get("block_skip_to", 6)),
       residual_decay=float(value.get("residual_decay", 1.1)),

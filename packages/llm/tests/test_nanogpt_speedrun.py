@@ -54,27 +54,27 @@ def test_nanogpt_speedrun_model_aggregates_tied_gradients_and_syncs() -> None:
   torch.testing.assert_close(model.token_embedding.weight, model.lm_head.weight)
 
 
-def test_nanogpt_speedrun_model_zero_initializes_residual_projections() -> None:
+def test_nanogpt_speedrun_model_matches_current_projection_initialization() -> None:
   model = NanoGPTSpeedrunModel(_config())
 
   for block in model.blocks:
-    torch.testing.assert_close(
-      block.attn.out.weight,
-      torch.zeros_like(block.attn.out.weight),
-    )
+    assert torch.count_nonzero(block.attn.out.weight) > 0
     torch.testing.assert_close(
       block.ffn.down.weight,
       torch.zeros_like(block.ffn.down.weight),
     )
+  torch.testing.assert_close(
+    model.attention_scales,
+    torch.tensor((0.5, 1.0)).repeat(model.config.n_layers, 1),
+  )
 
 
-def test_nanogpt_speedrun_model_uses_value_and_embedding_skips() -> None:
+def test_nanogpt_speedrun_model_uses_current_embedding_skips() -> None:
   model = NanoGPTSpeedrunModel(_config())
 
   assert model.embedding_skip_weights is not None
   assert model.embedding_skip_weights.shape == (2,)
-  assert model.value_mix_logits is not None
-  assert model.value_mix_logits.shape == (1,)
+  assert model.value_mix_logits is None
   assert model.value_embeddings.shape == (1, 32, 16)
   assert model.value_gate_weights.shape == (1, 2, 12)
   torch.testing.assert_close(

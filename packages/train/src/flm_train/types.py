@@ -77,7 +77,7 @@ class NanoGPTSpeedrunModelConfig:
   bigram_sign_table_rows: int = 8192
   mtp_weights: tuple[float, ...] = (1.0, 0.5, 0.25)
   embedding_skip: bool = True
-  value_residual: bool = True
+  value_residual: bool = False
   block_skip_from: int | None = 3
   block_skip_to: int | None = 6
   residual_decay: float = 1.1
