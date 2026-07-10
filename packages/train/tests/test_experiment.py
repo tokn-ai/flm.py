@@ -267,6 +267,21 @@ def test_parse_experiment_config_accepts_muon_optimizer() -> None:
   assert train_config.optimizer.weight_decay == 0.01
 
 
+def test_parse_experiment_config_accepts_normuon_optimizer() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "tiny",
+      "optimizer": {
+        "kind": "normuon",
+        "learning_rate": 1.0e-3,
+        "weight_decay": 0.01,
+      },
+    }
+  )
+
+  assert config.to_train_config().optimizer.kind == "normuon"
+
+
 def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
   config = parse_experiment_config(
     {

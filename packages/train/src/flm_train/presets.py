@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 from flm_datasets import get_tokenizer
-from flm_modules import configure_adamw, configure_muon
+from flm_modules import configure_adamw, configure_muon, configure_normuon
 
 from flm_train.data import build_training_dataset
 from flm_train.models import build_model
@@ -298,6 +298,12 @@ def _build_optimizer(
     )
   if config.optimizer.kind == "muon":
     return configure_muon(
+      model,
+      learning_rate=config.optimizer.learning_rate,
+      weight_decay=config.optimizer.weight_decay,
+    )
+  if config.optimizer.kind == "normuon":
+    return configure_normuon(
       model,
       learning_rate=config.optimizer.learning_rate,
       weight_decay=config.optimizer.weight_decay,

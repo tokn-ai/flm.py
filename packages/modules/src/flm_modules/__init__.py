@@ -35,7 +35,14 @@ from flm_modules.moe import (
   RouterScoring,
 )
 from flm_modules.norm import RMSNorm
-from flm_modules.optim import CompositeOptimizer, Muon, configure_adamw, configure_muon
+from flm_modules.optim import (
+  CompositeOptimizer,
+  Muon,
+  NorMuon,
+  configure_adamw,
+  configure_muon,
+  configure_normuon,
+)
 from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
 from flm_modules.speedrun import BigramHashEmbedding, TokenSmear
 
@@ -63,6 +70,7 @@ __all__ = [
   "linear_cross_entropy",
   "LossBackend",
   "Muon",
+  "NorMuon",
   "RMSNorm",
   "ReLUSquared",
   "RouterScoring",
@@ -76,6 +84,7 @@ __all__ = [
   "apply_rotary",
   "configure_adamw",
   "configure_muon",
+  "configure_normuon",
   "scaled_dot_product_attention",
   "tilelang_flash_attention",
   "tilelang_linear_cross_entropy",

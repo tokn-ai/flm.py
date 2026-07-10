@@ -129,7 +129,7 @@ ModelConfig = (
 
 @dataclass(frozen=True)
 class OptimizerConfig:
-  kind: Literal["adamw", "muon"] = "adamw"
+  kind: Literal["adamw", "muon", "normuon"] = "adamw"
   learning_rate: float = 3e-4
   weight_decay: float = 0.1
   max_grad_norm: float | None = 1.0

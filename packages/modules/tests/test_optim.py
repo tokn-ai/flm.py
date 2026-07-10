@@ -1,6 +1,13 @@
 import pytest
 import torch
-from flm_modules import CompositeOptimizer, Muon, configure_adamw, configure_muon
+from flm_modules import (
+  CompositeOptimizer,
+  Muon,
+  NorMuon,
+  configure_adamw,
+  configure_muon,
+  configure_normuon,
+)
 from torch import nn
 
 
@@ -86,6 +93,57 @@ def test_configure_muon_builds_composite_for_matrix_and_vector_parameters() -> N
 def test_muon_rejects_non_matrix_parameters() -> None:
   with pytest.raises(ValueError, match="only supports 2D parameters"):
     Muon([nn.Parameter(torch.ones(2))])
+
+
+def test_configure_normuon_builds_matrix_and_adam_fallback_optimizers() -> None:
+  model = TinyModel()
+
+  optimizer = configure_normuon(
+    model,
+    learning_rate=1e-3,
+    weight_decay=0.2,
+    momentum=0.85,
+    beta2=0.9,
+  )
+
+  assert isinstance(optimizer, CompositeOptimizer)
+  normuon, adamw = optimizer.optimizers
+  assert isinstance(normuon, NorMuon)
+  assert isinstance(adamw, torch.optim.AdamW)
+  assert model.linear.weight in set(normuon.param_groups[0]["params"])
+  assert model.linear.bias in set(adamw.param_groups[0]["params"])
+  assert normuon.param_groups[0]["momentum"] == 0.85
+  assert normuon.param_groups[0]["beta2"] == 0.9
+
+
+def test_normuon_step_tracks_low_rank_variance_and_updates_parameter() -> None:
+  parameter = nn.Parameter(
+    torch.tensor([[1.0, -2.0, 3.0], [4.0, -5.0, 6.0]])
+  )
+  optimizer = NorMuon(
+    [parameter],
+    lr=0.03,
+    momentum=0.9,
+    beta2=0.95,
+    weight_decay=0.01,
+  )
+  before = parameter.detach().clone()
+  parameter.grad = torch.tensor(
+    [[0.2, -0.3, 0.4], [0.5, -0.6, 0.7]]
+  )
+
+  optimizer.step()
+
+  assert not torch.equal(parameter, before)
+  state = optimizer.state[parameter]
+  assert state["momentum_buffer"].shape == parameter.shape
+  assert state["second_momentum_buffer"].shape == (1, 3)
+  assert torch.isfinite(parameter).all()
+
+
+def test_normuon_rejects_non_matrix_parameters() -> None:
+  with pytest.raises(ValueError, match="only supports 2D"):
+    NorMuon([nn.Parameter(torch.ones(2))])
 
 
 def test_muon_step_updates_muon_and_adamw_parameters() -> None:
