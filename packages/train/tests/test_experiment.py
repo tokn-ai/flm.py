@@ -717,6 +717,8 @@ def test_parse_args_accepts_cli_overrides() -> None:
       "cache",
       "--seed",
       "99",
+      "--run-id",
+      "existing-run",
     ]
   )
 
@@ -732,6 +734,7 @@ def test_parse_args_accepts_cli_overrides() -> None:
   assert args.models_dir == Path("models")
   assert args.cache_dir == Path("cache")
   assert args.seed == 99
+  assert args.run_id == "existing-run"
 
 
 def test_run_from_args_loads_experiment_relative_to_code_root(
@@ -787,7 +790,12 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
 
   overridden = apply_overrides(
     config,
-    ExperimentOverrides(device="cpu", steps=2, root_dir=Path("/tmp/runs")),
+    ExperimentOverrides(
+      device="cpu",
+      steps=2,
+      root_dir=Path("/tmp/runs"),
+      run_id="resume-run",
+    ),
   )
 
   assert overridden.loop.seed == 1
@@ -796,7 +804,7 @@ def test_apply_overrides_preserves_unspecified_config() -> None:
   assert overridden.loop.batch_size == 4
   assert overridden.loop.steps == 2
   assert overridden.secrets == config.secrets
-  assert overridden.run_dir == Path("/tmp/runs") / "override_test"
+  assert overridden.run_dir == Path("/tmp/runs") / "override_test" / "resume-run"
 
 
 def test_secret_env_file_loads_dotenv_values(tmp_path: Path) -> None:

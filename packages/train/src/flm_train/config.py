@@ -195,6 +195,7 @@ class ExperimentOverrides:
   steps: int | None = None
   root_dir: Path | None = None
   seed: int | None = None
+  run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -383,7 +384,9 @@ def apply_overrides(
     rollout=config.rollout,
     checkpoint=config.checkpoint,
     system_metrics=config.system_metrics,
-    run=config.run,
+    run=config.run
+    if overrides.run_id is None
+    else replace(config.run, id=overrides.run_id),
     secrets=config.secrets,
     output=config.output
     if overrides.root_dir is None
