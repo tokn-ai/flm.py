@@ -53,6 +53,8 @@ from flm_train.types import (
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
   TrainingResult,
 )
 
@@ -346,6 +348,45 @@ def test_parse_experiment_config_accepts_optimizer_schedule() -> None:
     momentum_end=0.95,
     momentum_warmup_steps=30,
     scale_weight_decay_with_lr=True,
+  )
+
+
+def test_parse_experiment_config_accepts_speedrun_stages() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "staged",
+      "speedrun_schedule": {
+        "untie_step": 3,
+        "stages": [
+          {
+            "end_step": 2,
+            "batch_size": 2,
+            "seq_len": 8,
+            "learning_rate_scale": 1.2,
+            "mtp_weights": [1.0, 0.5],
+            "short_window": 2,
+            "long_window": 4,
+          },
+          {"end_step": 4, "batch_size": 4, "seq_len": 16},
+        ],
+      },
+    }
+  )
+
+  assert config.speedrun_schedule == SpeedrunScheduleConfig(
+    stages=(
+      SpeedrunStageConfig(
+        end_step=2,
+        batch_size=2,
+        seq_len=8,
+        learning_rate_scale=1.2,
+        mtp_weights=(1.0, 0.5),
+        short_window=2,
+        long_window=4,
+      ),
+      SpeedrunStageConfig(end_step=4, batch_size=4, seq_len=16),
+    ),
+    untie_step=3,
   )
 
 

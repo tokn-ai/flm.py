@@ -22,6 +22,8 @@ from flm_train.types import (
   ReferenceModelConfig,
   RolloutConfig,
   RolloutPromptConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
   TorchDType,
   TrainConfig,
 )
@@ -145,6 +147,9 @@ class ExperimentConfig:
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   schedule: OptimizerScheduleConfig = field(default_factory=OptimizerScheduleConfig)
+  speedrun_schedule: SpeedrunScheduleConfig = field(
+    default_factory=SpeedrunScheduleConfig
+  )
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None
@@ -171,6 +176,7 @@ class ExperimentConfig:
       model=self.model,
       optimizer=self.optimizer,
       schedule=self.schedule,
+      speedrun_schedule=self.speedrun_schedule,
       loop=self.loop,
       eval=self.eval,
       rollout=self.rollout,
@@ -265,6 +271,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
     "model",
     "optimizer",
     "schedule",
+    "speedrun_schedule",
     "loop",
     "eval",
     "rollout",
@@ -285,6 +292,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
   model = _section(raw, "model")
   optimizer = _section(raw, "optimizer")
   schedule = _section(raw, "schedule")
+  speedrun_schedule = _section(raw, "speedrun_schedule")
   loop = _section(raw, "loop")
   eval_config = _optional_section(raw, "eval")
   rollout = _optional_section(raw, "rollout")
@@ -315,6 +323,7 @@ def parse_experiment_config(raw: dict[str, Any]) -> ExperimentConfig:
         schedule.get("scale_weight_decay_with_lr", False)
       ),
     ),
+    speedrun_schedule=_parse_speedrun_schedule(speedrun_schedule),
     loop=LoopConfig(
       seed=int(loop.get("seed", 42)),
       device=str(loop.get("device", "cpu")),
@@ -346,6 +355,7 @@ def apply_overrides(
     model=config.model,
     optimizer=config.optimizer,
     schedule=config.schedule,
+    speedrun_schedule=config.speedrun_schedule,
     loop=LoopConfig(
       seed=config.loop.seed if overrides.seed is None else overrides.seed,
       device=config.loop.device if overrides.device is None else overrides.device,
@@ -403,6 +413,7 @@ def resolve_workspace_paths(
     model=config.model,
     optimizer=config.optimizer,
     schedule=config.schedule,
+    speedrun_schedule=config.speedrun_schedule,
     loop=config.loop,
     eval=config.eval,
     rollout=config.rollout,
@@ -689,6 +700,35 @@ def _parse_rollout_prompts(value: Any) -> tuple[RolloutPromptConfig, ...]:
       )
     )
   return tuple(prompts)
+
+
+def _parse_speedrun_schedule(value: dict[str, Any]) -> SpeedrunScheduleConfig:
+  raw_stages = value.get("stages", ())
+  if not isinstance(raw_stages, list | tuple):
+    raise ValueError("speedrun_schedule.stages must be a list")
+  stages = []
+  for raw_stage in raw_stages:
+    if not isinstance(raw_stage, dict):
+      raise ValueError("speedrun schedule stage must be a mapping")
+    if "end_step" not in raw_stage:
+      raise ValueError("speedrun schedule stage requires end_step")
+    stages.append(
+      SpeedrunStageConfig(
+        end_step=int(raw_stage["end_step"]),
+        batch_size=_optional_int(raw_stage.get("batch_size")),
+        seq_len=_optional_int(raw_stage.get("seq_len")),
+        learning_rate_scale=float(raw_stage.get("learning_rate_scale", 1.0)),
+        mtp_weights=None
+        if raw_stage.get("mtp_weights") is None
+        else _float_tuple(raw_stage["mtp_weights"]),
+        short_window=_optional_int(raw_stage.get("short_window")),
+        long_window=_optional_int(raw_stage.get("long_window")),
+      )
+    )
+  return SpeedrunScheduleConfig(
+    stages=tuple(stages),
+    untie_step=_optional_int(value.get("untie_step")),
+  )
 
 
 def _parse_model(value: dict[str, Any]) -> ModelConfig:

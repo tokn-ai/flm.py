@@ -157,6 +157,23 @@ class OptimizerScheduleConfig:
 
 
 @dataclass(frozen=True)
+class SpeedrunStageConfig:
+  end_step: int
+  batch_size: int | None = None
+  seq_len: int | None = None
+  learning_rate_scale: float = 1.0
+  mtp_weights: tuple[float, ...] | None = None
+  short_window: int | None = None
+  long_window: int | None = None
+
+
+@dataclass(frozen=True)
+class SpeedrunScheduleConfig:
+  stages: tuple[SpeedrunStageConfig, ...] = ()
+  untie_step: int | None = None
+
+
+@dataclass(frozen=True)
 class LoopConfig:
   batch_size: BatchSize = 8
   batch_size_vram_fraction: float = 0.9
@@ -200,6 +217,9 @@ class TrainConfig:
   model: ModelConfig = field(default_factory=ReferenceModelConfig)
   optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
   schedule: OptimizerScheduleConfig = field(default_factory=OptimizerScheduleConfig)
+  speedrun_schedule: SpeedrunScheduleConfig = field(
+    default_factory=SpeedrunScheduleConfig
+  )
   loop: LoopConfig = field(default_factory=LoopConfig)
   eval: EvalConfig | None = None
   rollout: RolloutConfig | None = None

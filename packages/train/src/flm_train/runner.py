@@ -109,6 +109,7 @@ class ExperimentRunner:
       model=resolved.model,
       optimizer=resolved.optimizer,
       schedule=resolved.schedule,
+      speedrun_schedule=resolved.speedrun_schedule,
       loop=resolved.loop,
       eval=resolved.eval,
       rollout=resolved.rollout,

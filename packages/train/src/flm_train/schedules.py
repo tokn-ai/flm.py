@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 import torch
 
-from flm_train.types import OptimizerScheduleConfig
+from flm_train.types import (
+  OptimizerScheduleConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
+)
 
 
 @dataclass(frozen=True)
@@ -98,3 +102,66 @@ class OptimizerSchedule:
       return end
     progress = min(step / warmup_steps, 1.0)
     return start + progress * (end - start)
+
+
+@dataclass(frozen=True)
+class SpeedrunStageState:
+  index: int
+  stage: SpeedrunStageConfig
+  starts_stage: bool
+  should_untie: bool
+
+
+class SpeedrunStageSchedule:
+  """Resolve discrete algorithm and input-shape transitions by training step."""
+
+  def __init__(
+    self,
+    *,
+    total_steps: int,
+    config: SpeedrunScheduleConfig,
+  ) -> None:
+    if total_steps < 1:
+      raise ValueError("total_steps must be positive")
+    self.total_steps = total_steps
+    self.config = config
+    previous_end = 0
+    for stage in config.stages:
+      if stage.end_step <= previous_end:
+        raise ValueError("speedrun stage end steps must be strictly increasing")
+      if stage.batch_size is not None and stage.batch_size < 1:
+        raise ValueError("stage batch_size must be positive")
+      if stage.seq_len is not None and stage.seq_len < 1:
+        raise ValueError("stage seq_len must be positive")
+      if stage.learning_rate_scale <= 0:
+        raise ValueError("stage learning_rate_scale must be positive")
+      if stage.mtp_weights is not None and (
+        not stage.mtp_weights
+        or stage.mtp_weights[0] <= 0
+        or any(weight < 0 for weight in stage.mtp_weights)
+      ):
+        raise ValueError("stage mtp_weights are invalid")
+      if (stage.short_window is None) != (stage.long_window is None):
+        raise ValueError("stage attention windows must both be set")
+      for window in (stage.short_window, stage.long_window):
+        if window is not None and window < 1:
+          raise ValueError("stage attention windows must be positive")
+      previous_end = stage.end_step
+    if config.stages and config.stages[-1].end_step < total_steps:
+      raise ValueError("final speedrun stage must cover all training steps")
+    if config.untie_step is not None and not 1 <= config.untie_step <= total_steps:
+      raise ValueError("untie_step must be within training steps")
+
+  def state_at(self, step: int) -> SpeedrunStageState | None:
+    if not 1 <= step <= self.total_steps:
+      raise ValueError(f"step must be in [1, {self.total_steps}]")
+    for index, stage in enumerate(self.config.stages):
+      previous_end = 0 if index == 0 else self.config.stages[index - 1].end_step
+      if step <= stage.end_step:
+        return SpeedrunStageState(
+          index=index,
+          stage=stage,
+          starts_stage=step == previous_end + 1,
+          should_untie=step == self.config.untie_step,
+        )
+    return None
