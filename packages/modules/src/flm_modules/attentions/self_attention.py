@@ -127,9 +127,7 @@ class QKNormSelfAttention(nn.Module):
     k = apply_rotary(k, cos, sin, layout=self.rope.layout)
     if partial_key_offset and seq_len > 1:
       k = k.clone()
-      k[:, :, 1:, self.head_dim // 2 :] = k[
-        :, :, :-1, self.head_dim // 2 :
-      ]
+      k[:, :, 1:, self.head_dim // 2 :] = k[:, :, :-1, self.head_dim // 2 :]
 
     current_values = v
     if value_residual is not None:

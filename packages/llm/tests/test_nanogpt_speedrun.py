@@ -66,9 +66,7 @@ def test_nanogpt_speedrun_model_supports_chunked_loss_without_softcap() -> None:
 
 def test_nanogpt_speedrun_model_validates_block_skip_endpoints() -> None:
   with pytest.raises(ValueError, match="both be set"):
-    NanoGPTSpeedrunModel(
-      _config(block_skip_from=0, block_skip_to=None)
-    )
+    NanoGPTSpeedrunModel(_config(block_skip_from=0, block_skip_to=None))
 
 
 def test_nanogpt_speedrun_model_wires_portable_token_features() -> None:
@@ -135,9 +133,7 @@ def test_nanogpt_speedrun_model_eval_loss_uses_primary_target_only() -> None:
 def test_nanogpt_speedrun_model_skips_configured_attention_layer() -> None:
   model = NanoGPTSpeedrunModel(_config(attention_free_layer=1))
   calls = []
-  handle = model.blocks[1].attn.register_forward_hook(
-    lambda *args: calls.append(True)
-  )
+  handle = model.blocks[1].attn.register_forward_hook(lambda *args: calls.append(True))
 
   model(torch.randint(0, 32, (2, 8)))
 

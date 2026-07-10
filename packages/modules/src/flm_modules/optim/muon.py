@@ -317,9 +317,7 @@ def _normuon_variance_reduction(
   original_norm = (variance.sum() * red_dim_size).sqrt()
   second_momentum.lerp_(variance, 1.0 - beta2)
   scale = second_momentum.clamp_min(1e-10).rsqrt()
-  scaled_norm = (
-    (variance * red_dim_size * scale.float().square()).sum().sqrt()
-  )
+  scaled_norm = (variance * red_dim_size * scale.float().square()).sum().sqrt()
   return update * scale * (original_norm / scaled_norm.clamp_min(1e-10))
 
 

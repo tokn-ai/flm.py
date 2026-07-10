@@ -118,9 +118,7 @@ class NanoGPTSpeedrunModel(nn.Module):
         config.bigram_dim,
         sign_table_rows=config.bigram_sign_table_rows,
       )
-      self.bigram_injection_weights = nn.Parameter(
-        torch.full((config.n_layers,), 0.05)
-      )
+      self.bigram_injection_weights = nn.Parameter(torch.full((config.n_layers,), 0.05))
     else:
       self.bigram_embedding = None
       self.register_parameter("bigram_injection_weights", None)
@@ -170,9 +168,7 @@ class NanoGPTSpeedrunModel(nn.Module):
     embeddings = self.token_embedding(input_ids)
     x = self.token_smear(embeddings) if self.token_smear is not None else embeddings
     bigram_values = (
-      self.bigram_embedding(input_ids)
-      if self.bigram_embedding is not None
-      else None
+      self.bigram_embedding(input_ids) if self.bigram_embedding is not None else None
     )
     first_values = None
     block_skip = None
@@ -192,9 +188,11 @@ class NanoGPTSpeedrunModel(nn.Module):
           or self.block_skip_gate is None
         ):
           raise RuntimeError("block skip source was not captured")
-        gate = 2 * self.block_skip_logit.sigmoid() * torch.sigmoid(
-          self.block_skip_gate(
-            skip_gate_input[..., : self.config.attention_gate_dim]
+        gate = (
+          2
+          * self.block_skip_logit.sigmoid()
+          * torch.sigmoid(
+            self.block_skip_gate(skip_gate_input[..., : self.config.attention_gate_dim])
           )
         )
         x = x + gate * block_skip
@@ -208,9 +206,7 @@ class NanoGPTSpeedrunModel(nn.Module):
         value_mix=value_mix,
         partial_key_offset=layer_index in self.config.partial_key_offset_layers,
         output_gate_weight=self.attention_gate_weights[layer_index],
-        xsa_alpha=None
-        if self.xsa_alphas is None
-        else self.xsa_alphas[layer_index],
+        xsa_alpha=None if self.xsa_alphas is None else self.xsa_alphas[layer_index],
         skip_attention=layer_index == self.config.attention_free_layer,
       )
       if first_values is None and self.config.value_residual:
@@ -225,9 +221,7 @@ class NanoGPTSpeedrunModel(nn.Module):
       or (self.training and len(self.config.mtp_weights) > 1)
     )
     logits = (
-      self._logits(hidden_states)
-      if return_logits or needs_logits_for_loss
-      else None
+      self._logits(hidden_states) if return_logits or needs_logits_for_loss else None
     )
     loss = self._loss(hidden_states, logits, targets)
     return logits if return_logits else None, loss

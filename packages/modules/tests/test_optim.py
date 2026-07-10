@@ -117,9 +117,7 @@ def test_configure_normuon_builds_matrix_and_adam_fallback_optimizers() -> None:
 
 
 def test_normuon_step_tracks_low_rank_variance_and_updates_parameter() -> None:
-  parameter = nn.Parameter(
-    torch.tensor([[1.0, -2.0, 3.0], [4.0, -5.0, 6.0]])
-  )
+  parameter = nn.Parameter(torch.tensor([[1.0, -2.0, 3.0], [4.0, -5.0, 6.0]]))
   optimizer = NorMuon(
     [parameter],
     lr=0.03,
@@ -128,9 +126,7 @@ def test_normuon_step_tracks_low_rank_variance_and_updates_parameter() -> None:
     weight_decay=0.01,
   )
   before = parameter.detach().clone()
-  parameter.grad = torch.tensor(
-    [[0.2, -0.3, 0.4], [0.5, -0.6, 0.7]]
-  )
+  parameter.grad = torch.tensor([[0.2, -0.3, 0.4], [0.5, -0.6, 0.7]])
 
   optimizer.step()
 

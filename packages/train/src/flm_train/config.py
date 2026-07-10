@@ -728,13 +728,9 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       loss_chunk_size=loss_chunk_size,
       logit_softcap=_optional_float(value.get("logit_softcap", 30.0)),
       logit_scale=float(value.get("logit_scale", 1.0)),
-      logit_sigmoid_scale=_optional_float(
-        value.get("logit_sigmoid_scale", 23.0)
-      ),
+      logit_sigmoid_scale=_optional_float(value.get("logit_sigmoid_scale", 23.0)),
       logit_sigmoid_bias=float(value.get("logit_sigmoid_bias", 5.0)),
-      logit_sigmoid_temperature=float(
-        value.get("logit_sigmoid_temperature", 7.5)
-      ),
+      logit_sigmoid_temperature=float(value.get("logit_sigmoid_temperature", 7.5)),
       token_smear=bool(value.get("token_smear", True)),
       smear_gate_dim=int(value.get("smear_gate_dim", 12)),
       partial_key_offset_layers=_int_tuple(
