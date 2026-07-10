@@ -2,7 +2,12 @@ import importlib.util
 
 import pytest
 import torch
-from flm_modules import AttentionBackend, SelfAttention, apply_rotary
+from flm_modules import (
+  AttentionBackend,
+  QKNormSelfAttention,
+  SelfAttention,
+  apply_rotary,
+)
 from torch.nn import functional as F
 
 try:
@@ -123,6 +128,58 @@ def test_self_attention_supports_non_causal_attention(random_input) -> None:
 def test_self_attention_rejects_unknown_backend() -> None:
   with pytest.raises(ValueError):
     SelfAttention(d_model=8, n_heads=2, backend="unknown")
+
+
+def test_qk_norm_attention_preserves_shape_and_returns_values(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  y, values = layer(x)
+
+  assert y.shape == x.shape
+  assert values.shape == (3, 2, 5, 4)
+
+
+def test_qk_norm_attention_zero_initialized_output_is_residual_safe(
+  random_input,
+) -> None:
+  layer = QKNormSelfAttention(
+    d_model=8,
+    n_heads=2,
+    zero_init_out=True,
+  )
+  x = random_input(3, 5, 8)
+
+  y, _ = layer(x)
+
+  torch.testing.assert_close(y, torch.zeros_like(x))
+
+
+def test_qk_norm_attention_mixes_value_residual(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+  value_residual = random_input(3, 2, 5, 4)
+
+  residual_only, _ = layer(
+    x,
+    value_residual=value_residual,
+    value_mix=0.0,
+  )
+  current_only, _ = layer(
+    x,
+    value_residual=value_residual,
+    value_mix=1.0,
+  )
+
+  assert not torch.equal(residual_only, current_only)
+
+
+def test_qk_norm_attention_rejects_invalid_value_residual(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  with pytest.raises(ValueError, match="same shape"):
+    layer(x, value_residual=random_input(3, 5, 8))
 
 
 def test_self_attention_flash_attention2_requires_package(

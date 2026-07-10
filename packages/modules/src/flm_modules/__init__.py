@@ -11,10 +11,11 @@ from flm_modules.attentions import (
   DeepSeekV4HCACompressor,
   DeepSeekV4Indexer,
   DeepSeekV4IndexerScorer,
+  QKNormSelfAttention,
   SelfAttention,
   scaled_dot_product_attention,
 )
-from flm_modules.feed_forward import SwiGLU
+from flm_modules.feed_forward import ReLUSquared, SwiGLU
 from flm_modules.hyper import (
   DeepSeekV4HyperConnection,
   DeepSeekV4HyperHead,
@@ -61,10 +62,12 @@ __all__ = [
   "LossBackend",
   "Muon",
   "RMSNorm",
+  "ReLUSquared",
   "RouterScoring",
   "RopeLayout",
   "RotaryEmbedding",
   "SelfAttention",
+  "QKNormSelfAttention",
   "SwiGLU",
   "UnweightedRMSNorm",
   "apply_rotary",

@@ -1,5 +1,5 @@
 import torch
-from flm_modules import SwiGLU
+from flm_modules import ReLUSquared, SwiGLU
 from torch.nn import functional as F
 from transformers import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaMLP
@@ -62,3 +62,19 @@ def test_swiglu_matches_transformers_llama_mlp(random_input) -> None:
     layer.down.weight.copy_(reference.down_proj.weight)
 
   torch.testing.assert_close(layer(x), reference(x))
+
+
+def test_relu_squared_matches_manual_computation(random_input) -> None:
+  layer = ReLUSquared(d_model=4, d_ff=7, bias=True)
+  x = random_input(2, 3, 4)
+
+  expected = layer.down(F.relu(layer.up(x)).square())
+
+  torch.testing.assert_close(layer(x), expected)
+
+
+def test_relu_squared_can_zero_initialize_residual_projection(random_input) -> None:
+  layer = ReLUSquared(d_model=4, d_ff=7, zero_init_down=True)
+  x = random_input(2, 3, 4)
+
+  torch.testing.assert_close(layer(x), torch.zeros_like(x))

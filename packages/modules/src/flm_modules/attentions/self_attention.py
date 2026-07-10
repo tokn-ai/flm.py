@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from flm_modules.attentions.backends import (
   AttentionBackend,
@@ -62,3 +63,92 @@ class SelfAttention(nn.Module):
     )
     y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
     return self.out(y)
+
+
+class QKNormSelfAttention(nn.Module):
+  """RoPE attention with per-head QK normalization and value residuals.
+
+  ``value_residual`` is expected in head-major ``[B, H, T, D]`` layout. When
+  supplied, ``value_mix`` interpolates between the current values and that
+  residual. The method also returns the pre-mix values so the first attention
+  layer can seed a value-residual stream.
+  """
+
+  def __init__(
+    self,
+    d_model: int,
+    n_heads: int,
+    bias: bool = False,
+    rope_base: float = 10_000.0,
+    norm_eps: float = 1e-6,
+    backend: AttentionBackend | str = AttentionBackend.TORCH,
+    causal: bool = True,
+    *,
+    zero_init_out: bool = False,
+  ) -> None:
+    super().__init__()
+    if d_model % n_heads != 0:
+      raise ValueError("d_model must be divisible by n_heads")
+    self.d_model = d_model
+    self.n_heads = n_heads
+    self.head_dim = d_model // n_heads
+    self.norm_eps = norm_eps
+    self.backend = AttentionBackend(backend)
+    self.causal = causal
+    self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
+    self.out = nn.Linear(d_model, d_model, bias=bias)
+    self.rope = RotaryEmbedding(self.head_dim, base=rope_base)
+    if zero_init_out:
+      nn.init.zeros_(self.out.weight)
+      if self.out.bias is not None:
+        nn.init.zeros_(self.out.bias)
+
+  def forward(
+    self,
+    x: torch.Tensor,
+    *,
+    value_residual: torch.Tensor | None = None,
+    value_mix: torch.Tensor | float | None = None,
+    attn_mask: torch.Tensor | None = None,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size, seq_len, _ = x.shape
+    q, k, v = self.qkv(x).chunk(3, dim=-1)
+    q = self._split_heads(q)
+    k = self._split_heads(k)
+    v = self._split_heads(v)
+
+    q = self._rms_norm(q)
+    k = self._rms_norm(k)
+    cos, sin = self.rope(q)
+    q = apply_rotary(q, cos, sin, layout=self.rope.layout)
+    k = apply_rotary(k, cos, sin, layout=self.rope.layout)
+
+    current_values = v
+    if value_residual is not None:
+      if value_residual.shape != v.shape:
+        raise ValueError("value_residual must have the same shape as values")
+      mix = 0.5 if value_mix is None else value_mix
+      v = torch.lerp(value_residual, v, mix)
+
+    y = scaled_dot_product_attention(
+      q,
+      k,
+      v,
+      backend=self.backend,
+      attn_mask=attn_mask,
+      causal=self.causal,
+    )
+    y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+    return self.out(y), current_values
+
+  def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
+    batch_size, seq_len, _ = x.shape
+    return x.view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
+
+  def _rms_norm(self, x: torch.Tensor) -> torch.Tensor:
+    dtype = x.dtype
+    return F.rms_norm(
+      x.float(),
+      (self.head_dim,),
+      eps=self.norm_eps,
+    ).to(dtype)
