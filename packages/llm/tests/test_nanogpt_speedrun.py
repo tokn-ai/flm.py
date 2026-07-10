@@ -21,7 +21,7 @@ def test_nanogpt_speedrun_model_ties_embedding_and_head() -> None:
   model = NanoGPTSpeedrunModel(_config())
 
   assert model.embeddings_tied
-  assert model.classifier_weight is model.token_embedding.weight
+  assert model.classifier_weight is model.lm_head.weight
   assert model.token_embedding.weight is not model.lm_head.weight
   torch.testing.assert_close(model.token_embedding.weight, model.lm_head.weight)
 
@@ -29,6 +29,29 @@ def test_nanogpt_speedrun_model_ties_embedding_and_head() -> None:
 
   assert not model.embeddings_tied
   assert model.classifier_weight is model.lm_head.weight
+
+
+def test_nanogpt_speedrun_model_aggregates_tied_gradients_and_syncs() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+  input_ids = torch.randint(0, 32, (2, 8))
+  targets = torch.randint(0, 32, (2, 8))
+  _, loss = model(input_ids, targets, return_logits=False)
+  assert loss is not None
+  loss.backward()
+  embedding_grad = model.token_embedding.weight.grad.clone()
+  head_grad = model.lm_head.weight.grad.clone()
+
+  model.prepare_optimizer_step()
+
+  assert model.token_embedding.weight.grad is None
+  torch.testing.assert_close(
+    model.lm_head.weight.grad,
+    embedding_grad + head_grad,
+  )
+  with torch.no_grad():
+    model.lm_head.weight.add_(1.0)
+  model.finalize_optimizer_step()
+  torch.testing.assert_close(model.token_embedding.weight, model.lm_head.weight)
 
 
 def test_nanogpt_speedrun_model_zero_initializes_residual_projections() -> None:

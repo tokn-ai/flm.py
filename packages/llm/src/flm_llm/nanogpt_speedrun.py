@@ -328,10 +328,23 @@ class NanoGPTSpeedrunModel(nn.Module):
       self.lm_head.weight.copy_(self.token_embedding.weight)
     self.embeddings_tied = False
 
+  def prepare_optimizer_step(self) -> None:
+    if not self.embeddings_tied or self.token_embedding.weight.grad is None:
+      return
+    embedding_grad = self.token_embedding.weight.grad
+    if self.lm_head.weight.grad is None:
+      self.lm_head.weight.grad = embedding_grad.detach().clone()
+    else:
+      self.lm_head.weight.grad.add_(embedding_grad)
+    self.token_embedding.weight.grad = None
+
+  @torch.no_grad()
+  def finalize_optimizer_step(self) -> None:
+    if self.embeddings_tied:
+      self.token_embedding.weight.copy_(self.lm_head.weight)
+
   @property
   def classifier_weight(self) -> torch.Tensor:
-    if self.embeddings_tied:
-      return self.token_embedding.weight
     return self.lm_head.weight
 
   def _initialize_mudd_biases(self) -> None:

@@ -249,6 +249,24 @@ def test_composite_optimizer_can_accumulate_secondary_gradients() -> None:
   assert model.linear.bias.grad is None
 
 
+def test_composite_optimizer_copies_parameter_state() -> None:
+  source = nn.Parameter(torch.ones(2))
+  target = nn.Parameter(torch.zeros(2))
+  child = CautiousAdamW([source, target], lr=0.1)
+  optimizer = CompositeOptimizer([child])
+  source.grad = torch.ones_like(source)
+  optimizer.step()
+
+  optimizer.copy_parameter_state(source, target)
+
+  assert child.state[target]["step"] == child.state[source]["step"]
+  torch.testing.assert_close(
+    child.state[target]["exp_avg"],
+    child.state[source]["exp_avg"],
+  )
+  assert child.state[target]["exp_avg"] is not child.state[source]["exp_avg"]
+
+
 def test_muon_matrix_step_matches_torch_muon() -> None:
   torch_muon = getattr(torch.optim, "Muon", None)
   if torch_muon is None:

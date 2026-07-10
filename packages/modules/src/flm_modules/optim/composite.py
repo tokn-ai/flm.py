@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Sequence
 
 import torch
@@ -79,3 +80,26 @@ class CompositeOptimizer(torch.optim.Optimizer):
       self.optimizers, optimizer_states, strict=True
     ):
       optimizer.load_state_dict(optimizer_state)
+
+  def copy_parameter_state(
+    self,
+    source: torch.nn.Parameter,
+    target: torch.nn.Parameter,
+  ) -> None:
+    for optimizer in self.optimizers:
+      parameters = {
+        parameter for group in optimizer.param_groups for parameter in group["params"]
+      }
+      if source not in parameters or target not in parameters:
+        continue
+      source_state = optimizer.state.get(source)
+      if not source_state:
+        return
+      optimizer.state[target] = {
+        key: value.detach().clone()
+        if isinstance(value, torch.Tensor)
+        else copy.deepcopy(value)
+        for key, value in source_state.items()
+      }
+      return
+    raise ValueError("source and target parameters do not share a child optimizer")

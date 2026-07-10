@@ -219,6 +219,9 @@ class LanguageModelTrainer:
         microbatch_tokens = int(input_ids.numel())
         token_count += microbatch_tokens
         loss_sum += float(loss.detach().cpu()) * microbatch_tokens
+      prepare_optimizer_step = getattr(self.model, "prepare_optimizer_step", None)
+      if callable(prepare_optimizer_step):
+        prepare_optimizer_step()
       grad_norm = _clip_or_measure_grad_norm(
         self.model.parameters(),
         self.max_grad_norm,
@@ -270,9 +273,31 @@ class LanguageModelTrainer:
         set_to_none=True,
         primary_only=not update_secondary,
       )
+    else:
+      self.optimizer.step()
+      self.optimizer.zero_grad(set_to_none=True)
+    finalize_optimizer_step = getattr(self.model, "finalize_optimizer_step", None)
+    if callable(finalize_optimizer_step):
+      finalize_optimizer_step()
+    self._untie_embeddings_after_step(step)
+
+  def _untie_embeddings_after_step(self, step: int) -> None:
+    if (
+      self.speedrun_schedule is None or self.speedrun_schedule.config.untie_step != step
+    ):
       return
-    self.optimizer.step()
-    self.optimizer.zero_grad(set_to_none=True)
+    untie = getattr(self.model, "untie_embeddings", None)
+    if not callable(untie):
+      return
+    source = getattr(getattr(self.model, "lm_head", None), "weight", None)
+    target = getattr(getattr(self.model, "token_embedding", None), "weight", None)
+    if (
+      isinstance(self.optimizer, CompositeOptimizer)
+      and isinstance(source, torch.nn.Parameter)
+      and isinstance(target, torch.nn.Parameter)
+    ):
+      self.optimizer.copy_parameter_state(source, target)
+    untie()
 
   def _dataloader_for_step(self, step: int) -> DataLoader:
     for end_step, dataloader in self.stage_dataloaders:
@@ -292,7 +317,7 @@ class LanguageModelTrainer:
       setter = getattr(self.model, "set_attention_windows", None)
       if callable(setter):
         setter(short=stage.short_window, long=stage.long_window)
-    if state.embeddings_untied:
+    if state.embeddings_untied and not state.should_untie:
       untie = getattr(self.model, "untie_embeddings", None)
       if callable(untie):
         untie()
