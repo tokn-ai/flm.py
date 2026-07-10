@@ -118,7 +118,9 @@ def test_speedrun_stage_schedule_resolves_transitions_and_untie() -> None:
   assert first is not None and first.index == 0 and first.starts_stage
   assert transition is not None and transition.index == 1
   assert transition.starts_stage and transition.should_untie
+  assert transition.embeddings_untied
   assert last is not None and last.index == 1 and not last.starts_stage
+  assert last.embeddings_untied
 
 
 def test_speedrun_stage_schedule_validates_coverage() -> None:
@@ -129,3 +131,20 @@ def test_speedrun_stage_schedule_validates_coverage() -> None:
         stages=(SpeedrunStageConfig(end_step=3),),
       ),
     )
+
+
+def test_optimizer_schedule_applies_stage_multiplier() -> None:
+  parameter = torch.nn.Parameter(torch.ones(()))
+  optimizer = torch.optim.SGD([parameter], lr=2.0, weight_decay=0.5)
+  schedule = OptimizerSchedule(
+    optimizer,
+    total_steps=2,
+    config=OptimizerScheduleConfig(scale_weight_decay_with_lr=True),
+  )
+
+  state = schedule.apply(1, learning_rate_multiplier=1.5)
+
+  assert state.learning_rate_scale == 1.5
+  assert state.weight_decay_scale == 1.5
+  assert optimizer.param_groups[0]["lr"] == 3.0
+  assert optimizer.param_groups[0]["weight_decay"] == 0.75

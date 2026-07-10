@@ -118,6 +118,7 @@ class QKNormSelfAttention(nn.Module):
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
+    attention_window: int | None = None,
     attn_mask: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_len, _ = x.shape
@@ -156,6 +157,18 @@ class QKNormSelfAttention(nn.Module):
       if partial_key_offset and seq_len > 1:
         k = k.clone()
         k[:, :, 1:, self.head_dim // 2 :] = k[:, :, :-1, self.head_dim // 2 :]
+
+    if attention_window is not None:
+      if attention_window < 1:
+        raise ValueError("attention_window must be positive")
+      if attn_mask is not None:
+        raise ValueError("attention_window cannot be combined with attn_mask")
+      if not self.causal:
+        raise ValueError("windowed QK attention currently requires causal attention")
+      attention_length = q.shape[-2]
+      positions = torch.arange(attention_length, device=q.device)
+      distance = positions[:, None] - positions[None, :]
+      attn_mask = (distance >= 0) & (distance <= attention_window)
 
     y = scaled_dot_product_attention(
       q,

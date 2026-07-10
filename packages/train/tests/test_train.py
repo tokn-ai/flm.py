@@ -33,6 +33,8 @@ from flm_train.types import (
   NanoGPTSpeedrunModelConfig,
   OptimizerScheduleConfig,
   ReferenceModelConfig,
+  SpeedrunScheduleConfig,
+  SpeedrunStageConfig,
   TrainConfig,
 )
 
@@ -97,6 +99,7 @@ def test_train_language_model_runs_nanogpt_speedrun_model(tmp_path: Path) -> Non
     smear_gate_dim=4,
     attention_gate_dim=4,
     paired_head_layers=(0,),
+    long_window_layers=(1,),
     value_embedding_layers=(1,),
     mudd=False,
     block_skip_from=None,
@@ -724,6 +727,65 @@ def test_train_language_model_applies_optimizer_schedule(tmp_path: Path) -> None
 
   assert [metrics.learning_rate for metrics in step_metrics] == pytest.approx(
     [1.5e-4, 3e-4, 1.5e-4, 0.0]
+  )
+
+
+def test_train_language_model_applies_speedrun_stages(tmp_path: Path) -> None:
+  (tmp_path / "model.py").write_text(
+    "\n".join(f"def f_{i}(): return {i}" for i in range(80)),
+    encoding="utf-8",
+  )
+  model = NanoGPTSpeedrunModelConfig(
+    d_model=8,
+    n_layers=2,
+    n_heads=2,
+    d_ff=16,
+    smear_gate_dim=4,
+    attention_gate_dim=4,
+    paired_head_layers=(0,),
+    long_window_layers=(1,),
+    value_embedding_layers=(1,),
+    value_embedding_gate_dim=4,
+    block_skip_from=None,
+    block_skip_to=None,
+    attention_free_layer=None,
+    mudd=False,
+    logit_sigmoid_scale=5.0,
+  )
+  config = train_config(repo_root=tmp_path, model=model, steps=3)
+  config = replace(
+    config,
+    speedrun_schedule=SpeedrunScheduleConfig(
+      stages=(
+        SpeedrunStageConfig(
+          end_step=1,
+          batch_size=1,
+          seq_len=4,
+          learning_rate_scale=0.5,
+          mtp_weights=(1.0, 0.5),
+          short_window=2,
+          long_window=4,
+        ),
+        SpeedrunStageConfig(
+          end_step=3,
+          batch_size=2,
+          seq_len=8,
+          learning_rate_scale=2.0,
+          mtp_weights=(1.0,),
+          short_window=4,
+          long_window=8,
+        ),
+      ),
+      untie_step=2,
+    ),
+  )
+  step_metrics: list[TrainStepMetrics] = []
+
+  train_language_model(config, on_step=step_metrics.append)
+
+  assert [metrics.tokens for metrics in step_metrics] == [4, 16, 16]
+  assert [metrics.learning_rate for metrics in step_metrics] == pytest.approx(
+    [1.5e-4, 6e-4, 6e-4]
   )
 
 

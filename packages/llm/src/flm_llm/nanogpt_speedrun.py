@@ -52,6 +52,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
+    attention_window: int | None = None,
     skip_attention: bool = False,
     residual_scales: torch.Tensor | None = None,
     post_scales: torch.Tensor | None = None,
@@ -90,6 +91,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
         partial_key_offset=partial_key_offset,
         output_gate_weight=output_gate_weight,
         xsa_alpha=xsa_alpha,
+        attention_window=attention_window,
       )
     residual_scales = x.new_ones(2) if residual_scales is None else residual_scales
     post_scales = x.new_ones(2) if post_scales is None else post_scales
@@ -168,6 +170,11 @@ class NanoGPTSpeedrunModel(nn.Module):
     invalid_paired_layers = set(config.paired_head_layers) - set(range(config.n_layers))
     if invalid_paired_layers:
       raise ValueError("paired_head_layers contains an invalid layer index")
+    invalid_long_window_layers = set(config.long_window_layers) - set(
+      range(config.n_layers)
+    )
+    if invalid_long_window_layers:
+      raise ValueError("long_window_layers contains an invalid layer index")
     invalid_value_layers = set(config.value_embedding_layers) - set(
       range(config.n_layers)
     )
@@ -192,6 +199,9 @@ class NanoGPTSpeedrunModel(nn.Module):
         raise ValueError("block skip endpoints must be ordered layer indices")
 
     self.config = config
+    self.active_mtp_weights = config.mtp_weights
+    self.active_short_window: int | None = None
+    self.active_long_window: int | None = None
     self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
     nn.init.normal_(self.token_embedding.weight, mean=0.0, std=0.005)
     self.token_smear = (
@@ -256,8 +266,9 @@ class NanoGPTSpeedrunModel(nn.Module):
     self.post_scales = nn.Parameter(torch.ones(config.n_layers, 2))
     self.norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-    if config.tie_embeddings:
-      self.lm_head.weight = self.token_embedding.weight
+    with torch.no_grad():
+      self.lm_head.weight.copy_(self.token_embedding.weight)
+    self.embeddings_tied = config.tie_embeddings
 
     if config.embedding_skip:
       self.embedding_skip_weights = nn.Parameter(torch.zeros(config.n_layers))
@@ -274,6 +285,30 @@ class NanoGPTSpeedrunModel(nn.Module):
     else:
       self.register_parameter("block_skip_logit", None)
       self.block_skip_gate = None
+
+  def set_mtp_weights(self, weights: tuple[float, ...]) -> None:
+    if not weights or weights[0] <= 0 or any(weight < 0 for weight in weights):
+      raise ValueError("mtp weights are invalid")
+    self.active_mtp_weights = tuple(float(weight) for weight in weights)
+
+  def set_attention_windows(self, *, short: int, long: int) -> None:
+    if short < 1 or long < short:
+      raise ValueError("attention windows must satisfy 1 <= short <= long")
+    self.active_short_window = short
+    self.active_long_window = long
+
+  def untie_embeddings(self) -> None:
+    if not self.embeddings_tied:
+      return
+    with torch.no_grad():
+      self.lm_head.weight.copy_(self.token_embedding.weight)
+    self.embeddings_tied = False
+
+  @property
+  def classifier_weight(self) -> torch.Tensor:
+    if self.embeddings_tied:
+      return self.token_embedding.weight
+    return self.lm_head.weight
 
   def _initialize_mudd_biases(self) -> None:
     if self.mudd is None:
@@ -418,6 +453,11 @@ class NanoGPTSpeedrunModel(nn.Module):
         xsa_alpha=None
         if self.xsa_alphas is None or block.attn.paired_heads
         else self.xsa_alphas[layer_index],
+        attention_window=(
+          self.active_long_window
+          if layer_index in self.config.long_window_layers
+          else self.active_short_window
+        ),
         skip_attention=layer_index == self.config.attention_free_layer,
         residual_scales=residual_scales,
         post_scales=post_scales,
@@ -447,7 +487,7 @@ class NanoGPTSpeedrunModel(nn.Module):
     needs_logits_for_loss = targets is not None and (
       self.config.logit_sigmoid_scale is not None
       or self.config.logit_softcap is not None
-      or (self.training and len(self.config.mtp_weights) > 1)
+      or (self.training and len(self.active_mtp_weights) > 1)
     )
     logits = (
       self._logits(hidden_states) if return_logits or needs_logits_for_loss else None
@@ -456,7 +496,10 @@ class NanoGPTSpeedrunModel(nn.Module):
     return logits if return_logits else None, loss
 
   def _logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-    logits = self.config.logit_scale * self.lm_head(hidden_states)
+    logits = self.config.logit_scale * F.linear(
+      hidden_states,
+      self.classifier_weight,
+    )
     if self.config.logit_sigmoid_scale is not None:
       logits = self.config.logit_sigmoid_scale * torch.sigmoid(
         (logits + self.config.logit_sigmoid_bias)
@@ -478,14 +521,14 @@ class NanoGPTSpeedrunModel(nn.Module):
     if (
       self.config.logit_sigmoid_scale is not None
       or self.config.logit_softcap is not None
-      or (self.training and len(self.config.mtp_weights) > 1)
+      or (self.training and len(self.active_mtp_weights) > 1)
     ):
       if logits is None:
         raise RuntimeError("softcapped loss requires logits")
       return self._multi_token_loss(logits, targets)
     return language_model_loss(
       hidden_states=hidden_states,
-      classifier_weight=self.lm_head.weight,
+      classifier_weight=self.classifier_weight,
       targets=targets,
       backend=self.config.loss_backend,
       chunk_size=self.config.loss_chunk_size,
@@ -496,7 +539,7 @@ class NanoGPTSpeedrunModel(nn.Module):
     logits: torch.Tensor,
     targets: torch.Tensor,
   ) -> torch.Tensor:
-    weights = self.config.mtp_weights if self.training else (1.0,)
+    weights = self.active_mtp_weights if self.training else (1.0,)
     token_count = targets.numel()
     total = logits.new_zeros((), dtype=torch.float32)
     for offset, weight in enumerate(weights):

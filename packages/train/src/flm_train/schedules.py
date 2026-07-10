@@ -54,8 +54,24 @@ class OptimizerSchedule:
       float(group.get("weight_decay", 0.0)) for group in optimizer.param_groups
     )
 
-  def apply(self, step: int) -> OptimizerScheduleState:
+  def apply(
+    self,
+    step: int,
+    *,
+    learning_rate_multiplier: float = 1.0,
+  ) -> OptimizerScheduleState:
+    if learning_rate_multiplier <= 0:
+      raise ValueError("learning_rate_multiplier must be positive")
     state = self.state_at(step)
+    learning_rate_scale = state.learning_rate_scale * learning_rate_multiplier
+    weight_decay_scale = state.weight_decay_scale
+    if self.config.scale_weight_decay_with_lr:
+      weight_decay_scale *= learning_rate_multiplier
+    state = OptimizerScheduleState(
+      learning_rate_scale=learning_rate_scale,
+      momentum=state.momentum,
+      weight_decay_scale=weight_decay_scale,
+    )
     for group, base_lr, base_weight_decay in zip(
       self.optimizer.param_groups,
       self._base_lrs,
@@ -110,6 +126,7 @@ class SpeedrunStageState:
   stage: SpeedrunStageConfig
   starts_stage: bool
   should_untie: bool
+  embeddings_untied: bool
 
 
 class SpeedrunStageSchedule:
@@ -149,6 +166,8 @@ class SpeedrunStageSchedule:
       previous_end = stage.end_step
     if config.stages and config.stages[-1].end_step < total_steps:
       raise ValueError("final speedrun stage must cover all training steps")
+    if config.untie_step is not None and not config.stages:
+      raise ValueError("untie_step requires at least one speedrun stage")
     if config.untie_step is not None and not 1 <= config.untie_step <= total_steps:
       raise ValueError("untie_step must be within training steps")
 
@@ -163,5 +182,8 @@ class SpeedrunStageSchedule:
           stage=stage,
           starts_stage=step == previous_end + 1,
           should_untie=step == self.config.untie_step,
+          embeddings_untied=(
+            self.config.untie_step is not None and step >= self.config.untie_step
+          ),
         )
     return None

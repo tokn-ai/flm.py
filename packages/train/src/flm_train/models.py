@@ -43,6 +43,7 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         xsa=model_config.xsa,
         attention_free_layer=model_config.attention_free_layer,
         paired_head_layers=model_config.paired_head_layers,
+        long_window_layers=model_config.long_window_layers,
         value_embedding_layers=model_config.value_embedding_layers,
         value_embedding_gate_dim=model_config.value_embedding_gate_dim,
         mudd=model_config.mudd,

@@ -19,7 +19,11 @@ from flm_train.checkpoints import (
   prune_checkpoints,
   save_checkpoint,
 )
-from flm_train.schedules import OptimizerSchedule
+from flm_train.schedules import (
+  OptimizerSchedule,
+  SpeedrunStageSchedule,
+  SpeedrunStageState,
+)
 from flm_train.types import CheckpointConfig
 
 
@@ -119,6 +123,8 @@ class LanguageModelTrainer:
     model: LanguageModel,
     optimizer: torch.optim.Optimizer,
     optimizer_schedule: OptimizerSchedule | None = None,
+    speedrun_schedule: SpeedrunStageSchedule | None = None,
+    stage_dataloaders: tuple[tuple[int, DataLoader], ...] = (),
     dataloader: DataLoader,
     device: str,
     steps: int,
@@ -140,6 +146,8 @@ class LanguageModelTrainer:
     self.model = model
     self.optimizer = optimizer
     self.optimizer_schedule = optimizer_schedule
+    self.speedrun_schedule = speedrun_schedule
+    self.stage_dataloaders = stage_dataloaders
     self.dataloader = dataloader
     self.device = device
     self.steps = steps
@@ -158,14 +166,30 @@ class LanguageModelTrainer:
 
   def train(self) -> list[TrainStepMetrics]:
     metrics: list[TrainStepMetrics] = []
-    iterator = iter(self.dataloader)
+    active_dataloader = self.dataloader
+    iterator = iter(active_dataloader)
     checkpoint_state = self._load_checkpoint_if_requested()
     tokens_seen = checkpoint_state.tokens_seen
     self.model.train()
 
     for step in range(checkpoint_state.step + 1, self.steps + 1):
+      stage_state = (
+        None
+        if self.speedrun_schedule is None
+        else self.speedrun_schedule.state_at(step)
+      )
       if self.optimizer_schedule is not None:
-        self.optimizer_schedule.apply(step)
+        self.optimizer_schedule.apply(
+          step,
+          learning_rate_multiplier=1.0
+          if stage_state is None
+          else stage_state.stage.learning_rate_scale,
+        )
+      self._apply_model_stage(stage_state)
+      step_dataloader = self._dataloader_for_step(step)
+      if step_dataloader is not active_dataloader:
+        active_dataloader = step_dataloader
+        iterator = iter(active_dataloader)
       input_ids, targets, iterator = self._next_batch(iterator)
       input_ids = input_ids.to(self.device)
       targets = targets.to(self.device)
@@ -218,6 +242,29 @@ class LanguageModelTrainer:
           self.on_checkpoint(path, step)
 
     return metrics
+
+  def _dataloader_for_step(self, step: int) -> DataLoader:
+    for end_step, dataloader in self.stage_dataloaders:
+      if step <= end_step:
+        return dataloader
+    return self.dataloader
+
+  def _apply_model_stage(self, state: SpeedrunStageState | None) -> None:
+    if state is None:
+      return
+    stage = state.stage
+    if stage.mtp_weights is not None:
+      setter = getattr(self.model, "set_mtp_weights", None)
+      if callable(setter):
+        setter(stage.mtp_weights)
+    if stage.short_window is not None and stage.long_window is not None:
+      setter = getattr(self.model, "set_attention_windows", None)
+      if callable(setter):
+        setter(short=stage.short_window, long=stage.long_window)
+    if state.embeddings_untied:
+      untie = getattr(self.model, "untie_embeddings", None)
+      if callable(untie):
+        untie()
 
   def _next_batch(
     self,

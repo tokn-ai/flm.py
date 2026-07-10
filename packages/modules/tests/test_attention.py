@@ -247,6 +247,17 @@ def test_qk_norm_attention_validates_paired_head_features(random_input) -> None:
     layer(x, xsa_alpha=torch.zeros(4))
 
 
+def test_qk_norm_attention_supports_sliding_windows(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  dense, _ = layer(x)
+  windowed, _ = layer(x, attention_window=2)
+
+  assert windowed.shape == dense.shape
+  assert not torch.equal(windowed, dense)
+
+
 def test_self_attention_flash_attention2_requires_package(
   random_input,
 ) -> None:

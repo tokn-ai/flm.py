@@ -13,7 +13,7 @@ from flm_modules import configure_adamw, configure_muon, configure_normuon
 
 from flm_train.data import build_training_dataset
 from flm_train.models import build_model
-from flm_train.schedules import OptimizerSchedule
+from flm_train.schedules import OptimizerSchedule, SpeedrunStageSchedule
 from flm_train.trainer import (
   EvalMetrics,
   LanguageModel,
@@ -43,11 +43,13 @@ def train_language_model(
     vocab_size=encoding.n_vocab,
     on_batch_size_resolved=on_batch_size_resolved,
   )
+  model_build_config = _config_with_stage_max_seq_len(config)
   model = build_model(
-    config,
+    model_build_config,
     vocab_size=encoding.n_vocab,
   ).to(device=config.loop.device, dtype=_torch_dtype(config.loop.dtype))
   dataset_bundle = build_training_dataset(config)
+  stage_dataloaders = _build_stage_dataloaders(config)
   eval_bundle = None
   if config.eval is not None:
     eval_config = replace(
@@ -65,10 +67,24 @@ def train_language_model(
       config=config.schedule,
     )
   )
+  speedrun_schedule = (
+    None
+    if config.loop.steps == 0
+    or (
+      not config.speedrun_schedule.stages
+      and config.speedrun_schedule.untie_step is None
+    )
+    else SpeedrunStageSchedule(
+      total_steps=config.loop.steps,
+      config=config.speedrun_schedule,
+    )
+  )
   trainer = LanguageModelTrainer(
     model=model,
     optimizer=optimizer,
     optimizer_schedule=schedule,
+    speedrun_schedule=speedrun_schedule,
+    stage_dataloaders=stage_dataloaders,
     dataloader=dataset_bundle.dataloader,
     device=config.loop.device,
     steps=config.loop.steps,
@@ -121,6 +137,50 @@ def train_language_model(
     file_count=dataset_bundle.file_count,
     byte_count=dataset_bundle.byte_count,
   )
+
+
+def _config_with_stage_max_seq_len(config: TrainConfig) -> TrainConfig:
+  max_seq_len = max(
+    (config.data.seq_len,)
+    + tuple(
+      stage.seq_len
+      for stage in config.speedrun_schedule.stages
+      if stage.seq_len is not None
+    )
+  )
+  if max_seq_len == config.data.seq_len:
+    return config
+  return replace(config, data=replace(config.data, seq_len=max_seq_len))
+
+
+def _build_stage_dataloaders(
+  config: TrainConfig,
+) -> tuple[tuple[int, torch.utils.data.DataLoader], ...]:
+  dataloaders = []
+  cache = {}
+  for stage_index, stage in enumerate(config.speedrun_schedule.stages):
+    batch_size = (
+      config.loop.batch_size if stage.batch_size is None else stage.batch_size
+    )
+    if batch_size == "auto":
+      raise ValueError("staged dataloaders require a resolved batch size")
+    seq_len = config.data.seq_len if stage.seq_len is None else stage.seq_len
+    key = (batch_size, seq_len)
+    dataloader = cache.get(key)
+    if dataloader is None:
+      stage_config = replace(
+        config,
+        data=replace(config.data, seq_len=seq_len),
+        loop=replace(
+          config.loop,
+          batch_size=batch_size,
+          seed=config.loop.seed + stage_index,
+        ),
+      )
+      dataloader = build_training_dataset(stage_config).dataloader
+      cache[key] = dataloader
+    dataloaders.append((stage.end_step, dataloader))
+  return tuple(dataloaders)
 
 
 def _config_with_resolved_batch_size(

@@ -20,7 +20,15 @@ def test_nanogpt_speedrun_model_returns_softcapped_logits_and_loss() -> None:
 def test_nanogpt_speedrun_model_ties_embedding_and_head() -> None:
   model = NanoGPTSpeedrunModel(_config())
 
-  assert model.token_embedding.weight is model.lm_head.weight
+  assert model.embeddings_tied
+  assert model.classifier_weight is model.token_embedding.weight
+  assert model.token_embedding.weight is not model.lm_head.weight
+  torch.testing.assert_close(model.token_embedding.weight, model.lm_head.weight)
+
+  model.untie_embeddings()
+
+  assert not model.embeddings_tied
+  assert model.classifier_weight is model.lm_head.weight
 
 
 def test_nanogpt_speedrun_model_zero_initializes_residual_projections() -> None:
@@ -137,6 +145,19 @@ def test_nanogpt_speedrun_model_eval_loss_uses_primary_target_only() -> None:
   torch.testing.assert_close(loss, expected)
 
 
+def test_nanogpt_speedrun_model_updates_runtime_stage_features() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+
+  model.set_mtp_weights((1.0, 0.25))
+  model.set_attention_windows(short=2, long=4)
+  logits, _ = model(torch.randint(0, 32, (2, 8)))
+
+  assert model.active_mtp_weights == (1.0, 0.25)
+  assert model.active_short_window == 2
+  assert model.active_long_window == 4
+  assert logits is not None
+
+
 def test_nanogpt_speedrun_model_skips_configured_attention_layer() -> None:
   model = NanoGPTSpeedrunModel(_config(attention_free_layer=1))
   calls = []
@@ -204,6 +225,7 @@ def _config(**overrides) -> NanoGPTSpeedrunConfig:
     "logit_softcap": 5.0,
     "logit_sigmoid_scale": 5.0,
     "paired_head_layers": (0,),
+    "long_window_layers": (1,),
     "value_embedding_layers": (1,),
     "mudd": False,
   }
