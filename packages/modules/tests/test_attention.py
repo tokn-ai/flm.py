@@ -174,6 +174,17 @@ def test_qk_norm_attention_mixes_value_residual(random_input) -> None:
   assert not torch.equal(residual_only, current_only)
 
 
+def test_qk_norm_attention_adds_auxiliary_values(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+  auxiliary_values = random_input(3, 2, 5, 4)
+
+  regular, _ = layer(x)
+  augmented, _ = layer(x, auxiliary_values=auxiliary_values)
+
+  assert not torch.equal(regular, augmented)
+
+
 def test_qk_norm_attention_rejects_invalid_value_residual(random_input) -> None:
   layer = QKNormSelfAttention(d_model=8, n_heads=2)
   x = random_input(3, 5, 8)

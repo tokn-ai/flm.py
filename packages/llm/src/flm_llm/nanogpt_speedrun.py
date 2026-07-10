@@ -38,7 +38,6 @@ class NanoGPTSpeedrunBlock(nn.Module):
       bias=config.bias,
       zero_init_down=True,
     )
-    self.residual_decay = config.residual_decay
 
   def forward(
     self,
@@ -46,10 +45,15 @@ class NanoGPTSpeedrunBlock(nn.Module):
     *,
     value_residual: torch.Tensor | None = None,
     value_mix: torch.Tensor | float | None = None,
+    token_value_embedding: torch.Tensor | None = None,
+    value_gate_weight: torch.Tensor | None = None,
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
     skip_attention: bool = False,
+    residual_scales: torch.Tensor | None = None,
+    post_scales: torch.Tensor | None = None,
+    residual_injection: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     if skip_attention:
       if value_residual is None:
@@ -57,17 +61,62 @@ class NanoGPTSpeedrunBlock(nn.Module):
       attn_output = torch.zeros_like(x)
       values = value_residual
     else:
+      attn_input = self.attn_norm(x)
+      auxiliary_values = self._value_embedding_residual(
+        attn_input,
+        token_value_embedding=token_value_embedding,
+        value_gate_weight=value_gate_weight,
+      )
       attn_output, values = self.attn(
-        self.attn_norm(x),
+        attn_input,
         value_residual=value_residual,
         value_mix=value_mix,
+        auxiliary_values=auxiliary_values,
         partial_key_offset=partial_key_offset,
         output_gate_weight=output_gate_weight,
         xsa_alpha=xsa_alpha,
       )
-    x = self.residual_decay * x + attn_output
-    x = self.residual_decay * x + self.ffn(self.ffn_norm(x))
+    residual_scales = x.new_ones(2) if residual_scales is None else residual_scales
+    post_scales = x.new_ones(2) if post_scales is None else post_scales
+    x = residual_scales[0] * x + post_scales[0] * attn_output
+    if residual_injection is not None:
+      x = x + residual_injection
+    x = residual_scales[1] * x + post_scales[1] * self.ffn(self.ffn_norm(x))
     return x, values
+
+  def _value_embedding_residual(
+    self,
+    attn_input: torch.Tensor,
+    *,
+    token_value_embedding: torch.Tensor | None,
+    value_gate_weight: torch.Tensor | None,
+  ) -> torch.Tensor | None:
+    if token_value_embedding is None:
+      return None
+    if value_gate_weight is None:
+      raise ValueError("value_gate_weight is required for token value embeddings")
+    if value_gate_weight.ndim != 2:
+      raise ValueError("value_gate_weight must be a matrix")
+    gate_input_dim = value_gate_weight.shape[-1]
+    if gate_input_dim % 2:
+      raise ValueError("value gate input dimension must be even")
+    feature_dim = gate_input_dim // 2
+    gate_input = torch.cat(
+      (
+        attn_input[..., :feature_dim],
+        token_value_embedding[..., :feature_dim],
+      ),
+      dim=-1,
+    )
+    batch_size, seq_len, _ = attn_input.shape
+    gate = 2 * torch.sigmoid(F.linear(gate_input, value_gate_weight))
+    values = token_value_embedding.view(
+      batch_size,
+      seq_len,
+      self.attn.n_heads,
+      self.attn.head_dim,
+    )
+    return (gate.unsqueeze(-1) * values).transpose(1, 2)
 
 
 class NanoGPTSpeedrunModel(nn.Module):
@@ -97,11 +146,25 @@ class NanoGPTSpeedrunModel(nn.Module):
       raise ValueError("attention_gate_dim must be in [1, d_model]")
     if config.attention_free_layer == 0:
       raise ValueError("the first layer cannot be attention-free")
+    if config.residual_decay <= 0:
+      raise ValueError("residual_decay must be positive")
     if config.n_heads % 2 and config.paired_head_layers:
       raise ValueError("paired_head_layers require an even number of heads")
     invalid_paired_layers = set(config.paired_head_layers) - set(range(config.n_layers))
     if invalid_paired_layers:
       raise ValueError("paired_head_layers contains an invalid layer index")
+    invalid_value_layers = set(config.value_embedding_layers) - set(
+      range(config.n_layers)
+    )
+    if invalid_value_layers:
+      raise ValueError("value_embedding_layers contains an invalid layer index")
+    if len(set(config.value_embedding_layers)) != len(config.value_embedding_layers):
+      raise ValueError("value_embedding_layers must be unique")
+    if (
+      config.value_embedding_gate_dim % 2
+      or config.value_embedding_gate_dim > 2 * config.d_model
+    ):
+      raise ValueError("value_embedding_gate_dim must be even and at most 2*d_model")
     if (config.block_skip_from is None) != (config.block_skip_to is None):
       raise ValueError("block skip endpoints must both be set or both be None")
     if config.block_skip_from is not None:
@@ -139,6 +202,29 @@ class NanoGPTSpeedrunModel(nn.Module):
       self.xsa_alphas = nn.Parameter(torch.zeros(config.n_layers, config.n_heads))
     else:
       self.register_parameter("xsa_alphas", None)
+    value_embedding_count = len(config.value_embedding_layers)
+    self.value_embeddings = nn.Parameter(
+      0.01
+      * torch.randn(
+        value_embedding_count,
+        config.vocab_size,
+        config.d_model,
+      )
+    )
+    self.value_gate_weights = nn.Parameter(
+      torch.zeros(
+        value_embedding_count,
+        config.n_heads,
+        config.value_embedding_gate_dim,
+      )
+    )
+    self._value_embedding_index = {
+      layer_index: bank_index
+      for bank_index, layer_index in enumerate(config.value_embedding_layers)
+    }
+    residual_init = config.residual_decay**0.5
+    self.residual_scales = nn.Parameter(torch.full((config.n_layers, 2), residual_init))
+    self.post_scales = nn.Parameter(torch.ones(config.n_layers, 2))
     self.norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
     if config.tie_embeddings:
@@ -181,12 +267,18 @@ class NanoGPTSpeedrunModel(nn.Module):
     block_skip = None
     skip_gate_input = F.rms_norm(embeddings, (self.config.d_model,))
     for layer_index, block in enumerate(self.blocks):
+      residual_injection = None
       if self.embedding_skip_weights is not None:
-        x = x + self.embedding_skip_weights[layer_index] * embeddings
+        residual_injection = self.embedding_skip_weights[layer_index] * embeddings
       if bigram_values is not None and self.bigram_injection_weights is not None:
-        x = x + self.bigram_injection_weights[layer_index] * F.pad(
+        bigram_injection = self.bigram_injection_weights[layer_index] * F.pad(
           bigram_values,
           (0, self.config.d_model - self.config.bigram_dim),
+        )
+        residual_injection = (
+          bigram_injection
+          if residual_injection is None
+          else residual_injection + bigram_injection
         )
       if layer_index == self.config.block_skip_to:
         if (
@@ -207,16 +299,29 @@ class NanoGPTSpeedrunModel(nn.Module):
       value_mix = None
       if first_values is not None and self.value_mix_logits is not None:
         value_mix = self.value_mix_logits[layer_index - 1].sigmoid()
+      value_bank_index = self._value_embedding_index.get(layer_index)
+      token_value_embedding = (
+        None
+        if value_bank_index is None
+        else self.value_embeddings[value_bank_index][input_ids]
+      )
       x, values = block(
         x,
         value_residual=first_values,
         value_mix=value_mix,
+        token_value_embedding=token_value_embedding,
+        value_gate_weight=None
+        if value_bank_index is None
+        else self.value_gate_weights[value_bank_index],
         partial_key_offset=layer_index in self.config.partial_key_offset_layers,
         output_gate_weight=self.attention_gate_weights[layer_index],
         xsa_alpha=None
         if self.xsa_alphas is None or block.attn.paired_heads
         else self.xsa_alphas[layer_index],
         skip_attention=layer_index == self.config.attention_free_layer,
+        residual_scales=self.residual_scales[layer_index],
+        post_scales=self.post_scales[layer_index],
+        residual_injection=residual_injection,
       )
       if first_values is None and self.config.value_residual:
         first_values = values

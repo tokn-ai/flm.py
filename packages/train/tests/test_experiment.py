@@ -299,6 +299,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
         "block_skip_to": 3,
         "residual_decay": 0.99,
         "mtp_weights": [1.0, 0.25],
+        "value_embedding_layers": [1, 2, 3],
       },
     }
   )
@@ -315,6 +316,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
     block_skip_to=3,
     residual_decay=0.99,
     mtp_weights=(1.0, 0.25),
+    value_embedding_layers=(1, 2, 3),
   )
 
 

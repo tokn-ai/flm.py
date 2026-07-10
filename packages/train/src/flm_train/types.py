@@ -62,6 +62,8 @@ class NanoGPTSpeedrunModelConfig:
   xsa: bool = True
   attention_free_layer: int | None = 6
   paired_head_layers: tuple[int, ...] = (0, 2, 5, 9)
+  value_embedding_layers: tuple[int, ...] = (1, 2, 8, 9, 10)
+  value_embedding_gate_dim: int = 12
   bigram_vocab_size: int | None = None
   bigram_dim: int = 192
   bigram_sign_table_rows: int = 8192
@@ -70,7 +72,7 @@ class NanoGPTSpeedrunModelConfig:
   value_residual: bool = True
   block_skip_from: int | None = 3
   block_skip_to: int | None = 6
-  residual_decay: float = 1.0
+  residual_decay: float = 1.1
   tie_embeddings: bool = True
 
 

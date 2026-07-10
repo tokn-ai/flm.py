@@ -44,6 +44,13 @@ def test_nanogpt_speedrun_model_uses_value_and_embedding_skips() -> None:
   assert model.embedding_skip_weights.shape == (2,)
   assert model.value_mix_logits is not None
   assert model.value_mix_logits.shape == (1,)
+  assert model.value_embeddings.shape == (1, 32, 16)
+  assert model.value_gate_weights.shape == (1, 2, 12)
+  torch.testing.assert_close(
+    model.residual_scales,
+    torch.full_like(model.residual_scales, model.config.residual_decay**0.5),
+  )
+  torch.testing.assert_close(model.post_scales, torch.ones_like(model.post_scales))
 
 
 def test_nanogpt_speedrun_model_supports_chunked_loss_without_softcap() -> None:
@@ -167,6 +174,7 @@ def _config(**overrides) -> NanoGPTSpeedrunConfig:
     "logit_softcap": 5.0,
     "logit_sigmoid_scale": 5.0,
     "paired_head_layers": (0,),
+    "value_embedding_layers": (1,),
   }
   values.update(overrides)
   return NanoGPTSpeedrunConfig(**values)

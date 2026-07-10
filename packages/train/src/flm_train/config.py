@@ -740,6 +740,10 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       xsa=bool(value.get("xsa", True)),
       attention_free_layer=_optional_int(value.get("attention_free_layer", 6)),
       paired_head_layers=_int_tuple(value.get("paired_head_layers", (0, 2, 5, 9))),
+      value_embedding_layers=_int_tuple(
+        value.get("value_embedding_layers", (1, 2, 8, 9, 10))
+      ),
+      value_embedding_gate_dim=int(value.get("value_embedding_gate_dim", 12)),
       bigram_vocab_size=_optional_int(value.get("bigram_vocab_size")),
       bigram_dim=int(value.get("bigram_dim", 192)),
       bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),
@@ -748,7 +752,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       value_residual=bool(value.get("value_residual", True)),
       block_skip_from=_optional_int(value.get("block_skip_from", 3)),
       block_skip_to=_optional_int(value.get("block_skip_to", 6)),
-      residual_decay=float(value.get("residual_decay", 1.0)),
+      residual_decay=float(value.get("residual_decay", 1.1)),
       tie_embeddings=bool(value.get("tie_embeddings", True)),
     )
   if kind == "ds_tiny":

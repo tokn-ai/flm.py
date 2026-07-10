@@ -114,6 +114,7 @@ class QKNormSelfAttention(nn.Module):
     *,
     value_residual: torch.Tensor | None = None,
     value_mix: torch.Tensor | float | None = None,
+    auxiliary_values: torch.Tensor | None = None,
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
@@ -133,6 +134,10 @@ class QKNormSelfAttention(nn.Module):
         raise ValueError("value_residual must have the same shape as values")
       mix = 0.5 if value_mix is None else value_mix
       v = torch.lerp(value_residual, v, mix)
+    if auxiliary_values is not None:
+      if auxiliary_values.shape != v.shape:
+        raise ValueError("auxiliary_values must have the same shape as values")
+      v = v + auxiliary_values
 
     if self.paired_heads:
       if partial_key_offset:
