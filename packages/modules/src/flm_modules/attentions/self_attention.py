@@ -85,6 +85,7 @@ class QKNormSelfAttention(nn.Module):
     causal: bool = True,
     *,
     zero_init_out: bool = False,
+    paired_heads: bool = False,
   ) -> None:
     super().__init__()
     if d_model % n_heads != 0:
@@ -95,9 +96,13 @@ class QKNormSelfAttention(nn.Module):
     self.norm_eps = norm_eps
     self.backend = AttentionBackend(backend)
     self.causal = causal
+    self.paired_heads = paired_heads
+    if paired_heads and n_heads % 2:
+      raise ValueError("paired-head attention requires an even number of heads")
     self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
     self.out = nn.Linear(d_model, d_model, bias=bias)
-    self.rope = RotaryEmbedding(self.head_dim, base=rope_base)
+    rope_dim = 2 * self.head_dim if paired_heads else self.head_dim
+    self.rope = RotaryEmbedding(rope_dim, base=rope_base)
     if zero_init_out:
       nn.init.zeros_(self.out.weight)
       if self.out.bias is not None:
@@ -122,19 +127,30 @@ class QKNormSelfAttention(nn.Module):
 
     q = self._rms_norm(q)
     k = self._rms_norm(k)
-    cos, sin = self.rope(q)
-    q = apply_rotary(q, cos, sin, layout=self.rope.layout)
-    k = apply_rotary(k, cos, sin, layout=self.rope.layout)
-    if partial_key_offset and seq_len > 1:
-      k = k.clone()
-      k[:, :, 1:, self.head_dim // 2 :] = k[:, :, :-1, self.head_dim // 2 :]
-
     current_values = v
     if value_residual is not None:
       if value_residual.shape != v.shape:
         raise ValueError("value_residual must have the same shape as values")
       mix = 0.5 if value_mix is None else value_mix
       v = torch.lerp(value_residual, v, mix)
+
+    if self.paired_heads:
+      if partial_key_offset:
+        raise ValueError("partial key offset is unsupported for paired heads")
+      if attn_mask is not None:
+        raise ValueError("custom masks are unsupported for paired heads")
+      if xsa_alpha is not None:
+        raise ValueError("XSA is unsupported for paired heads")
+      q = self._pair_qk(q, batch_size=batch_size, seq_len=seq_len)
+      k = self._pair_qk(k, batch_size=batch_size, seq_len=seq_len)
+      v = self._pair_values(v, batch_size=batch_size, seq_len=seq_len)
+    else:
+      cos, sin = self.rope(q)
+      q = apply_rotary(q, cos, sin, layout=self.rope.layout)
+      k = apply_rotary(k, cos, sin, layout=self.rope.layout)
+      if partial_key_offset and seq_len > 1:
+        k = k.clone()
+        k[:, :, 1:, self.head_dim // 2 :] = k[:, :, :-1, self.head_dim // 2 :]
 
     y = scaled_dot_product_attention(
       q,
@@ -144,6 +160,8 @@ class QKNormSelfAttention(nn.Module):
       attn_mask=attn_mask,
       causal=self.causal,
     )
+    if self.paired_heads:
+      y = self._unpair_output(y, batch_size=batch_size, seq_len=seq_len)
     if xsa_alpha is not None:
       if xsa_alpha.shape != (self.n_heads,):
         raise ValueError("xsa_alpha must have shape [n_heads]")
@@ -173,3 +191,53 @@ class QKNormSelfAttention(nn.Module):
       (self.head_dim,),
       eps=self.norm_eps,
     ).to(dtype)
+
+  def _pair_qk(
+    self,
+    x: torch.Tensor,
+    *,
+    batch_size: int,
+    seq_len: int,
+  ) -> torch.Tensor:
+    paired = (
+      x.transpose(1, 2)
+      .contiguous()
+      .view(batch_size, seq_len, self.n_heads // 2, 2 * self.head_dim)
+      .transpose(1, 2)
+    )
+    cos, sin = self.rope(paired)
+    paired = apply_rotary(paired, cos, sin, layout=self.rope.layout)
+    return (
+      paired.transpose(1, 2)
+      .contiguous()
+      .view(batch_size, 2 * seq_len, self.n_heads // 2, self.head_dim)
+      .transpose(1, 2)
+    )
+
+  def _pair_values(
+    self,
+    values: torch.Tensor,
+    *,
+    batch_size: int,
+    seq_len: int,
+  ) -> torch.Tensor:
+    return (
+      values.transpose(1, 2)
+      .contiguous()
+      .view(batch_size, 2 * seq_len, self.n_heads // 2, self.head_dim)
+      .transpose(1, 2)
+    )
+
+  def _unpair_output(
+    self,
+    output: torch.Tensor,
+    *,
+    batch_size: int,
+    seq_len: int,
+  ) -> torch.Tensor:
+    return (
+      output.transpose(1, 2)
+      .contiguous()
+      .view(batch_size, seq_len, self.n_heads, self.head_dim)
+      .transpose(1, 2)
+    )

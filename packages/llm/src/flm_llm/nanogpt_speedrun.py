@@ -18,7 +18,7 @@ from flm_llm.config import NanoGPTSpeedrunConfig
 
 
 class NanoGPTSpeedrunBlock(nn.Module):
-  def __init__(self, config: NanoGPTSpeedrunConfig) -> None:
+  def __init__(self, config: NanoGPTSpeedrunConfig, *, layer_index: int) -> None:
     super().__init__()
     self.attn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.attn = QKNormSelfAttention(
@@ -29,6 +29,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
       norm_eps=config.norm_eps,
       backend=config.attention_backend,
       zero_init_out=True,
+      paired_heads=layer_index in config.paired_head_layers,
     )
     self.ffn_norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.ffn = ReLUSquared(
@@ -96,6 +97,11 @@ class NanoGPTSpeedrunModel(nn.Module):
       raise ValueError("attention_gate_dim must be in [1, d_model]")
     if config.attention_free_layer == 0:
       raise ValueError("the first layer cannot be attention-free")
+    if config.n_heads % 2 and config.paired_head_layers:
+      raise ValueError("paired_head_layers require an even number of heads")
+    invalid_paired_layers = set(config.paired_head_layers) - set(range(config.n_layers))
+    if invalid_paired_layers:
+      raise ValueError("paired_head_layers contains an invalid layer index")
     if (config.block_skip_from is None) != (config.block_skip_to is None):
       raise ValueError("block skip endpoints must both be set or both be None")
     if config.block_skip_from is not None:
@@ -123,7 +129,8 @@ class NanoGPTSpeedrunModel(nn.Module):
       self.bigram_embedding = None
       self.register_parameter("bigram_injection_weights", None)
     self.blocks = nn.ModuleList(
-      NanoGPTSpeedrunBlock(config) for _ in range(config.n_layers)
+      NanoGPTSpeedrunBlock(config, layer_index=layer_index)
+      for layer_index in range(config.n_layers)
     )
     self.attention_gate_weights = nn.Parameter(
       torch.zeros(config.n_layers, config.n_heads, config.attention_gate_dim)
@@ -206,7 +213,9 @@ class NanoGPTSpeedrunModel(nn.Module):
         value_mix=value_mix,
         partial_key_offset=layer_index in self.config.partial_key_offset_layers,
         output_gate_weight=self.attention_gate_weights[layer_index],
-        xsa_alpha=None if self.xsa_alphas is None else self.xsa_alphas[layer_index],
+        xsa_alpha=None
+        if self.xsa_alphas is None or block.attn.paired_heads
+        else self.xsa_alphas[layer_index],
         skip_attention=layer_index == self.config.attention_free_layer,
       )
       if first_values is None and self.config.value_residual:

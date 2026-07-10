@@ -61,6 +61,7 @@ class NanoGPTSpeedrunModelConfig:
   attention_gate_dim: int = 12
   xsa: bool = True
   attention_free_layer: int | None = 6
+  paired_head_layers: tuple[int, ...] = (0, 2, 5, 9)
   bigram_vocab_size: int | None = None
   bigram_dim: int = 192
   bigram_sign_table_rows: int = 8192

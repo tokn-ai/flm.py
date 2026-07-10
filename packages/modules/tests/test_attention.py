@@ -210,6 +210,32 @@ def test_qk_norm_attention_applies_output_gate_and_xsa(random_input) -> None:
   assert not torch.equal(regular, gated)
 
 
+def test_qk_norm_attention_supports_paired_heads(random_input) -> None:
+  regular = QKNormSelfAttention(d_model=8, n_heads=4)
+  paired = QKNormSelfAttention(d_model=8, n_heads=4, paired_heads=True)
+  paired.load_state_dict(regular.state_dict())
+  x = random_input(3, 5, 8)
+
+  regular_output, regular_values = regular(x)
+  paired_output, paired_values = paired(x)
+
+  assert paired_output.shape == x.shape
+  assert paired_values.shape == regular_values.shape
+  assert not torch.equal(paired_output, regular_output)
+
+
+def test_qk_norm_attention_validates_paired_head_features(random_input) -> None:
+  with pytest.raises(ValueError, match="even number"):
+    QKNormSelfAttention(d_model=9, n_heads=3, paired_heads=True)
+
+  layer = QKNormSelfAttention(d_model=8, n_heads=4, paired_heads=True)
+  x = random_input(3, 5, 8)
+  with pytest.raises(ValueError, match="partial key offset"):
+    layer(x, partial_key_offset=True)
+  with pytest.raises(ValueError, match="XSA"):
+    layer(x, xsa_alpha=torch.zeros(4))
+
+
 def test_self_attention_flash_attention2_requires_package(
   random_input,
 ) -> None:

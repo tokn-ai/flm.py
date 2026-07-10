@@ -42,6 +42,7 @@ def build_model(config: TrainConfig, vocab_size: int) -> torch.nn.Module:
         attention_gate_dim=model_config.attention_gate_dim,
         xsa=model_config.xsa,
         attention_free_layer=model_config.attention_free_layer,
+        paired_head_layers=model_config.paired_head_layers,
         bigram_vocab_size=model_config.bigram_vocab_size,
         bigram_dim=model_config.bigram_dim,
         bigram_sign_table_rows=model_config.bigram_sign_table_rows,

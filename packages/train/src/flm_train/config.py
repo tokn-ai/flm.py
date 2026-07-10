@@ -739,6 +739,7 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       attention_gate_dim=int(value.get("attention_gate_dim", 12)),
       xsa=bool(value.get("xsa", True)),
       attention_free_layer=_optional_int(value.get("attention_free_layer", 6)),
+      paired_head_layers=_int_tuple(value.get("paired_head_layers", (0, 2, 5, 9))),
       bigram_vocab_size=_optional_int(value.get("bigram_vocab_size")),
       bigram_dim=int(value.get("bigram_dim", 192)),
       bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),

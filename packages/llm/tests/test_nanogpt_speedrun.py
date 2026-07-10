@@ -150,6 +150,8 @@ def test_nanogpt_speedrun_model_initializes_attention_gates_and_xsa() -> None:
     model.xsa_alphas,
     torch.zeros_like(model.xsa_alphas),
   )
+  assert model.blocks[0].attn.paired_heads is True
+  assert model.blocks[1].attn.paired_heads is False
 
 
 def _config(**overrides) -> NanoGPTSpeedrunConfig:
@@ -164,6 +166,7 @@ def _config(**overrides) -> NanoGPTSpeedrunConfig:
     "block_skip_to": None,
     "logit_softcap": 5.0,
     "logit_sigmoid_scale": 5.0,
+    "paired_head_layers": (0,),
   }
   values.update(overrides)
   return NanoGPTSpeedrunConfig(**values)

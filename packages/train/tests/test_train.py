@@ -96,6 +96,7 @@ def test_train_language_model_runs_nanogpt_speedrun_model(tmp_path: Path) -> Non
     d_ff=16,
     smear_gate_dim=4,
     attention_gate_dim=4,
+    paired_head_layers=(0,),
     block_skip_from=None,
     block_skip_to=None,
     logit_softcap=10.0,
