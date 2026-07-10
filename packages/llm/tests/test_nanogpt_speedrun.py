@@ -151,6 +151,7 @@ def test_nanogpt_speedrun_model_multi_token_loss_matches_offsets() -> None:
   loss = model._multi_token_loss(logits, targets)
 
   torch.testing.assert_close(loss, (primary + 0.5 * second) / targets.numel())
+  torch.testing.assert_close(model.last_primary_loss, primary / targets.numel())
 
 
 def test_nanogpt_speedrun_model_multi_token_loss_ignores_packed_padding() -> None:

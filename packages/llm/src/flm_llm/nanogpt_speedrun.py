@@ -229,6 +229,7 @@ class NanoGPTSpeedrunModel(nn.Module):
 
     self.config = config
     self.active_mtp_weights = config.mtp_weights
+    self.last_primary_loss: torch.Tensor | None = None
     self.active_short_window: int | None = None
     self.active_long_window: int | None = None
     self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
@@ -607,13 +608,15 @@ class NanoGPTSpeedrunModel(nn.Module):
       if logits is None:
         raise RuntimeError("softcapped loss requires logits")
       return self._multi_token_loss(logits, targets)
-    return language_model_loss(
+    loss = language_model_loss(
       hidden_states=hidden_states,
       classifier_weight=self.classifier_weight,
       targets=targets,
       backend=self.config.loss_backend,
       chunk_size=self.config.loss_chunk_size,
     )
+    self.last_primary_loss = loss.detach()
+    return loss
 
   def _multi_token_loss(
     self,
@@ -628,14 +631,21 @@ class NanoGPTSpeedrunModel(nn.Module):
     if token_count == 0:
       raise ValueError("targets must contain at least one prediction token")
     total = logits.new_zeros((), dtype=torch.float32)
+    primary_loss = None
     for offset, weight in enumerate(weights):
       if weight == 0 or offset >= token_count:
         continue
       offset_logits = flat_logits[: token_count - offset]
       offset_targets = flat_targets[offset:]
-      total = total + weight * F.cross_entropy(
+      offset_loss = F.cross_entropy(
         offset_logits.float(),
         offset_targets,
         reduction="sum",
       )
+      if offset == 0:
+        primary_loss = offset_loss / token_count
+      total = total + weight * offset_loss
+    if primary_loss is None:
+      raise RuntimeError("primary next-token loss was not produced")
+    self.last_primary_loss = primary_loss.detach()
     return total / token_count

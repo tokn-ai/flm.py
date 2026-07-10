@@ -945,6 +945,7 @@ def test_run_experiment_writes_run_artifacts(tmp_path: Path) -> None:
   metrics_payload = json.loads(metrics_lines[0])
   assert metrics_payload["step"] == 1
   assert metrics_payload["train/loss"] > 0
+  assert metrics_payload["train/lm_loss"] == metrics_payload["train/loss"]
   assert metrics_payload["train/bpb"] > 0
   assert metrics_payload["train/lr"] == 3e-4
   assert metrics_payload["train/tokens"] == 16

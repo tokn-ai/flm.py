@@ -58,9 +58,10 @@ class TrainStepMetrics:
   bits_per_byte: float
   step_time_sec: float
   tokens_per_sec: float
+  language_model_loss: float | None = None
 
   def to_log_dict(self) -> dict[str, float | int]:
-    return {
+    metrics = {
       "train/loss": self.loss,
       "train/lr": self.learning_rate,
       "train/tokens": self.tokens,
@@ -70,6 +71,9 @@ class TrainStepMetrics:
       "system/step_time_sec": self.step_time_sec,
       "train/tokens_per_sec": self.tokens_per_sec,
     }
+    if self.language_model_loss is not None:
+      metrics["train/lm_loss"] = self.language_model_loss
+    return metrics
 
 
 @dataclass(frozen=True)
@@ -210,6 +214,7 @@ class LanguageModelTrainer:
       started_at = time.perf_counter()
       token_count = 0
       loss_sum = 0.0
+      language_model_loss_sum = 0.0
       for _ in range(self.gradient_accumulation_steps):
         input_ids, targets, previous_token_ids, iterator = self._next_batch(iterator)
         input_ids = input_ids.to(self.device)
@@ -234,6 +239,11 @@ class LanguageModelTrainer:
         microbatch_tokens = int(targets.ne(-100).sum())
         token_count += microbatch_tokens
         loss_sum += float(loss.detach().cpu()) * microbatch_tokens
+        primary_loss = getattr(self.model, "last_primary_loss", None)
+        language_model_loss_sum += (
+          float(loss.detach().cpu() if primary_loss is None else primary_loss.cpu())
+          * microbatch_tokens
+        )
       prepare_optimizer_step = getattr(self.model, "prepare_optimizer_step", None)
       if callable(prepare_optimizer_step):
         prepare_optimizer_step()
@@ -245,6 +255,7 @@ class LanguageModelTrainer:
       step_time_sec = time.perf_counter() - started_at
 
       loss_value = loss_sum / token_count
+      language_model_loss_value = language_model_loss_sum / token_count
       tokens_seen += token_count
       step_metrics = TrainStepMetrics(
         step=step,
@@ -254,11 +265,12 @@ class LanguageModelTrainer:
         tokens_seen=tokens_seen,
         grad_norm=grad_norm,
         bits_per_byte=_loss_to_bits_per_byte(
-          loss=loss_value,
+          loss=language_model_loss_value,
           bytes_per_token=self.bytes_per_token,
         ),
         step_time_sec=step_time_sec,
         tokens_per_sec=token_count / max(step_time_sec, 1e-12),
+        language_model_loss=language_model_loss_value,
       )
       metrics.append(step_metrics)
       if self.on_step is not None:
