@@ -194,6 +194,22 @@ def test_qk_norm_attention_partial_key_offset_changes_attention(
   assert not torch.equal(regular, offset)
 
 
+def test_qk_norm_attention_applies_output_gate_and_xsa(random_input) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+  gate_weight = torch.zeros(2, 4)
+  xsa_alpha = torch.ones(2)
+
+  regular, _ = layer(x)
+  gated, _ = layer(
+    x,
+    output_gate_weight=gate_weight,
+    xsa_alpha=xsa_alpha,
+  )
+
+  assert not torch.equal(regular, gated)
+
+
 def test_self_attention_flash_attention2_requires_package(
   random_input,
 ) -> None:

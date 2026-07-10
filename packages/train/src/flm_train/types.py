@@ -58,6 +58,9 @@ class NanoGPTSpeedrunModelConfig:
   token_smear: bool = True
   smear_gate_dim: int = 12
   partial_key_offset_layers: tuple[int, ...] = (3, 10)
+  attention_gate_dim: int = 12
+  xsa: bool = True
+  attention_free_layer: int | None = 6
   bigram_vocab_size: int | None = None
   bigram_dim: int = 192
   bigram_sign_table_rows: int = 8192

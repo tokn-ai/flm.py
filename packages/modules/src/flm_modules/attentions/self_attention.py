@@ -110,6 +110,8 @@ class QKNormSelfAttention(nn.Module):
     value_residual: torch.Tensor | None = None,
     value_mix: torch.Tensor | float | None = None,
     partial_key_offset: bool = False,
+    output_gate_weight: torch.Tensor | None = None,
+    xsa_alpha: torch.Tensor | None = None,
     attn_mask: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_len, _ = x.shape
@@ -144,6 +146,21 @@ class QKNormSelfAttention(nn.Module):
       attn_mask=attn_mask,
       causal=self.causal,
     )
+    if xsa_alpha is not None:
+      if xsa_alpha.shape != (self.n_heads,):
+        raise ValueError("xsa_alpha must have shape [n_heads]")
+      normalized_values = F.normalize(v, dim=-1, eps=1e-4)
+      projection = (y * normalized_values).sum(dim=-1, keepdim=True)
+      alpha = xsa_alpha.tanh().view(1, self.n_heads, 1, 1).to(y.dtype)
+      y = y - alpha * projection * normalized_values
+    if output_gate_weight is not None:
+      if output_gate_weight.ndim != 2 or output_gate_weight.shape[0] != self.n_heads:
+        raise ValueError("output_gate_weight must have shape [n_heads, gate_dim]")
+      gate_dim = output_gate_weight.shape[1]
+      if gate_dim > x.shape[-1]:
+        raise ValueError("attention output gate exceeds model dimension")
+      gate = torch.sigmoid(F.linear(x[..., :gate_dim], output_gate_weight))
+      y = y * gate.transpose(1, 2).unsqueeze(-1)
     y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
     return self.out(y), current_values
 

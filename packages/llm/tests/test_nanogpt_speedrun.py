@@ -132,6 +132,30 @@ def test_nanogpt_speedrun_model_eval_loss_uses_primary_target_only() -> None:
   torch.testing.assert_close(loss, expected)
 
 
+def test_nanogpt_speedrun_model_skips_configured_attention_layer() -> None:
+  model = NanoGPTSpeedrunModel(_config(attention_free_layer=1))
+  calls = []
+  handle = model.blocks[1].attn.register_forward_hook(
+    lambda *args: calls.append(True)
+  )
+
+  model(torch.randint(0, 32, (2, 8)))
+
+  handle.remove()
+  assert calls == []
+
+
+def test_nanogpt_speedrun_model_initializes_attention_gates_and_xsa() -> None:
+  model = NanoGPTSpeedrunModel(_config())
+
+  assert model.attention_gate_weights.shape == (2, 2, 12)
+  assert model.xsa_alphas is not None
+  torch.testing.assert_close(
+    model.xsa_alphas,
+    torch.zeros_like(model.xsa_alphas),
+  )
+
+
 def _config(**overrides) -> NanoGPTSpeedrunConfig:
   values = {
     "vocab_size": 32,

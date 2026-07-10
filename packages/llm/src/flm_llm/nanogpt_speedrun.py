@@ -46,13 +46,24 @@ class NanoGPTSpeedrunBlock(nn.Module):
     value_residual: torch.Tensor | None = None,
     value_mix: torch.Tensor | float | None = None,
     partial_key_offset: bool = False,
+    output_gate_weight: torch.Tensor | None = None,
+    xsa_alpha: torch.Tensor | None = None,
+    skip_attention: bool = False,
   ) -> tuple[torch.Tensor, torch.Tensor]:
-    attn_output, values = self.attn(
-      self.attn_norm(x),
-      value_residual=value_residual,
-      value_mix=value_mix,
-      partial_key_offset=partial_key_offset,
-    )
+    if skip_attention:
+      if value_residual is None:
+        raise ValueError("an attention-free block requires an existing value stream")
+      attn_output = torch.zeros_like(x)
+      values = value_residual
+    else:
+      attn_output, values = self.attn(
+        self.attn_norm(x),
+        value_residual=value_residual,
+        value_mix=value_mix,
+        partial_key_offset=partial_key_offset,
+        output_gate_weight=output_gate_weight,
+        xsa_alpha=xsa_alpha,
+      )
     x = self.residual_decay * x + attn_output
     x = self.residual_decay * x + self.ffn(self.ffn_norm(x))
     return x, values
@@ -81,6 +92,10 @@ class NanoGPTSpeedrunModel(nn.Module):
       raise ValueError("mtp_weights must start with a positive primary weight")
     if any(weight < 0 for weight in config.mtp_weights):
       raise ValueError("mtp_weights must be non-negative")
+    if not 1 <= config.attention_gate_dim <= config.d_model:
+      raise ValueError("attention_gate_dim must be in [1, d_model]")
+    if config.attention_free_layer == 0:
+      raise ValueError("the first layer cannot be attention-free")
     if (config.block_skip_from is None) != (config.block_skip_to is None):
       raise ValueError("block skip endpoints must both be set or both be None")
     if config.block_skip_from is not None:
@@ -112,6 +127,13 @@ class NanoGPTSpeedrunModel(nn.Module):
     self.blocks = nn.ModuleList(
       NanoGPTSpeedrunBlock(config) for _ in range(config.n_layers)
     )
+    self.attention_gate_weights = nn.Parameter(
+      torch.zeros(config.n_layers, config.n_heads, config.attention_gate_dim)
+    )
+    if config.xsa:
+      self.xsa_alphas = nn.Parameter(torch.zeros(config.n_layers, config.n_heads))
+    else:
+      self.register_parameter("xsa_alphas", None)
     self.norm = RMSNorm(config.d_model, eps=config.norm_eps)
     self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
     if config.tie_embeddings:
@@ -126,9 +148,12 @@ class NanoGPTSpeedrunModel(nn.Module):
     else:
       self.register_parameter("value_mix_logits", None)
     if config.block_skip_from is not None:
-      self.block_skip_weight = nn.Parameter(torch.ones(()))
+      self.block_skip_logit = nn.Parameter(torch.tensor(-1.5))
+      self.block_skip_gate = nn.Linear(config.attention_gate_dim, 1, bias=False)
+      nn.init.zeros_(self.block_skip_gate.weight)
     else:
-      self.register_parameter("block_skip_weight", None)
+      self.register_parameter("block_skip_logit", None)
+      self.block_skip_gate = None
 
   def forward(
     self,
@@ -151,6 +176,7 @@ class NanoGPTSpeedrunModel(nn.Module):
     )
     first_values = None
     block_skip = None
+    skip_gate_input = F.rms_norm(embeddings, (self.config.d_model,))
     for layer_index, block in enumerate(self.blocks):
       if self.embedding_skip_weights is not None:
         x = x + self.embedding_skip_weights[layer_index] * embeddings
@@ -160,9 +186,18 @@ class NanoGPTSpeedrunModel(nn.Module):
           (0, self.config.d_model - self.config.bigram_dim),
         )
       if layer_index == self.config.block_skip_to:
-        if block_skip is None or self.block_skip_weight is None:
+        if (
+          block_skip is None
+          or self.block_skip_logit is None
+          or self.block_skip_gate is None
+        ):
           raise RuntimeError("block skip source was not captured")
-        x = x + self.block_skip_weight * block_skip
+        gate = 2 * self.block_skip_logit.sigmoid() * torch.sigmoid(
+          self.block_skip_gate(
+            skip_gate_input[..., : self.config.attention_gate_dim]
+          )
+        )
+        x = x + gate * block_skip
 
       value_mix = None
       if first_values is not None and self.value_mix_logits is not None:
@@ -172,6 +207,11 @@ class NanoGPTSpeedrunModel(nn.Module):
         value_residual=first_values,
         value_mix=value_mix,
         partial_key_offset=layer_index in self.config.partial_key_offset_layers,
+        output_gate_weight=self.attention_gate_weights[layer_index],
+        xsa_alpha=None
+        if self.xsa_alphas is None
+        else self.xsa_alphas[layer_index],
+        skip_attention=layer_index == self.config.attention_free_layer,
       )
       if first_values is None and self.config.value_residual:
         first_values = values
