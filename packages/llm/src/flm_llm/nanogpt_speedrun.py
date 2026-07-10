@@ -326,14 +326,8 @@ class NanoGPTSpeedrunModel(nn.Module):
     if short < 1 or long < short:
       raise ValueError("attention windows must satisfy 1 <= short <= long")
     if self.active_short_window is not None and self.active_long_window is not None:
-      for layer_index, block in enumerate(self.blocks):
-        old_window = (
-          self.active_long_window
-          if layer_index in self.config.long_window_layers
-          else self.active_short_window
-        )
-        new_window = long if layer_index in self.config.long_window_layers else short
-        block.attn.update_yarn_window(old_window, new_window)
+      for block in self.blocks:
+        block.attn.update_yarn_window(self.active_long_window, long)
     self.active_short_window = short
     self.active_long_window = long
 

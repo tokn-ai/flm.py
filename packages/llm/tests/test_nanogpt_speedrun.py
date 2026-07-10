@@ -200,6 +200,7 @@ def test_nanogpt_speedrun_model_updates_runtime_stage_features() -> None:
 
   model.set_mtp_weights((1.0, 0.25))
   model.set_attention_windows(short=2, long=4)
+  before_short_frequency = model.blocks[0].attn.yarn.angular_freq.clone()
   before_frequency = model.blocks[1].attn.yarn.angular_freq.clone()
   model.set_attention_windows(short=4, long=8)
   logits, _ = model(torch.randint(0, 32, (2, 8)))
@@ -208,6 +209,10 @@ def test_nanogpt_speedrun_model_updates_runtime_stage_features() -> None:
   assert model.active_short_window == 4
   assert model.active_long_window == 8
   assert not torch.equal(model.blocks[1].attn.yarn.angular_freq, before_frequency)
+  assert not torch.equal(
+    model.blocks[0].attn.yarn.angular_freq,
+    before_short_frequency,
+  )
   assert logits is not None
 
 
