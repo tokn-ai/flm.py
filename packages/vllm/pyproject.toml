@@ -9,6 +9,7 @@ dependencies = [
   "flm-train",
   "safetensors>=0.5",
   "torch>=2.5",
+  "vllm>=0.23,<0.24; sys_platform == 'linux'",
 ]
 
 [project.scripts]
