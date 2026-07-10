@@ -1,0 +1,69 @@
+name: 16m_fineweb_10bt_speedrun_smoke
+
+data:
+  kind: token_dataset
+  dataset_root: cache/tokens/fineweb_10bt_8192/fineweb_10bt
+  version: latest
+  split: train
+  encoding_name: unitoken:tokenizers/fineweb_10bt_8192
+  seq_len: 128
+
+model:
+  kind: nanogpt_speedrun
+  padded_vocab_size: 8192
+  d_model: 144
+  n_layers: 11
+  n_heads: 4
+  d_ff: 576
+  attention_backend: torch
+  loss_backend: cross_entropy
+  logit_softcap: null
+  logit_sigmoid_scale: 23.0
+  logit_sigmoid_bias: 5.0
+  logit_sigmoid_temperature: 7.5
+  bigram_vocab_size: 122880
+  bigram_dim: 40
+  bigram_sign_table_rows: 8192
+  mudd_hidden_dim: 64
+  value_residual: false
+
+optimizer:
+  kind: speedrun_normuon
+  secondary_update_every: 2
+  max_grad_norm: null
+
+speedrun_schedule:
+  untie_step: 2
+  final_eval_short_window: 128
+  final_eval_long_window: 128
+  stages:
+    - end_step: 2
+      batch_size: 2
+      seq_len: 128
+      learning_rate_scale: 1.0
+      mtp_weights: [1.0, 0.5]
+      mtp_weights_end: [1.0, 0.0]
+      short_window: 64
+      long_window: 128
+
+loop:
+  seed: 42
+  device: cuda
+  dtype: bfloat16
+  batch_size: 2
+  steps: 2
+  gradient_accumulation_steps: 1
+
+eval:
+  split: test
+  every_steps: 2
+  max_batches: 1
+
+checkpoint:
+  enabled: false
+
+secrets:
+  env_file: .secret
+
+sinks:
+  - kind: files
