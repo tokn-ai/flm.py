@@ -229,6 +229,8 @@ def _config(**overrides) -> NanoGPTSpeedrunConfig:
     "logit_sigmoid_scale": 5.0,
     "paired_head_layers": (0,),
     "long_window_layers": (1,),
+    "shared_attention_source_layer": None,
+    "shared_attention_start_layer": None,
     "value_embedding_layers": (1,),
     "mudd": False,
   }

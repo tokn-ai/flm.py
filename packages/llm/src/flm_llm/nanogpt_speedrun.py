@@ -59,6 +59,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
     residual_scales: torch.Tensor | None = None,
     post_scales: torch.Tensor | None = None,
     residual_injection: torch.Tensor | None = None,
+    attention_input: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     if skip_attention:
       attn_output = torch.zeros_like(x)
@@ -73,7 +74,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
         )
       )
     else:
-      attn_input = self.attn_norm(x)
+      attn_input = self.attn_norm(x if attention_input is None else attention_input)
       auxiliary_values = self._value_embedding_residual(
         attn_input,
         token_value_embedding=token_value_embedding,
@@ -165,6 +166,18 @@ class NanoGPTSpeedrunModel(nn.Module):
       raise ValueError("attention_gate_dim must be in [1, d_model]")
     if config.attention_free_layer == 0:
       raise ValueError("the first layer cannot be attention-free")
+    if (config.shared_attention_source_layer is None) != (
+      config.shared_attention_start_layer is None
+    ):
+      raise ValueError("shared attention source/start must both be set")
+    if config.shared_attention_source_layer is not None:
+      if not (
+        0
+        <= config.shared_attention_source_layer
+        < config.shared_attention_start_layer
+        < config.n_layers
+      ):
+        raise ValueError("shared attention source/start layers are invalid")
     if config.residual_decay <= 0:
       raise ValueError("residual_decay must be positive")
     if config.n_heads % 2 and config.paired_head_layers:
@@ -473,12 +486,20 @@ class NanoGPTSpeedrunModel(nn.Module):
         residual_scales=residual_scales,
         post_scales=post_scales,
         residual_injection=residual_injection,
+        attention_input=(
+          None
+          if self.config.shared_attention_start_layer is None
+          or layer_index < self.config.shared_attention_start_layer
+          else cache[self.config.shared_attention_source_layer]
+        ),
       )
       if first_values is None and self.config.value_residual:
         first_values = values
       if layer_index == self.config.block_skip_from:
         block_skip = x
       if layer_index in {3, 7, 9}:
+        cache[layer_index] = x
+      if layer_index == self.config.shared_attention_source_layer:
         cache[layer_index] = x
 
     if self.mudd is not None:

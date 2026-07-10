@@ -63,6 +63,8 @@ class NanoGPTSpeedrunModelConfig:
   attention_free_layer: int | None = 6
   paired_head_layers: tuple[int, ...] = (0, 2, 5, 9)
   long_window_layers: tuple[int, ...] = (3, 10)
+  shared_attention_source_layer: int | None = 7
+  shared_attention_start_layer: int | None = 8
   value_embedding_layers: tuple[int, ...] = (1, 2, 8, 9, 10)
   value_embedding_gate_dim: int = 12
   mudd: bool = True

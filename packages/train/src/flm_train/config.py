@@ -781,6 +781,12 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
       attention_free_layer=_optional_int(value.get("attention_free_layer", 6)),
       paired_head_layers=_int_tuple(value.get("paired_head_layers", (0, 2, 5, 9))),
       long_window_layers=_int_tuple(value.get("long_window_layers", (3, 10))),
+      shared_attention_source_layer=_optional_int(
+        value.get("shared_attention_source_layer", 7)
+      ),
+      shared_attention_start_layer=_optional_int(
+        value.get("shared_attention_start_layer", 8)
+      ),
       value_embedding_layers=_int_tuple(
         value.get("value_embedding_layers", (1, 2, 8, 9, 10))
       ),

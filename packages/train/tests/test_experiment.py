@@ -303,6 +303,8 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
         "mtp_weights": [1.0, 0.25],
         "value_embedding_layers": [1, 2, 3],
         "long_window_layers": [3],
+        "shared_attention_source_layer": 1,
+        "shared_attention_start_layer": 2,
         "mudd": False,
       },
     }
@@ -322,6 +324,8 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
     mtp_weights=(1.0, 0.25),
     value_embedding_layers=(1, 2, 3),
     long_window_layers=(3,),
+    shared_attention_source_layer=1,
+    shared_attention_start_layer=2,
     mudd=False,
   )
 
