@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 from flm_modules import (
   BigramHashEmbedding,
+  MultiwayDynamicDenseConnections,
   QKNormSelfAttention,
   ReLUSquared,
   RMSNorm,
@@ -47,6 +48,7 @@ class NanoGPTSpeedrunBlock(nn.Module):
     value_mix: torch.Tensor | float | None = None,
     token_value_embedding: torch.Tensor | None = None,
     value_gate_weight: torch.Tensor | None = None,
+    additional_auxiliary_values: torch.Tensor | None = None,
     partial_key_offset: bool = False,
     output_gate_weight: torch.Tensor | None = None,
     xsa_alpha: torch.Tensor | None = None,
@@ -56,10 +58,17 @@ class NanoGPTSpeedrunBlock(nn.Module):
     residual_injection: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     if skip_attention:
-      if value_residual is None:
-        raise ValueError("an attention-free block requires an existing value stream")
       attn_output = torch.zeros_like(x)
-      values = value_residual
+      values = (
+        value_residual
+        if value_residual is not None
+        else x.new_zeros(
+          x.shape[0],
+          self.attn.n_heads,
+          x.shape[1],
+          self.attn.head_dim,
+        )
+      )
     else:
       attn_input = self.attn_norm(x)
       auxiliary_values = self._value_embedding_residual(
@@ -67,6 +76,12 @@ class NanoGPTSpeedrunBlock(nn.Module):
         token_value_embedding=token_value_embedding,
         value_gate_weight=value_gate_weight,
       )
+      if additional_auxiliary_values is not None:
+        auxiliary_values = (
+          additional_auxiliary_values
+          if auxiliary_values is None
+          else auxiliary_values + additional_auxiliary_values
+        )
       attn_output, values = self.attn(
         attn_input,
         value_residual=value_residual,
@@ -165,6 +180,11 @@ class NanoGPTSpeedrunModel(nn.Module):
       or config.value_embedding_gate_dim > 2 * config.d_model
     ):
       raise ValueError("value_embedding_gate_dim must be even and at most 2*d_model")
+    if config.mudd:
+      if config.n_layers < 11:
+        raise ValueError("MUDD speedrun topology requires at least 11 layers")
+      if 1 not in config.value_embedding_layers:
+        raise ValueError("MUDD speedrun topology requires a layer-1 value embedding")
     if (config.block_skip_from is None) != (config.block_skip_to is None):
       raise ValueError("block skip endpoints must both be set or both be None")
     if config.block_skip_from is not None:
@@ -222,6 +242,15 @@ class NanoGPTSpeedrunModel(nn.Module):
       layer_index: bank_index
       for bank_index, layer_index in enumerate(config.value_embedding_layers)
     }
+    if config.mudd:
+      self.mudd = MultiwayDynamicDenseConnections(
+        config.d_model,
+        hidden_dim=config.mudd_hidden_dim,
+        output_scale=config.mudd_scale,
+      )
+      self._initialize_mudd_biases()
+    else:
+      self.mudd = None
     residual_init = config.residual_decay**0.5
     self.residual_scales = nn.Parameter(torch.full((config.n_layers, 2), residual_init))
     self.post_scales = nn.Parameter(torch.ones(config.n_layers, 2))
@@ -246,6 +275,20 @@ class NanoGPTSpeedrunModel(nn.Module):
       self.register_parameter("block_skip_logit", None)
       self.block_skip_gate = None
 
+  def _initialize_mudd_biases(self) -> None:
+    if self.mudd is None:
+      return
+    inverse_scale = 1.0 / self.mudd.output_scale
+    residual_init = self.config.residual_decay**0.5
+    with torch.no_grad():
+      self.mudd.bias[0, 6:8].fill_(2.0 * inverse_scale)
+      self.mudd.bias[0, 8].fill_(residual_init * inverse_scale)
+      self.mudd.bias[0, 9].fill_(inverse_scale)
+      self.mudd.bias[0, 11].fill_(0.05 * inverse_scale)
+      self.mudd.bias[0, 12].fill_(residual_init * inverse_scale)
+      self.mudd.bias[0, 13].fill_(inverse_scale)
+      self.mudd.bias[1, 1].fill_(-0.5 * inverse_scale)
+
   def forward(
     self,
     input_ids: torch.Tensor,
@@ -263,17 +306,25 @@ class NanoGPTSpeedrunModel(nn.Module):
     bigram_values = (
       self.bigram_embedding(input_ids) if self.bigram_embedding is not None else None
     )
+    padded_bigram_values = (
+      None
+      if bigram_values is None
+      else F.pad(
+        bigram_values,
+        (0, self.config.d_model - self.config.bigram_dim),
+      )
+    )
     first_values = None
     block_skip = None
     skip_gate_input = F.rms_norm(embeddings, (self.config.d_model,))
+    cache = {0: x}
     for layer_index, block in enumerate(self.blocks):
       residual_injection = None
       if self.embedding_skip_weights is not None:
         residual_injection = self.embedding_skip_weights[layer_index] * embeddings
-      if bigram_values is not None and self.bigram_injection_weights is not None:
-        bigram_injection = self.bigram_injection_weights[layer_index] * F.pad(
-          bigram_values,
-          (0, self.config.d_model - self.config.bigram_dim),
+      if padded_bigram_values is not None and self.bigram_injection_weights is not None:
+        bigram_injection = (
+          self.bigram_injection_weights[layer_index] * padded_bigram_values
         )
         residual_injection = (
           bigram_injection
@@ -305,6 +356,54 @@ class NanoGPTSpeedrunModel(nn.Module):
         if value_bank_index is None
         else self.value_embeddings[value_bank_index][input_ids]
       )
+      additional_auxiliary_values = None
+      residual_scales = self.residual_scales[layer_index]
+      post_scales = self.post_scales[layer_index]
+      if self.mudd is not None and layer_index == self.config.n_layers - 1:
+        cache[9] = x
+        coefficients = self.mudd(x, route=0, num_coefficients=14)
+        value_mudd = (
+          coefficients[0] * cache[0] + coefficients[1] * cache[7] + coefficients[2] * x
+        )
+        additional_auxiliary_values = value_mudd.view(
+          *value_mudd.shape[:2],
+          self.config.n_heads,
+          self.config.d_model // self.config.n_heads,
+        ).transpose(1, 2)
+        x = (
+          (1 + coefficients[5]) * x
+          + coefficients[3] * cache[0]
+          + coefficients[4] * cache[7]
+        )
+        if token_value_embedding is not None:
+          dynamic_gate = torch.cat(
+            (coefficients[6], coefficients[7]),
+            dim=-1,
+          ).repeat_interleave(self.config.n_heads // 2, dim=-1)
+          dynamic_values = (
+            dynamic_gate.unsqueeze(-1)
+            * token_value_embedding.view(
+              *token_value_embedding.shape[:2],
+              self.config.n_heads,
+              self.config.d_model // self.config.n_heads,
+            )
+          ).transpose(1, 2)
+          additional_auxiliary_values = additional_auxiliary_values + dynamic_values
+          token_value_embedding = None
+          value_bank_index = None
+        residual_scales = torch.stack(
+          (coefficients[8], coefficients[12]),
+          dim=0,
+        )
+        post_scales = torch.stack(
+          (coefficients[9], coefficients[13]),
+          dim=0,
+        )
+        residual_injection = coefficients[10] * cache[0]
+        if padded_bigram_values is not None:
+          residual_injection = (
+            residual_injection + coefficients[11] * padded_bigram_values
+          )
       x, values = block(
         x,
         value_residual=first_values,
@@ -313,20 +412,36 @@ class NanoGPTSpeedrunModel(nn.Module):
         value_gate_weight=None
         if value_bank_index is None
         else self.value_gate_weights[value_bank_index],
+        additional_auxiliary_values=additional_auxiliary_values,
         partial_key_offset=layer_index in self.config.partial_key_offset_layers,
         output_gate_weight=self.attention_gate_weights[layer_index],
         xsa_alpha=None
         if self.xsa_alphas is None or block.attn.paired_heads
         else self.xsa_alphas[layer_index],
         skip_attention=layer_index == self.config.attention_free_layer,
-        residual_scales=self.residual_scales[layer_index],
-        post_scales=self.post_scales[layer_index],
+        residual_scales=residual_scales,
+        post_scales=post_scales,
         residual_injection=residual_injection,
       )
       if first_values is None and self.config.value_residual:
         first_values = values
       if layer_index == self.config.block_skip_from:
         block_skip = x
+      if layer_index in {3, 7, 9}:
+        cache[layer_index] = x
+
+    if self.mudd is not None:
+      coefficients = self.mudd(x, route=1, num_coefficients=5)
+      value_bank_index = self._value_embedding_index[1]
+      first_token_values = self.value_embeddings[value_bank_index][input_ids]
+      x = (
+        x
+        + coefficients[0] * cache[0]
+        + coefficients[1] * cache[7]
+        + coefficients[2] * cache[9]
+        + coefficients[3] * first_token_values
+        + coefficients[4] * cache[3]
+      )
 
     hidden_states = self.norm(x)
     needs_logits_for_loss = targets is not None and (

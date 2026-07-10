@@ -1,6 +1,10 @@
 import pytest
 import torch
-from flm_modules import BigramHashEmbedding, TokenSmear
+from flm_modules import (
+  BigramHashEmbedding,
+  MultiwayDynamicDenseConnections,
+  TokenSmear,
+)
 
 
 def test_token_smear_is_identity_at_initialization(random_input) -> None:
@@ -66,3 +70,32 @@ def test_speedrun_modules_validate_shapes() -> None:
     smear(torch.ones(5, 8))
   with pytest.raises(ValueError, match="batch, sequence"):
     bigram(torch.ones(5, dtype=torch.long))
+
+
+def test_mudd_starts_from_configured_biases(random_input) -> None:
+  mudd = MultiwayDynamicDenseConnections(
+    d_model=8,
+    hidden_dim=4,
+    max_coefficients=5,
+    output_scale=0.1,
+  )
+  with torch.no_grad():
+    mudd.bias[0, :3].copy_(torch.tensor([10.0, -5.0, 2.0]))
+  x = random_input(2, 3, 8)
+
+  coefficients = mudd(x, route=0, num_coefficients=3)
+
+  assert len(coefficients) == 3
+  torch.testing.assert_close(coefficients[0], torch.ones(2, 3, 1))
+  torch.testing.assert_close(coefficients[1], -0.5 * torch.ones(2, 3, 1))
+  torch.testing.assert_close(coefficients[2], 0.2 * torch.ones(2, 3, 1))
+
+
+def test_mudd_validates_route_and_coefficient_count(random_input) -> None:
+  mudd = MultiwayDynamicDenseConnections(d_model=8, hidden_dim=4)
+  x = random_input(2, 3, 8)
+
+  with pytest.raises(ValueError, match="route"):
+    mudd(x, route=2, num_coefficients=1)
+  with pytest.raises(ValueError, match="coefficients"):
+    mudd(x, route=0, num_coefficients=15)

@@ -161,6 +161,36 @@ def test_nanogpt_speedrun_model_initializes_attention_gates_and_xsa() -> None:
   assert model.blocks[1].attn.paired_heads is False
 
 
+def test_nanogpt_speedrun_model_initializes_and_runs_mudd_topology() -> None:
+  config = NanoGPTSpeedrunConfig(
+    vocab_size=32,
+    max_seq_len=8,
+    d_model=16,
+    n_layers=11,
+    n_heads=2,
+    d_ff=32,
+    mudd_hidden_dim=8,
+    value_residual=False,
+    logit_sigmoid_scale=5.0,
+  )
+  model = NanoGPTSpeedrunModel(config)
+  assert model.mudd is not None
+  x = torch.zeros(1, 8, 16)
+
+  pre = model.mudd(x, route=0, num_coefficients=14)
+  post = model.mudd(x, route=1, num_coefficients=5)
+  logits, _ = model(torch.randint(0, 32, (1, 8)))
+
+  torch.testing.assert_close(pre[6], 2 * torch.ones_like(pre[6]))
+  torch.testing.assert_close(
+    pre[8],
+    config.residual_decay**0.5 * torch.ones_like(pre[8]),
+  )
+  torch.testing.assert_close(post[1], -0.5 * torch.ones_like(post[1]))
+  assert logits is not None
+  assert torch.isfinite(logits).all()
+
+
 def _config(**overrides) -> NanoGPTSpeedrunConfig:
   values = {
     "vocab_size": 32,
@@ -175,6 +205,7 @@ def _config(**overrides) -> NanoGPTSpeedrunConfig:
     "logit_sigmoid_scale": 5.0,
     "paired_head_layers": (0,),
     "value_embedding_layers": (1,),
+    "mudd": False,
   }
   values.update(overrides)
   return NanoGPTSpeedrunConfig(**values)

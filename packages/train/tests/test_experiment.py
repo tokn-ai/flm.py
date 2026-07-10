@@ -300,6 +300,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
         "residual_decay": 0.99,
         "mtp_weights": [1.0, 0.25],
         "value_embedding_layers": [1, 2, 3],
+        "mudd": False,
       },
     }
   )
@@ -317,6 +318,7 @@ def test_parse_experiment_config_accepts_nanogpt_speedrun_model() -> None:
     residual_decay=0.99,
     mtp_weights=(1.0, 0.25),
     value_embedding_layers=(1, 2, 3),
+    mudd=False,
   )
 
 

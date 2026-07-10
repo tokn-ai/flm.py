@@ -44,7 +44,11 @@ from flm_modules.optim import (
   configure_normuon,
 )
 from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
-from flm_modules.speedrun import BigramHashEmbedding, TokenSmear
+from flm_modules.speedrun import (
+  BigramHashEmbedding,
+  MultiwayDynamicDenseConnections,
+  TokenSmear,
+)
 
 __all__ = [
   "AttentionBackend",
@@ -70,6 +74,7 @@ __all__ = [
   "linear_cross_entropy",
   "LossBackend",
   "Muon",
+  "MultiwayDynamicDenseConnections",
   "NorMuon",
   "RMSNorm",
   "ReLUSquared",

@@ -60,6 +60,9 @@ class NanoGPTSpeedrunConfig:
   paired_head_layers: tuple[int, ...] = (0, 2, 5, 9)
   value_embedding_layers: tuple[int, ...] = (1, 2, 8, 9, 10)
   value_embedding_gate_dim: int = 12
+  mudd: bool = True
+  mudd_hidden_dim: int = 64
+  mudd_scale: float = 0.1
   bigram_vocab_size: int | None = None
   bigram_dim: int = 192
   bigram_sign_table_rows: int = 8192

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class TokenSmear(nn.Module):
@@ -85,3 +86,47 @@ class BigramHashEmbedding(nn.Module):
   def _validate_input(input_ids: torch.Tensor) -> None:
     if input_ids.ndim != 2:
       raise ValueError("input_ids must have shape [batch, sequence]")
+
+
+class MultiwayDynamicDenseConnections(nn.Module):
+  """Small per-token router for Multiway Dynamic Dense connections (MUDD)."""
+
+  def __init__(
+    self,
+    d_model: int,
+    *,
+    hidden_dim: int = 64,
+    num_routes: int = 2,
+    max_coefficients: int = 14,
+    output_scale: float = 0.1,
+  ) -> None:
+    super().__init__()
+    if min(d_model, hidden_dim, num_routes, max_coefficients) < 1:
+      raise ValueError("MUDD dimensions must be positive")
+    if output_scale <= 0:
+      raise ValueError("MUDD output_scale must be positive")
+    self.max_coefficients = max_coefficients
+    self.output_scale = output_scale
+    self.up = nn.Parameter(torch.empty(num_routes, hidden_dim, d_model))
+    self.down = nn.Parameter(torch.zeros(num_routes, max_coefficients, hidden_dim))
+    self.bias = nn.Parameter(torch.zeros(num_routes, max_coefficients))
+    nn.init.normal_(self.up, std=d_model**-0.5)
+
+  def forward(
+    self,
+    x: torch.Tensor,
+    *,
+    route: int,
+    num_coefficients: int,
+  ) -> tuple[torch.Tensor, ...]:
+    if not 0 <= route < self.up.shape[0]:
+      raise ValueError("MUDD route is out of range")
+    if not 1 <= num_coefficients <= self.max_coefficients:
+      raise ValueError("invalid number of MUDD coefficients")
+    hidden = F.gelu(F.linear(x, self.up[route]))
+    coefficients = F.linear(
+      hidden,
+      self.down[route, :num_coefficients],
+      self.bias[route, :num_coefficients],
+    )
+    return tuple((coefficients * self.output_scale).split(1, dim=-1))

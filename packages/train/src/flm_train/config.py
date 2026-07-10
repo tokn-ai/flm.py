@@ -744,6 +744,9 @@ def _parse_model(value: dict[str, Any]) -> ModelConfig:
         value.get("value_embedding_layers", (1, 2, 8, 9, 10))
       ),
       value_embedding_gate_dim=int(value.get("value_embedding_gate_dim", 12)),
+      mudd=bool(value.get("mudd", True)),
+      mudd_hidden_dim=int(value.get("mudd_hidden_dim", 64)),
+      mudd_scale=float(value.get("mudd_scale", 0.1)),
       bigram_vocab_size=_optional_int(value.get("bigram_vocab_size")),
       bigram_dim=int(value.get("bigram_dim", 192)),
       bigram_sign_table_rows=int(value.get("bigram_sign_table_rows", 8192)),
