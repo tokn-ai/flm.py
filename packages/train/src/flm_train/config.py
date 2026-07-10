@@ -418,10 +418,19 @@ def _scaled_schedules(
     momentum_warmup_steps=scale(config.schedule.momentum_warmup_steps),
     momentum_cooldown_steps=scale(config.schedule.momentum_cooldown_steps),
   )
+  source_stages = config.speedrun_schedule.stages
   stages_by_end: dict[int, SpeedrunStageConfig] = {}
-  for stage in config.speedrun_schedule.stages:
+  previous_end = 0
+  for index, stage in enumerate(source_stages):
     end_step = min(target_steps, scale(stage.end_step))
+    if target_steps >= len(source_stages):
+      remaining_stages = len(source_stages) - index - 1
+      end_step = min(
+        max(end_step, previous_end + 1),
+        target_steps - remaining_stages,
+      )
     stages_by_end[end_step] = replace(stage, end_step=end_step)
+    previous_end = end_step
   speedrun_schedule = replace(
     config.speedrun_schedule,
     stages=tuple(stages_by_end.values()),

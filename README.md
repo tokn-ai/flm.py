@@ -49,12 +49,12 @@ scaling it to the existing 8,192-token Unitoken FineWeb dataset. It has
 15,931,066 trainable parameters and a 37,048,320-token staged training budget.
 Six-way gradient accumulation preserves that effective budget while keeping
 the CUDA microbatches within an 8 GiB GPU. File and TensorBoard logging are
-enabled for both the smoke and full runs.
+enabled for both smoke and full runs.
 
-Run the two-step launch smoke test first:
+Run a ten-step launch smoke test from the full experiment configuration:
 
 ```sh
-scripts/smoke_16m_fineweb_speedrun.sh
+scripts/run_16m_fineweb_speedrun.sh --steps 10
 ```
 
 Then start or resume the full experiment:
@@ -63,7 +63,7 @@ Then start or resume the full experiment:
 scripts/run_16m_fineweb_speedrun.sh
 ```
 
-Both scripts forward extra CLI options, for example:
+The script forwards extra CLI options, for example:
 
 ```sh
 scripts/run_16m_fineweb_speedrun.sh --workspace-config /path/to/flm.workspace.yaml

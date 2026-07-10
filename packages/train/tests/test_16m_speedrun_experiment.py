@@ -9,7 +9,6 @@ from flm_train.models import build_model
 from flm_train.presets import _config_with_resolved_intervals
 
 FULL_CONFIG = Path("experiments/16m_fineweb_speedrun.yaml")
-SMOKE_CONFIG = Path("experiments/16m_fineweb_speedrun_smoke.yaml")
 
 
 def test_16m_speedrun_experiment_has_expected_parameter_count() -> None:
@@ -20,13 +19,19 @@ def test_16m_speedrun_experiment_has_expected_parameter_count() -> None:
   assert sum(parameter.numel() for parameter in model.parameters()) == 15_931_066
 
 
-def test_16m_speedrun_smoke_uses_the_same_model() -> None:
+def test_16m_speedrun_ten_step_smoke_preserves_all_stages() -> None:
   full = load_experiment_config(FULL_CONFIG)
-  smoke = load_experiment_config(SMOKE_CONFIG)
+  smoke = apply_overrides(full, ExperimentOverrides(steps=10))
 
   assert smoke.model == full.model
-  assert smoke.data.dataset_root == full.data.dataset_root
-  assert smoke.data.encoding_name == full.data.encoding_name
+  assert smoke.data == full.data
+  assert smoke.loop.steps == 10
+  assert smoke.schedule.cooldown_steps == 6
+  assert smoke.schedule.cooldown_end_step == 10
+  assert smoke.schedule.momentum_warmup_steps == 2
+  assert smoke.schedule.momentum_cooldown_steps == 1
+  assert smoke.speedrun_schedule.untie_step == 7
+  assert [stage.end_step for stage in smoke.speedrun_schedule.stages] == [3, 7, 9, 10]
 
 
 def test_16m_speedrun_schedule_matches_reference_token_budget() -> None:
