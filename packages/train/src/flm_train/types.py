@@ -19,13 +19,14 @@ BatchSize = int | Literal["auto"]
 
 @dataclass(frozen=True)
 class DataConfig:
-  kind: Literal["token_dataset"] = "token_dataset"
+  kind: Literal["token_dataset", "fineweb_binary"] = "token_dataset"
   encoding_name: str = "cl100k_base"
   seq_len: int = 128
   dataset_root: Path = Path("cache/repo_sources_cl100k")
   version: str = "latest"
   split: Literal["train", "val", "test"] = "train"
   resolved_version: str | None = None
+  token_limit: int | None = None
 
 
 @dataclass(frozen=True)

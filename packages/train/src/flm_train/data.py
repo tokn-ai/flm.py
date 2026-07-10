@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 from flm_datasets import (
   SOURCE_CORPUS_SEPARATOR,
+  FineWebBinaryDataset,
   RandomTokenWindowDataset,
   ShardedTokenDataset,
   SourceCorpusConfig,
@@ -33,6 +34,7 @@ from flm_train.types import DataConfig, TrainConfig
 _PUBLISHED_DATASET_VERSION = 1
 _TOKEN_CACHE_DTYPE = "int32"
 _FINEWEB_TOKEN_SHARD_SIZE = 256 * 1024 * 1024
+_SPEEDRUN_VALIDATION_TOKENS = 10_485_760
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,43 @@ class PublishedDatasetInfo:
 def build_training_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
   if config.data.kind == "token_dataset":
     return build_token_dataset(config)
+  if config.data.kind == "fineweb_binary":
+    return build_fineweb_binary_dataset(config)
   raise ValueError(f"unsupported data.kind: {config.data.kind}")
+
+
+def build_fineweb_binary_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
+  if config.loop.batch_size == "auto":
+    raise ValueError("loop.batch_size must be resolved before building datasets")
+  if config.data.split == "train":
+    raise ValueError("FineWeb binary training requires BOS-aligned document batches")
+  paths = sorted(config.data.dataset_root.glob(f"fineweb_{config.data.split}_*.bin"))
+  if not paths:
+    raise FileNotFoundError(
+      f"no FineWeb binary shards found for split {config.data.split!r} "
+      f"under {config.data.dataset_root}"
+    )
+  token_limit = (
+    _SPEEDRUN_VALIDATION_TOKENS
+    if config.data.token_limit is None and config.data.split == "val"
+    else config.data.token_limit
+  )
+  dataset = FineWebBinaryDataset(
+    paths,
+    seq_len=config.data.seq_len,
+    token_limit=token_limit,
+  )
+  return RepoSourceDatasetBundle(
+    dataloader=DataLoader(
+      dataset,
+      batch_size=config.loop.batch_size,
+      shuffle=False,
+      drop_last=False,
+    ),
+    token_count=dataset.token_limit,
+    file_count=len(paths),
+    byte_count=0,
+  )
 
 
 def build_token_dataset(config: TrainConfig) -> RepoSourceDatasetBundle:
@@ -111,6 +149,7 @@ def resolve_data_config(config: DataConfig) -> DataConfig:
     version=config.version,
     split=config.split,
     resolved_version=version,
+    token_limit=config.token_limit,
   )
 
 

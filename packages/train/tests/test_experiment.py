@@ -656,6 +656,27 @@ def test_parse_experiment_config_reads_token_dataset_config() -> None:
   assert config.data.seq_len == 512
 
 
+def test_parse_experiment_config_reads_fineweb_binary_config() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "speedrun",
+      "data": {
+        "kind": "fineweb_binary",
+        "dataset_root": "data/fineweb10B",
+        "split": "val",
+        "encoding_name": "gpt2",
+        "seq_len": 2048,
+        "token_limit": 10_485_760,
+      },
+    }
+  )
+
+  assert config.data.kind == "fineweb_binary"
+  assert config.data.dataset_root == Path("data/fineweb10B")
+  assert config.data.encoding_name == "gpt2"
+  assert config.data.token_limit == 10_485_760
+
+
 def test_parse_args_accepts_cli_overrides() -> None:
   args = parse_args(
     [

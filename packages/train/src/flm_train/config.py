@@ -167,7 +167,7 @@ class ExperimentConfig:
     return self.output.root_dir / self.name / self.run.id
 
   def to_train_config(self) -> TrainConfig:
-    if self.data.kind != "token_dataset":
+    if self.data.kind not in {"token_dataset", "fineweb_binary"}:
       raise ValueError(f"unsupported data.kind: {self.data.kind}")
     if self.optimizer.kind not in {
       "adamw",
@@ -561,12 +561,13 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     "version",
     "split",
     "resolved_version",
+    "token_limit",
   }
   unknown = set(value) - allowed
   if unknown:
     raise ValueError(f"unknown data config keys: {sorted(unknown)}")
   kind = value.get("kind", "token_dataset")
-  if kind != "token_dataset":
+  if kind not in {"token_dataset", "fineweb_binary"}:
     raise ValueError(f"unsupported data.kind: {kind}")
   split = str(value.get("split", "train"))
   if split not in {"train", "val", "test"}:
@@ -579,6 +580,7 @@ def _parse_data(value: dict[str, Any]) -> DataConfig:
     version=str(value.get("version", "latest")),
     split=split,
     resolved_version=value.get("resolved_version"),
+    token_limit=_optional_int(value.get("token_limit")),
   )
 
 

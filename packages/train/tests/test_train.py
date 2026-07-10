@@ -7,7 +7,11 @@ import flm_train.data_cli as data_cli
 import numpy as np
 import pytest
 import torch
-from flm_datasets import RandomTokenWindowDataset
+from flm_datasets import (
+  FINEWEB_HEADER_INTS,
+  FineWebBinaryDataset,
+  RandomTokenWindowDataset,
+)
 from flm_train.checkpoints import CheckpointState, load_checkpoint, save_checkpoint
 from flm_train.config import WorkspaceConfig
 from flm_train.data import (
@@ -275,6 +279,36 @@ def test_train_token_dataset_uses_random_windows_without_loader_shuffle(
   assert isinstance(bundle.dataloader.dataset, RandomTokenWindowDataset)
   assert len(bundle.dataloader.dataset) == 6
   assert type(bundle.dataloader.sampler).__name__ == "SequentialSampler"
+
+
+def test_build_fineweb_binary_validation_dataset_uses_exact_stream(
+  tmp_path: Path,
+) -> None:
+  header = np.zeros(FINEWEB_HEADER_INTS, dtype="<i4")
+  header[:3] = (20240520, 1, 17)
+  tokens = np.arange(17, dtype="<u2")
+  path = tmp_path / "fineweb_val_000000.bin"
+  path.write_bytes(header.tobytes() + tokens.tobytes())
+
+  bundle = build_training_dataset(
+    TrainConfig(
+      data=DataConfig(
+        kind="fineweb_binary",
+        dataset_root=tmp_path,
+        split="val",
+        encoding_name="gpt2",
+        seq_len=4,
+        token_limit=16,
+      ),
+      loop=LoopConfig(batch_size=2, steps=0),
+    )
+  )
+
+  assert isinstance(bundle.dataloader.dataset, FineWebBinaryDataset)
+  assert bundle.token_count == 16
+  input_ids, targets = next(iter(bundle.dataloader))
+  torch.testing.assert_close(input_ids, torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]]))
+  torch.testing.assert_close(targets, torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8]]))
 
 
 def test_auto_batch_size_selects_largest_fitting_batch(
