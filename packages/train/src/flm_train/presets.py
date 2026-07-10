@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 from flm_datasets import get_tokenizer
-from flm_modules import configure_adamw
+from flm_modules import configure_adamw, configure_muon
 
 from flm_train.data import build_training_dataset
 from flm_train.models import build_model
@@ -54,11 +54,7 @@ def train_language_model(
       data=replace(config.data, split=config.eval.split),
     )
     eval_bundle = build_training_dataset(eval_config)
-  optimizer = configure_adamw(
-    model,
-    learning_rate=config.optimizer.learning_rate,
-    weight_decay=config.optimizer.weight_decay,
-  )
+  optimizer = _build_optimizer(config, model)
   trainer = LanguageModelTrainer(
     model=model,
     optimizer=optimizer,
@@ -142,11 +138,7 @@ def probe_auto_batch_size(
     config,
     vocab_size=vocab_size,
   ).to(device=config.loop.device, dtype=_torch_dtype(config.loop.dtype))
-  optimizer = configure_adamw(
-    model,
-    learning_rate=config.optimizer.learning_rate,
-    weight_decay=config.optimizer.weight_decay,
-  )
+  optimizer = _build_optimizer(config, model)
   try:
     return auto_batch_size(
       model=model,
@@ -281,6 +273,25 @@ def _batch_size_fits(
     optimizer.zero_grad(set_to_none=True)
     model.train(was_training)
     torch.cuda.empty_cache()
+
+
+def _build_optimizer(
+  config: TrainConfig,
+  model: torch.nn.Module,
+) -> torch.optim.Optimizer:
+  if config.optimizer.kind == "adamw":
+    return configure_adamw(
+      model,
+      learning_rate=config.optimizer.learning_rate,
+      weight_decay=config.optimizer.weight_decay,
+    )
+  if config.optimizer.kind == "muon":
+    return configure_muon(
+      model,
+      learning_rate=config.optimizer.learning_rate,
+      weight_decay=config.optimizer.weight_decay,
+    )
+  raise ValueError(f"unsupported optimizer.kind: {config.optimizer.kind}")
 
 
 def evaluate_language_model(

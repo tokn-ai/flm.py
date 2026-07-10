@@ -1,4 +1,4 @@
-"""Optimizer helpers."""
+"""AdamW optimizer helpers."""
 
 from __future__ import annotations
 

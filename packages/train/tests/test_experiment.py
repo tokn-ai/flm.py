@@ -246,6 +246,25 @@ def test_parse_experiment_config_rejects_output_run_dir() -> None:
     )
 
 
+def test_parse_experiment_config_accepts_muon_optimizer() -> None:
+  config = parse_experiment_config(
+    {
+      "name": "tiny",
+      "optimizer": {
+        "kind": "muon",
+        "learning_rate": 1.0e-3,
+        "weight_decay": 0.01,
+      },
+    }
+  )
+
+  train_config = config.to_train_config()
+
+  assert train_config.optimizer.kind == "muon"
+  assert train_config.optimizer.learning_rate == 1.0e-3
+  assert train_config.optimizer.weight_decay == 0.01
+
+
 def test_parse_experiment_config_accepts_auto_batch_size() -> None:
   config = parse_experiment_config(
     {

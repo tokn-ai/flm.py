@@ -34,7 +34,7 @@ from flm_modules.moe import (
   RouterScoring,
 )
 from flm_modules.norm import RMSNorm
-from flm_modules.optim import configure_adamw
+from flm_modules.optim import Muon, configure_adamw, configure_muon
 from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
 
 __all__ = [
@@ -58,6 +58,7 @@ __all__ = [
   "language_model_loss",
   "linear_cross_entropy",
   "LossBackend",
+  "Muon",
   "RMSNorm",
   "RouterScoring",
   "RopeLayout",
@@ -67,6 +68,7 @@ __all__ = [
   "UnweightedRMSNorm",
   "apply_rotary",
   "configure_adamw",
+  "configure_muon",
   "scaled_dot_product_attention",
   "tilelang_flash_attention",
   "tilelang_linear_cross_entropy",
