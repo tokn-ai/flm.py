@@ -9,6 +9,7 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 
+from flm_modules.optim.adamw import CautiousAdamW
 from flm_modules.optim.composite import CompositeOptimizer
 
 
@@ -180,10 +181,10 @@ def configure_muon(
   muon_params: list[nn.Parameter] = []
   adamw_params: list[nn.Parameter] = []
 
-  for param in model.parameters():
+  for name, param in model.named_parameters():
     if not param.requires_grad:
       continue
-    if param.ndim >= 2:
+    if _use_matrix_optimizer(name, param):
       muon_params.append(param)
     else:
       adamw_params.append(param)
@@ -202,8 +203,8 @@ def configure_muon(
     )
   if adamw_params:
     optimizers.append(
-      torch.optim.AdamW(
-        [{"params": adamw_params, "weight_decay": 0.0}],
+      CautiousAdamW(
+        [{"params": adamw_params, "weight_decay": weight_decay}],
         lr=learning_rate,
         betas=adamw_betas,
         eps=adamw_eps,
@@ -223,10 +224,12 @@ def configure_normuon(
 ) -> CompositeOptimizer:
   matrix_params: list[nn.Parameter] = []
   adamw_params: list[nn.Parameter] = []
-  for param in model.parameters():
+  for name, param in model.named_parameters():
     if not param.requires_grad:
       continue
-    (matrix_params if param.ndim == 2 else adamw_params).append(param)
+    (matrix_params if _use_matrix_optimizer(name, param) else adamw_params).append(
+      param
+    )
 
   optimizers: list[torch.optim.Optimizer] = []
   if matrix_params:
@@ -241,14 +244,24 @@ def configure_normuon(
     )
   if adamw_params:
     optimizers.append(
-      torch.optim.AdamW(
-        [{"params": adamw_params, "weight_decay": 0.0}],
+      CautiousAdamW(
+        [{"params": adamw_params, "weight_decay": weight_decay}],
         lr=learning_rate,
         betas=adamw_betas,
         eps=adamw_eps,
       )
     )
   return CompositeOptimizer(optimizers)
+
+
+def _use_matrix_optimizer(name: str, param: nn.Parameter) -> bool:
+  if param.ndim != 2:
+    return False
+  return not (
+    "embedding" in name
+    or name.endswith("lm_head.weight")
+    or name.endswith("value_embeddings")
+  )
 
 
 def _orthogonalize_update(update: torch.Tensor, *, ns_steps: int) -> torch.Tensor:

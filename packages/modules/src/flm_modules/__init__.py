@@ -36,6 +36,7 @@ from flm_modules.moe import (
 )
 from flm_modules.norm import RMSNorm
 from flm_modules.optim import (
+  CautiousAdamW,
   CompositeOptimizer,
   Muon,
   NorMuon,
@@ -54,6 +55,7 @@ __all__ = [
   "AttentionBackend",
   "BigramHashEmbedding",
   "CompositeOptimizer",
+  "CautiousAdamW",
   "DeepSeekDSA",
   "DeepSeekDSAIndexer",
   "DeepSeekMLA",

@@ -1,6 +1,7 @@
 import pytest
 import torch
 from flm_modules import (
+  CautiousAdamW,
   CompositeOptimizer,
   Muon,
   NorMuon,
@@ -71,7 +72,7 @@ def test_configure_muon_builds_composite_for_matrix_and_vector_parameters() -> N
   assert len(optimizer.optimizers) == 2
   muon_optimizer, adamw_optimizer = optimizer.optimizers
   assert isinstance(muon_optimizer, Muon)
-  assert isinstance(adamw_optimizer, torch.optim.AdamW)
+  assert isinstance(adamw_optimizer, CautiousAdamW)
   muon_params = set(muon_optimizer.param_groups[0]["params"])
   adamw_params = set(adamw_optimizer.param_groups[0]["params"])
   assert optimizer.param_groups[0]["lr"] == 1e-3
@@ -81,7 +82,7 @@ def test_configure_muon_builds_composite_for_matrix_and_vector_parameters() -> N
   assert optimizer.param_groups[1]["betas"] == (0.7, 0.9)
   assert optimizer.param_groups[1]["eps"] == 1e-7
   assert optimizer.param_groups[0]["weight_decay"] == 0.2
-  assert optimizer.param_groups[1]["weight_decay"] == 0.0
+  assert optimizer.param_groups[1]["weight_decay"] == 0.2
   assert model.linear.weight in muon_params
   assert model.linear.bias in adamw_params
   assert model.norm.weight in adamw_params
@@ -109,7 +110,7 @@ def test_configure_normuon_builds_matrix_and_adam_fallback_optimizers() -> None:
   assert isinstance(optimizer, CompositeOptimizer)
   normuon, adamw = optimizer.optimizers
   assert isinstance(normuon, NorMuon)
-  assert isinstance(adamw, torch.optim.AdamW)
+  assert isinstance(adamw, CautiousAdamW)
   assert model.linear.weight in set(normuon.param_groups[0]["params"])
   assert model.linear.bias in set(adamw.param_groups[0]["params"])
   assert normuon.param_groups[0]["momentum"] == 0.85
@@ -140,6 +141,22 @@ def test_normuon_step_tracks_low_rank_variance_and_updates_parameter() -> None:
 def test_normuon_rejects_non_matrix_parameters() -> None:
   with pytest.raises(ValueError, match="only supports 2D"):
     NorMuon([nn.Parameter(torch.ones(2))])
+
+
+def test_cautious_adamw_decays_only_updates_aligned_with_parameters() -> None:
+  parameter = nn.Parameter(torch.tensor([1.0, 1.0]))
+  optimizer = CautiousAdamW(
+    [parameter],
+    lr=0.1,
+    betas=(0.0, 0.0),
+    eps=0.0,
+    weight_decay=0.5,
+  )
+  parameter.grad = torch.tensor([1.0, -1.0])
+
+  optimizer.step()
+
+  torch.testing.assert_close(parameter, torch.tensor([0.85, 1.1]))
 
 
 def test_muon_step_updates_muon_and_adamw_parameters() -> None:
