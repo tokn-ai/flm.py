@@ -109,6 +109,7 @@ class QKNormSelfAttention(nn.Module):
     *,
     value_residual: torch.Tensor | None = None,
     value_mix: torch.Tensor | float | None = None,
+    partial_key_offset: bool = False,
     attn_mask: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_len, _ = x.shape
@@ -122,6 +123,11 @@ class QKNormSelfAttention(nn.Module):
     cos, sin = self.rope(q)
     q = apply_rotary(q, cos, sin, layout=self.rope.layout)
     k = apply_rotary(k, cos, sin, layout=self.rope.layout)
+    if partial_key_offset and seq_len > 1:
+      k = k.clone()
+      k[:, :, 1:, self.head_dim // 2 :] = k[
+        :, :, :-1, self.head_dim // 2 :
+      ]
 
     current_values = v
     if value_residual is not None:

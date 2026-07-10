@@ -37,9 +37,11 @@ from flm_modules.moe import (
 from flm_modules.norm import RMSNorm
 from flm_modules.optim import CompositeOptimizer, Muon, configure_adamw, configure_muon
 from flm_modules.rope import RopeLayout, RotaryEmbedding, apply_rotary
+from flm_modules.speedrun import BigramHashEmbedding, TokenSmear
 
 __all__ = [
   "AttentionBackend",
+  "BigramHashEmbedding",
   "CompositeOptimizer",
   "DeepSeekDSA",
   "DeepSeekDSAIndexer",
@@ -69,6 +71,7 @@ __all__ = [
   "SelfAttention",
   "QKNormSelfAttention",
   "SwiGLU",
+  "TokenSmear",
   "UnweightedRMSNorm",
   "apply_rotary",
   "configure_adamw",

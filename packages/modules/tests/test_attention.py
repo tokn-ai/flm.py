@@ -182,6 +182,18 @@ def test_qk_norm_attention_rejects_invalid_value_residual(random_input) -> None:
     layer(x, value_residual=random_input(3, 5, 8))
 
 
+def test_qk_norm_attention_partial_key_offset_changes_attention(
+  random_input,
+) -> None:
+  layer = QKNormSelfAttention(d_model=8, n_heads=2)
+  x = random_input(3, 5, 8)
+
+  regular, _ = layer(x)
+  offset, _ = layer(x, partial_key_offset=True)
+
+  assert not torch.equal(regular, offset)
+
+
 def test_self_attention_flash_attention2_requires_package(
   random_input,
 ) -> None:
