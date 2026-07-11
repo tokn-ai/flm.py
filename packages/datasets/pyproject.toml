@@ -7,7 +7,7 @@ dependencies = [
   "tiktoken>=0.8.0",
   "tokenizers>=0.22.0",
   "torch>=2.5",
-  "uni-tokenizer",
+  "uni-tokenizer>=0.1.4",
 ]
 
 [build-system]

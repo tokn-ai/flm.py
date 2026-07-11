@@ -116,15 +116,19 @@ def _train_unitoken(
       words[word] = words.get(word, 0) + int(count)
 
   _time("pretokenize", timings, collect_words)
-  trainer = BpeTrainer(special_tokens)
+  trainer = BpeTrainer(special_tokens, unit="byte")
   _time("add_words", timings, lambda: trainer.add_words(words))
   _time("train", timings, lambda: trainer.train(vocab_size=vocab_size))
-  _time("save", timings, lambda: trainer.save(name, outdir=outdir))
+  _time(
+    "save",
+    timings,
+    lambda: trainer.save(name, outdir=outdir, format="gpt2"),
+  )
   return TrainingResult(
     backend="unitoken",
     outdir=outdir,
-    vocab_path=outdir / f"vocab.{name}[u8].json",
-    merges_path=outdir / f"merges.{name}[u8].txt",
+    vocab_path=outdir / f"vocab.{name}[byte].json",
+    merges_path=outdir / f"merges.{name}[byte].txt",
     timings=timings,
   )
 
@@ -156,8 +160,8 @@ def _train_hf(
   raw_vocab_path = outdir / "vocab.json"
   raw_merges_path = outdir / "merges.txt"
   _time("save", timings, lambda: tokenizer.model.save(str(outdir)))
-  vocab_path = outdir / f"vocab.{name}[u8].json"
-  merges_path = outdir / f"merges.{name}[u8].txt"
+  vocab_path = outdir / f"vocab.{name}[byte].json"
+  merges_path = outdir / f"merges.{name}[byte].txt"
   raw_vocab_path.replace(vocab_path)
   _write_hf_merges_with_counts(raw_merges_path, merges_path)
   raw_merges_path.unlink()

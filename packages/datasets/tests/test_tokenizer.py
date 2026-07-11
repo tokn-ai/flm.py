@@ -68,7 +68,7 @@ def test_repo_bpe_backends_match_unitoken_files(tmp_path) -> None:
 def _train_tiny_unitoken(tmp_path):
   tokenizer_path = tmp_path / "tiny"
   special_tokens = unitoken_special_tokens(16)
-  trainer = BpeTrainer(special_tokens)
+  trainer = BpeTrainer(special_tokens, unit="byte")
   trainer.add_words(
     {
       "hello": 10,
@@ -79,5 +79,9 @@ def _train_tiny_unitoken(tmp_path):
     }
   )
   trainer.train(vocab_size=300)
-  trainer.save(tokenizer_path.name, outdir=tokenizer_path.parent)
+  trainer.save(
+    tokenizer_path.name,
+    outdir=tokenizer_path.parent,
+    format="gpt2",
+  )
   return tokenizer_path

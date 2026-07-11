@@ -20,8 +20,13 @@ from flm_datasets.tokenizer import (
 def main() -> None:
   args = _parse_args()
   tokenizer_path = args.tokenizer_root / args.tokenizer_name
-  vocab_path = tokenizer_path.parent / f"vocab.{tokenizer_path.name}[u8].json"
-  merges_path = tokenizer_path.parent / f"merges.{tokenizer_path.name}[u8].txt"
+  suffix = (
+    "byte"
+    if (tokenizer_path.parent / f"vocab.{tokenizer_path.name}[byte].json").exists()
+    else "u8"
+  )
+  vocab_path = tokenizer_path.parent / f"vocab.{tokenizer_path.name}[{suffix}].json"
+  merges_path = tokenizer_path.parent / f"merges.{tokenizer_path.name}[{suffix}].txt"
 
   vocab = _read_vocab(vocab_path)
   merges = _read_merges(merges_path)
