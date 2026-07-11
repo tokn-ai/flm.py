@@ -20,6 +20,7 @@ flm-train = { workspace = true }
 flm-rl = { workspace = true }
 flm-inference = { workspace = true }
 flm-vllm = { workspace = true }
+uni-tokenizer = { git = "https://github.com/tokn-ai/unitoken" }
 
 [dependency-groups]
 dev = [

@@ -17,8 +17,8 @@ def main() -> None:
   tokenizer_root = args.tokenizer_root
   tokenizer_root.mkdir(parents=True, exist_ok=True)
   corpus_path = args.corpus_path or tokenizer_root / f"corpus.{args.tokenizer_name}.txt"
-  vocab_path = tokenizer_root / f"vocab.{args.tokenizer_name}[u8].json"
-  merges_path = tokenizer_root / f"merges.{args.tokenizer_name}[u8].txt"
+  vocab_path = tokenizer_root / f"vocab.{args.tokenizer_name}[byte].json"
+  merges_path = tokenizer_root / f"merges.{args.tokenizer_name}[byte].txt"
 
   timings: dict[str, float] = {}
   rows, chars = _time_result(
@@ -41,13 +41,17 @@ def main() -> None:
       words[word] = int(count)
 
   _time("pretokenize", timings, collect_words)
-  trainer = BpeTrainer(special_tokens)
+  trainer = BpeTrainer(special_tokens, unit="byte")
   _time("add_words", timings, lambda: trainer.add_words(words))
   _time("train", timings, lambda: trainer.train(vocab_size=args.vocab_size))
   _time(
     "save",
     timings,
-    lambda: trainer.save(args.tokenizer_name, outdir=tokenizer_root),
+    lambda: trainer.save(
+      args.tokenizer_name,
+      outdir=tokenizer_root,
+      format="gpt2",
+    ),
   )
 
   print(f"parquet={args.parquet_path}")

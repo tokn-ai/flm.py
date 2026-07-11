@@ -94,13 +94,15 @@ def _get_unitokenizer(model_path: str):
   vocab_file = path / "vocab.json"
   merges_file = path / "merges.txt"
   if not vocab_file.exists() or not merges_file.exists():
-    vocab_file = path.parent / f"vocab.{path.name}[u8].json"
-    merges_file = path.parent / f"merges.{path.name}[u8].txt"
+    vocab_file = _repo_bpe_vocab_path(path)
+    merges_file = _repo_bpe_merges_path(path)
   return Encoding.from_files(
     path.name,
     vocab_file=vocab_file,
     merges_file=merges_file,
     special_tokens=special_tokens,
+    unit="byte",
+    format="gpt2",
   )
 
 
@@ -209,11 +211,18 @@ def _read_repo_bpe_merges(path: Path) -> list[tuple[str, str, int]]:
 
 
 def _repo_bpe_vocab_path(path: Path) -> Path:
-  return path.parent / f"vocab.{path.name}[u8].json"
+  return _unitoken_artifact_path(path, "vocab", "json")
 
 
 def _repo_bpe_merges_path(path: Path) -> Path:
-  return path.parent / f"merges.{path.name}[u8].txt"
+  return _unitoken_artifact_path(path, "merges", "txt")
+
+
+def _unitoken_artifact_path(path: Path, kind: str, extension: str) -> Path:
+  current = path.parent / f"{kind}.{path.name}[byte].{extension}"
+  if current.exists():
+    return current
+  return path.parent / f"{kind}.{path.name}[u8].{extension}"
 
 
 def _special_token_ranks() -> dict[str, int]:
