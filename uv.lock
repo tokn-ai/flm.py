@@ -3470,7 +3470,7 @@ wheels = [
 [[package]]
 name = "uni-tokenizer"
 version = "0.1.4"
-source = { git = "https://github.com/tokn-ai/unitoken#e196ab5b29dc2dce7f72577bddaeeb23395b9fc5" }
+source = { git = "https://github.com/tokn-ai/unitoken#6464db032c52ea81ae6a171c2249601705de4c37" }
 dependencies = [
     { name = "numpy" },
 ]

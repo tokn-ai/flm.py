@@ -14,7 +14,8 @@ SPEC.loader.exec_module(EXPERIMENT)
 empirical_entropy = EXPERIMENT.empirical_entropy
 reserve_unicode_alphabet = EXPERIMENT.reserve_unicode_alphabet
 train_and_evaluate = EXPERIMENT.train_and_evaluate
-iter_text_chunks = EXPERIMENT.iter_text_chunks
+ParquetSource = EXPERIMENT.ParquetSource
+iter_source_chunks = EXPERIMENT.iter_source_chunks
 
 
 def test_empirical_entropy() -> None:
@@ -26,21 +27,18 @@ def test_empirical_entropy() -> None:
 def test_iter_text_chunks_respects_utf8_byte_limit(tmp_path: Path) -> None:
   parquet_path = tmp_path / "texts.parquet"
   pq.write_table(pa.table({"text": ["中文文本", "第二篇文档"]}), parquet_path)
-  stats = {"rows": 0, "corpus_bytes": 0, "corpus_characters": 0}
-
-  chunks = list(
-    iter_text_chunks(
-      [parquet_path],
-      text_column="text",
-      max_bytes=10,
-      chunk_bytes=4,
-      batch_size=2,
-      stats=stats,
-    )
+  source = ParquetSource(
+    [parquet_path],
+    text_column="text",
+    max_bytes=10,
+    batch_size=2,
   )
 
+  chunks = list(iter_source_chunks(source, chunk_bytes=4))
+
   assert chunks == ["中文文"]
-  assert stats == {
+  assert source.stats == {
+    "limit_bytes": 10,
     "rows": 1,
     "corpus_bytes": 9,
     "corpus_characters": 3,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import tempfile
 import time
 from collections import Counter
 from collections.abc import Iterator
@@ -14,10 +13,44 @@ from typing import Literal
 
 import pyarrow.parquet as pq
 from flm_datasets import SOURCE_CORPUS_SEPARATOR, unitoken_special_tokens
-from uni_tokenizer import BpeEncoder, BpeTrainer, PreTokenizer
+from uni_tokenizer import BpeEncoder, BpeTrainer, PreTokenizer, Source
 
 Unit = Literal["byte", "unicode"]
 UNITS: tuple[Unit, ...] = ("byte", "unicode")
+
+
+class ParquetSource(Source):
+  """Reusable bounded scan over independent Parquet text records."""
+
+  def __init__(
+    self,
+    paths: list[Path],
+    *,
+    text_column: str,
+    batch_size: int,
+    max_bytes: int,
+  ) -> None:
+    self.paths = paths
+    self.text_column = text_column
+    self.batch_size = batch_size
+    self.max_bytes = max_bytes
+    self.stats = _empty_stream_stats(max_bytes)
+
+  def scan(self) -> Iterator[str]:
+    self.stats = _empty_stream_stats(self.max_bytes)
+    for text in _iter_parquet_text(self.paths, self.text_column, self.batch_size):
+      remaining = self.max_bytes - self.stats["corpus_bytes"]
+      encoded = text.encode("utf-8")[:remaining]
+      encoded = encoded.decode("utf-8", errors="ignore").encode("utf-8")
+      if not encoded:
+        break
+      record = encoded.decode("utf-8")
+      self.stats["rows"] += 1
+      self.stats["corpus_bytes"] += len(encoded)
+      self.stats["corpus_characters"] += len(record)
+      yield record
+      if self.stats["corpus_bytes"] >= self.max_bytes:
+        break
 
 
 def main() -> None:
@@ -125,56 +158,48 @@ def train_models_streaming(
     for unit in units
   }
   pretokenizer = PreTokenizer(special_tokens=special_tokens)
-  alphabet: set[str] = set()
-  total_word_count = 0
-  stats = _empty_stream_stats(max_bytes)
-  pretokenize_seconds = 0.0
-  word_counts: Counter[str] = Counter()
-  chunk_index = 0
-  with tempfile.NamedTemporaryFile(suffix=".txt") as chunk_file:
-    for chunk in iter_text_chunks(
-      parquet_paths,
-      max_bytes=max_bytes,
-      chunk_bytes=chunk_bytes,
-      text_column=text_column,
-      batch_size=batch_size,
-      stats=stats,
-    ):
-      chunk_file.seek(0)
-      chunk_file.truncate()
-      chunk_file.write(chunk.encode("utf-8"))
-      chunk_file.flush()
-      started = time.perf_counter()
-      words = pretokenizer.get_words_from_file(chunk_file.name)
-      chunk_seconds = time.perf_counter() - started
-      pretokenize_seconds += chunk_seconds
-      word_counts.update(words)
-      if "unicode" in trainers:
-        alphabet.update(character for word in words for character in word)
-        total_word_count += sum(words.values())
-      _append_metric(
-        metrics_path,
-        {
-          "event": "train_chunk",
-          "train_size": _size_label(max_bytes),
-          "chunk": chunk_index,
-          "corpus_bytes": stats["corpus_bytes"],
-          "chunk_bytes": len(chunk.encode("utf-8")),
-          "pretokenize_seconds": chunk_seconds,
-          "word_types": len(words),
-        },
-      )
-      chunk_index += 1
+  source = ParquetSource(
+    parquet_paths,
+    text_column=text_column,
+    batch_size=batch_size,
+    max_bytes=max_bytes,
+  )
+  word_counter = pretokenizer.word_counter()
+  started = time.perf_counter()
+  word_counter.add_source(
+    source.scan(),
+    max_records=batch_size,
+    max_bytes=chunk_bytes,
+    prefetch=1,
+  )
+  pretokenize_seconds = time.perf_counter() - started
+  stats = source.stats
   if not stats["rows"]:
     raise ValueError("training stream did not contain text")
+  word_counts = word_counter.words()
+  alphabet = {character for word in word_counts for character in word}
+  total_word_count = sum(word_counts.values())
+  _append_metric(
+    metrics_path,
+    {
+      "event": "train_scan",
+      "train_size": _size_label(max_bytes),
+      "corpus_bytes": stats["corpus_bytes"],
+      "rows": stats["rows"],
+      "scan_seconds": pretokenize_seconds,
+      "mib_per_second": stats["corpus_bytes"] / 1024**2 / pretokenize_seconds,
+      "word_types": len(word_counts),
+    },
+  )
   add_seconds = {}
   for unit, trainer in trainers.items():
-    training_words = word_counts
-    if unit == "unicode":
+    started = time.perf_counter()
+    if unit == "byte":
+      trainer.add_word_counter(word_counter)
+    else:
       training_words = word_counts.copy()
       training_words.update({character: total_word_count + 1 for character in alphabet})
-    started = time.perf_counter()
-    trainer.add_words(training_words)
+      trainer.add_words(training_words)
     add_seconds[unit] = time.perf_counter() - started
 
   models = []
@@ -239,19 +264,20 @@ def evaluate_models_streaming(
   batch_size: int,
   metrics_path: Path,
 ) -> dict[str, object]:
-  stats = _empty_stream_stats(max_bytes)
+  source = ParquetSource(
+    parquet_paths,
+    text_column=text_column,
+    batch_size=batch_size,
+    max_bytes=max_bytes,
+  )
   states = [
     {"counts": Counter(), "tokens": 0, "seconds": 0.0, "roundtrip": True}
     for _ in models
   ]
   for chunk_index, chunk in enumerate(
-    iter_text_chunks(
-      parquet_paths,
-      max_bytes=max_bytes,
+    iter_source_chunks(
+      source,
       chunk_bytes=chunk_bytes,
-      text_column=text_column,
-      batch_size=batch_size,
-      stats=stats,
     )
   ):
     chunk_metrics = []
@@ -278,10 +304,11 @@ def evaluate_models_streaming(
         "event": "eval_chunk",
         "chunk": chunk_index,
         "chunk_bytes": len(chunk.encode("utf-8")),
-        "corpus_bytes": stats["corpus_bytes"],
+        "corpus_bytes": source.stats["corpus_bytes"],
         "models": chunk_metrics,
       },
     )
+  stats = source.stats
   if not stats["rows"]:
     raise ValueError("evaluation stream did not contain text")
   for model, state in zip(models, states, strict=True):
@@ -312,41 +339,19 @@ def evaluate_models_streaming(
   return stats
 
 
-def iter_text_chunks(
-  parquet_paths: list[Path],
-  *,
-  max_bytes: int,
-  chunk_bytes: int,
-  text_column: str,
-  batch_size: int,
-  stats: dict[str, object],
-) -> Iterator[str]:
+def iter_source_chunks(source: Source, *, chunk_bytes: int) -> Iterator[str]:
   parts: list[str] = []
   buffered_bytes = 0
   separator = f"\n{SOURCE_CORPUS_SEPARATOR}\n"
-  for text in _iter_parquet_text(parquet_paths, text_column, batch_size):
-    prefix = separator if stats["rows"] else ""
-    remaining = max_bytes - stats["corpus_bytes"]
-    prefix_bytes = prefix.encode("utf-8")
-    if remaining <= len(prefix_bytes):
-      break
-    text_bytes = text.encode("utf-8")[: remaining - len(prefix_bytes)]
-    text_bytes = text_bytes.decode("utf-8", errors="ignore").encode("utf-8")
-    if not text_bytes:
-      break
-    encoded = prefix_bytes + text_bytes
-    value = prefix + text_bytes.decode("utf-8")
+  for text in source.scan():
+    value = (separator if parts else "") + text
+    encoded = value.encode("utf-8")
     parts.append(value)
     buffered_bytes += len(encoded)
-    stats["rows"] += 1
-    stats["corpus_bytes"] += len(encoded)
-    stats["corpus_characters"] += len(value)
     if buffered_bytes >= chunk_bytes:
       yield "".join(parts)
       parts = []
       buffered_bytes = 0
-    if stats["corpus_bytes"] >= max_bytes:
-      break
   if parts:
     yield "".join(parts)
 
