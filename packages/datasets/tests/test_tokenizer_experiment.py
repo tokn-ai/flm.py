@@ -14,7 +14,7 @@ SPEC.loader.exec_module(EXPERIMENT)
 empirical_entropy = EXPERIMENT.empirical_entropy
 reserve_unicode_alphabet = EXPERIMENT.reserve_unicode_alphabet
 train_and_evaluate = EXPERIMENT.train_and_evaluate
-write_text_subset = EXPERIMENT.write_text_subset
+iter_text_chunks = EXPERIMENT.iter_text_chunks
 
 
 def test_empirical_entropy() -> None:
@@ -23,24 +23,25 @@ def test_empirical_entropy() -> None:
   assert empirical_entropy([1, 2, 1, 2]) == 1.0
 
 
-def test_write_text_subset_respects_utf8_byte_limit(tmp_path: Path) -> None:
+def test_iter_text_chunks_respects_utf8_byte_limit(tmp_path: Path) -> None:
   parquet_path = tmp_path / "texts.parquet"
   pq.write_table(pa.table({"text": ["中文文本", "第二篇文档"]}), parquet_path)
-  output_path = tmp_path / "subset.txt"
+  stats = {"rows": 0, "corpus_bytes": 0, "corpus_characters": 0}
 
-  stats = write_text_subset(
-    [parquet_path],
-    output_path,
-    text_column="text",
-    max_bytes=10,
-    batch_size=2,
+  chunks = list(
+    iter_text_chunks(
+      [parquet_path],
+      text_column="text",
+      max_bytes=10,
+      chunk_bytes=4,
+      batch_size=2,
+      stats=stats,
+    )
   )
 
-  assert output_path.read_text() == "中文文"
+  assert chunks == ["中文文"]
   assert stats == {
     "rows": 1,
-    "characters": 3,
-    "text_bytes": 9,
     "corpus_bytes": 9,
     "corpus_characters": 3,
   }

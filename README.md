@@ -111,6 +111,11 @@ The JSON report includes token compression, fixed-width and entropy compression
 ratios, zero-order Shannon entropy, encode/decode timing, and round-trip status.
 Unicode training reserves every observed code point as an atomic token before
 allocating merge tokens; singleton reservations do not alter pair counts.
+The defaults train independent 1 GiB and 10 GiB models and stream 100 GiB of
+held-out evaluation data. Raw corpus copies are not retained: `results.json`
+stores aggregate results and `metrics.jsonl` stores per-chunk and per-phase
+timing events. Use `--train-bytes`, `--eval-bytes`, and `--chunk-bytes` for
+smaller smoke runs.
 
 ## Setup
 
