@@ -94,6 +94,24 @@ Relative data, tokenizer, sink, and secret paths resolve from `workspace_root`.
 Relative experiment config paths passed to the CLI resolve from `code_root`.
 Run artifacts are written to `workspace_root/workspace.runs_dir/experiment/run_id`.
 
+## Chinese tokenizer unit experiment
+
+Compare byte and Unicode BPE units using native UniToken artifacts on frozen
+FineWeb2 Chinese train and evaluation subsets:
+
+```sh
+uv run python scripts/experiment_parquet_tokenizer_units.py \
+  --train-parquet /path/to/cmn_Hani/train/*.parquet \
+  --eval-parquet /path/to/cmn_Hani/test/*.parquet \
+  --unit byte unicode \
+  --vocab-size 8192
+```
+
+The JSON report includes token compression, fixed-width and entropy compression
+ratios, zero-order Shannon entropy, encode/decode timing, and round-trip status.
+Unicode training reserves every observed code point as an atomic token before
+allocating merge tokens; singleton reservations do not alter pair counts.
+
 ## Setup
 
 ```sh
