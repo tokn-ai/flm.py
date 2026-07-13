@@ -29,10 +29,12 @@ def test_cpu_vllm_decode_matches_native_reference_model(
   config = ReferenceModelConfig(
     vocab_size=32,
     max_seq_len=16,
-    d_model=32,
+    # Use a head size supported natively by vLLM's CPU backend. The adapter
+    # must not change model dimensions to make an unsupported shape fit.
+    d_model=64,
     n_layers=2,
     n_heads=2,
-    d_ff=64,
+    d_ff=128,
   )
   native = ReferenceModel(config).eval()
   model_dir = tmp_path / "model"
