@@ -1,228 +1,278 @@
-"""Reference model adapter for vLLM."""
+"""Native vLLM implementation of the FLM reference model."""
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 
 import torch
 from flm_llm import ReferenceModel, ReferenceModelConfig
 from torch import nn
 
-try:  # pragma: no cover - exercised in the optional vLLM runtime.
-  from vllm.model_executor.models.llama import LlamaForCausalLM as _VllmLlama
+try:  # pragma: no cover - exercised only with the optional vLLM runtime.
+  from vllm.distributed import get_tensor_model_parallel_world_size
+  from vllm.model_executor.layers.activation import SiluAndMul
+  from vllm.model_executor.layers.attention import Attention
+  from vllm.model_executor.layers.layernorm import RMSNorm
+  from vllm.model_executor.layers.linear import (
+    MergedColumnParallelLinear,
+    QKVParallelLinear,
+    RowParallelLinear,
+  )
+  from vllm.model_executor.layers.logits_processor import LogitsProcessor
+  from vllm.model_executor.layers.rotary_embedding import get_rope
+  from vllm.model_executor.layers.vocab_parallel_embedding import (
+    ParallelLMHead,
+    VocabParallelEmbedding,
+  )
+  from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency.
   if exc.name != "vllm":
     raise
-  _VllmLlama = nn.Module
   _VLLM_AVAILABLE = False
 else:
   _VLLM_AVAILABLE = True
 
 
-class FlmReferenceForCausalLM(_VllmLlama):
-  """Run FLM reference checkpoints with vLLM's native Llama engine.
+if _VLLM_AVAILABLE:  # pragma: no branch - definitions depend on optional vLLM.
 
-  The FLM reference topology matches the dense Llama execution topology. The
-  production adapter therefore reuses vLLM's attention, RoPE, and KV-cache
-  implementation and translates only checkpoint names. Without the optional
-  vLLM dependency, a native FLM fallback keeps export validation lightweight.
-  """
+  class FlmAttention(nn.Module):
+    """FLM self-attention expressed with vLLM cache-aware primitives."""
 
-  def __init__(self, *, vllm_config, prefix: str = "") -> None:
-    if _VLLM_AVAILABLE:
-      config = vllm_config.model_config.hf_config
-      self._logical_head_dim = int(config.hidden_size) // int(
-        config.num_attention_heads
-      )
-      self._physical_head_dim = _cpu_supported_head_dim(self._logical_head_dim)
-      config.head_dim = self._physical_head_dim
-      super().__init__(vllm_config=vllm_config, prefix=prefix)
-      if self._physical_head_dim != self._logical_head_dim:
-        scale = self._logical_head_dim**-0.5
-        for layer in self.model.layers:
-          layer.self_attn.scaling = scale
-          layer.self_attn.attn.impl.scale = scale
-      return
+    def __init__(self, *, config, cache_config, quant_config, prefix: str) -> None:
+      super().__init__()
+      hidden_size = int(config.hidden_size)
+      total_heads = int(config.num_attention_heads)
+      if hidden_size % total_heads:
+        raise ValueError("hidden_size must be divisible by num_attention_heads")
+      tp_size = get_tensor_model_parallel_world_size()
+      if total_heads % tp_size:
+        raise ValueError(
+          "num_attention_heads must be divisible by tensor parallel size"
+        )
 
-    super().__init__()
-    del prefix
-    config = vllm_config.model_config.hf_config
-    self.config = config
-    self.model = ReferenceModel(
-      ReferenceModelConfig(
-        vocab_size=int(config.vocab_size),
-        max_seq_len=int(config.max_position_embeddings),
-        d_model=int(config.hidden_size),
-        n_layers=int(config.num_hidden_layers),
-        n_heads=int(config.num_attention_heads),
-        d_ff=int(config.intermediate_size),
+      self.num_heads = total_heads // tp_size
+      self.head_dim = hidden_size // total_heads
+      self.qkv = QKVParallelLinear(
+        hidden_size=hidden_size,
+        head_size=self.head_dim,
+        total_num_heads=total_heads,
+        total_num_kv_heads=total_heads,
         bias=bool(getattr(config, "attention_bias", False)),
-        rope_base=float(getattr(config, "rope_theta", 10_000.0)),
-        norm_eps=float(getattr(config, "rms_norm_eps", 1e-6)),
+        quant_config=quant_config,
+        prefix=f"{prefix}.qkv",
       )
-    )
-
-  def forward(
-    self,
-    input_ids: torch.Tensor | None,
-    positions: torch.Tensor | None = None,
-    intermediate_tensors=None,
-    inputs_embeds: torch.Tensor | None = None,
-    **_: object,
-  ) -> torch.Tensor:
-    if _VLLM_AVAILABLE:
-      if positions is None:
-        raise ValueError("positions are required by the vLLM runtime")
-      return super().forward(
-        input_ids,
-        positions,
-        intermediate_tensors,
-        inputs_embeds,
+      self.out = RowParallelLinear(
+        input_size=hidden_size,
+        output_size=hidden_size,
+        bias=bool(getattr(config, "attention_bias", False)),
+        quant_config=quant_config,
+        prefix=f"{prefix}.out",
+      )
+      self.rope = get_rope(
+        self.head_dim,
+        max_position=int(config.max_position_embeddings),
+        rope_parameters={"rope_type": "default", "rope_theta": config.rope_theta},
+        is_neox_style=True,
+      )
+      self.attention = Attention(
+        self.num_heads,
+        self.head_dim,
+        self.head_dim**-0.5,
+        num_kv_heads=self.num_heads,
+        cache_config=cache_config,
+        quant_config=quant_config,
+        prefix=f"{prefix}.attention",
       )
 
-    del positions, intermediate_tensors, inputs_embeds
-    if input_ids is None:
-      raise ValueError("input_ids are required by the native FLM fallback")
-    if input_ids.ndim == 1:
-      input_ids = input_ids.unsqueeze(0)
-    logits, _ = self.model(input_ids)
-    if logits is None:
-      raise RuntimeError("reference model did not return logits")
-    return logits.reshape(-1, logits.shape[-1])
+    def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+      qkv, _ = self.qkv(x)
+      q, k, v = qkv.chunk(3, dim=-1)
+      q, k = self.rope(positions, q, k)
+      output = self.attention(q, k, v)
+      output, _ = self.out(output)
+      return output
 
-  def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
-    if _VLLM_AVAILABLE:
-      return super().embed_input_ids(input_ids)
-    return self.model.token_embedding(input_ids)
-
-  def compute_logits(
-    self,
-    hidden_states: torch.Tensor,
-    sampling_metadata=None,
-  ) -> torch.Tensor:
-    del sampling_metadata
-    if _VLLM_AVAILABLE:
-      return super().compute_logits(hidden_states)
-    return hidden_states
-
-  def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-    if _VLLM_AVAILABLE:
-      mapped = (self._map_vllm_weight(name, tensor) for name, tensor in weights)
-      return super().load_weights(mapped)
-
-    loaded_names = set()
-    state = {}
-    for name, tensor in weights:
-      loaded_names.add(name if name.startswith("model.") else f"model.{name}")
-      state[name.removeprefix("model.")] = tensor
-    missing, unexpected = self.model.load_state_dict(state, strict=False)
-    if unexpected:
-      raise RuntimeError(f"unexpected FLM checkpoint tensors: {sorted(unexpected)}")
-    missing_names = set(missing) | {f"model.{name}" for name in missing}
-    return loaded_names - missing_names
-
-  def _map_vllm_weight(
-    self,
-    name: str,
-    tensor: torch.Tensor,
-  ) -> tuple[str, torch.Tensor]:
-    mapped_name = _vllm_weight_name(name)
-    if self._physical_head_dim == self._logical_head_dim:
-      return mapped_name, tensor
-    if mapped_name.endswith("self_attn.qkv_proj.weight") or mapped_name.endswith(
-      "self_attn.qkv_proj.bias"
-    ):
-      tensor = _pad_qkv_heads(
-        tensor,
-        n_heads=int(self.config.num_attention_heads),
-        logical_head_dim=self._logical_head_dim,
-        physical_head_dim=self._physical_head_dim,
+  class FlmSwiGLU(nn.Module):
+    def __init__(self, *, config, quant_config, prefix: str) -> None:
+      super().__init__()
+      bias = bool(getattr(config, "mlp_bias", False))
+      self.up = MergedColumnParallelLinear(
+        input_size=int(config.hidden_size),
+        output_sizes=[int(config.intermediate_size)] * 2,
+        bias=bias,
+        quant_config=quant_config,
+        prefix=f"{prefix}.up",
       )
-    elif mapped_name.endswith("self_attn.o_proj.weight"):
-      tensor = _pad_attention_output(
-        tensor,
-        n_heads=int(self.config.num_attention_heads),
-        logical_head_dim=self._logical_head_dim,
-        physical_head_dim=self._physical_head_dim,
+      self.down = RowParallelLinear(
+        input_size=int(config.intermediate_size),
+        output_size=int(config.hidden_size),
+        bias=bias,
+        quant_config=quant_config,
+        prefix=f"{prefix}.down",
       )
-    return mapped_name, tensor
+      self.activation = SiluAndMul()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+      x, _ = self.up(x)
+      x = self.activation(x)
+      x, _ = self.down(x)
+      return x
+
+  class FlmBlock(nn.Module):
+    def __init__(self, *, vllm_config, prefix: str) -> None:
+      super().__init__()
+      config = vllm_config.model_config.hf_config
+      self.attn_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+      self.attn = FlmAttention(
+        config=config,
+        cache_config=vllm_config.cache_config,
+        quant_config=vllm_config.quant_config,
+        prefix=f"{prefix}.attn",
+      )
+      self.ffn_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+      self.ffn = FlmSwiGLU(
+        config=config,
+        quant_config=vllm_config.quant_config,
+        prefix=f"{prefix}.ffn",
+      )
+
+    def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+      x = x + self.attn(positions, self.attn_norm(x))
+      return x + self.ffn(self.ffn_norm(x))
+
+  class FlmReferenceForCausalLM(nn.Module):
+    """The FLM reference topology implemented directly for vLLM.
+
+    Logical model dimensions are never changed to accommodate a backend. If a
+    vLLM backend does not support an FLM head size, engine construction fails
+    instead of running a padded, backend-specific approximation.
+    """
+
+    packed_modules_mapping = {
+      "qkv": ["q", "k", "v"],
+      "up": ["gate", "value"],
+    }
+
+    def __init__(self, *, vllm_config, prefix: str = "") -> None:
+      super().__init__()
+      del prefix
+      self.config = vllm_config.model_config.hf_config
+      quant_config = vllm_config.quant_config
+      self.token_embedding = VocabParallelEmbedding(
+        self.config.vocab_size,
+        self.config.hidden_size,
+        quant_config=quant_config,
+      )
+      self.blocks = nn.ModuleList(
+        FlmBlock(vllm_config=vllm_config, prefix=f"blocks.{index}")
+        for index in range(self.config.num_hidden_layers)
+      )
+      self.norm = RMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
+      head = ParallelLMHead(
+        self.config.vocab_size,
+        self.config.hidden_size,
+        quant_config=quant_config,
+        prefix="lm_head",
+      )
+      self.lm_head = head.tie_weights(self.token_embedding)
+      self.logits_processor = LogitsProcessor(self.config.vocab_size)
+
+    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+      return self.token_embedding(input_ids)
+
+    def forward(
+      self,
+      input_ids: torch.Tensor | None,
+      positions: torch.Tensor,
+      intermediate_tensors=None,
+      inputs_embeds: torch.Tensor | None = None,
+      **_: object,
+    ) -> torch.Tensor:
+      if intermediate_tensors is not None:
+        raise ValueError("pipeline parallelism is not supported by the FLM adapter")
+      if inputs_embeds is None:
+        if input_ids is None:
+          raise ValueError("input_ids or inputs_embeds is required")
+        x = self.token_embedding(input_ids)
+      else:
+        x = inputs_embeds
+      for block in self.blocks:
+        x = block(positions, x)
+      return self.norm(x)
+
+    def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
+      return self.logits_processor(self.lm_head, hidden_states)
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+      params = dict(self.named_parameters())
+      loaded = set()
+      for raw_name, tensor in weights:
+        name = raw_name.removeprefix("model.")
+        if name == "lm_head.weight":
+          continue
+        param = params.get(name)
+        if param is None:
+          raise ValueError(f"unsupported FLM checkpoint tensor: {raw_name}")
+        loader = getattr(param, "weight_loader", default_weight_loader)
+        loader(param, tensor)
+        loaded.add(name)
+      return loaded
 
 
-_BLOCK_WEIGHT_NAMES = {
-  "attn_norm": "input_layernorm",
-  "attn.qkv": "self_attn.qkv_proj",
-  "attn.out": "self_attn.o_proj",
-  "ffn_norm": "post_attention_layernorm",
-  "ffn.up": "mlp.gate_up_proj",
-  "ffn.down": "mlp.down_proj",
-}
+else:
 
+  class FlmReferenceForCausalLM(nn.Module):
+    """Native FLM fallback used by export tests when vLLM is unavailable."""
 
-def _vllm_weight_name(name: str) -> str:
-  name = name.removeprefix("model.")
-  if name.startswith("token_embedding."):
-    return "model.embed_tokens." + name.removeprefix("token_embedding.")
-  if name.startswith("norm.") or name.startswith("lm_head."):
-    return name if name.startswith("lm_head.") else f"model.{name}"
+    def __init__(self, *, vllm_config, prefix: str = "") -> None:
+      super().__init__()
+      del prefix
+      config = vllm_config.model_config.hf_config
+      self.config = config
+      self.model = ReferenceModel(
+        ReferenceModelConfig(
+          vocab_size=int(config.vocab_size),
+          max_seq_len=int(config.max_position_embeddings),
+          d_model=int(config.hidden_size),
+          n_layers=int(config.num_hidden_layers),
+          n_heads=int(config.num_attention_heads),
+          d_ff=int(config.intermediate_size),
+          bias=bool(getattr(config, "attention_bias", False)),
+          rope_base=float(getattr(config, "rope_theta", 10_000.0)),
+          norm_eps=float(getattr(config, "rms_norm_eps", 1e-6)),
+        )
+      )
 
-  match = re.fullmatch(r"blocks\.(\d+)\.(.+)\.(weight|bias)", name)
-  if match is None:
-    raise ValueError(f"unsupported FLM checkpoint tensor: {name}")
-  layer, component, parameter = match.groups()
-  mapped_component = _BLOCK_WEIGHT_NAMES.get(component)
-  if mapped_component is None:
-    raise ValueError(f"unsupported FLM checkpoint tensor: {name}")
-  return f"model.layers.{layer}.{mapped_component}.{parameter}"
+    def forward(
+      self,
+      input_ids: torch.Tensor | None,
+      positions: torch.Tensor | None = None,
+      intermediate_tensors=None,
+      inputs_embeds: torch.Tensor | None = None,
+      **_: object,
+    ) -> torch.Tensor:
+      del positions, intermediate_tensors, inputs_embeds
+      if input_ids is None:
+        raise ValueError("input_ids are required by the native FLM fallback")
+      if input_ids.ndim == 1:
+        input_ids = input_ids.unsqueeze(0)
+      logits, _ = self.model(input_ids)
+      if logits is None:
+        raise RuntimeError("reference model did not return logits")
+      return logits.reshape(-1, logits.shape[-1])
 
+    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+      return self.model.token_embedding(input_ids)
 
-def _cpu_supported_head_dim(logical_head_dim: int) -> int:
-  from vllm.platforms import current_platform
+    def compute_logits(
+      self,
+      hidden_states: torch.Tensor,
+      sampling_metadata=None,
+    ) -> torch.Tensor:
+      del sampling_metadata
+      return hidden_states
 
-  if current_platform.device_type != "cpu":
-    return logical_head_dim
-  from vllm.v1.attention.backends.cpu_attn import CPUAttentionBackend
-
-  supported = CPUAttentionBackend.get_supported_head_sizes()
-  for head_dim in supported:
-    if head_dim >= logical_head_dim and head_dim % logical_head_dim == 0:
-      return head_dim
-  raise ValueError(
-    f"FLM head dimension {logical_head_dim} exceeds vLLM CPU support: {supported}"
-  )
-
-
-def _pad_qkv_heads(
-  tensor: torch.Tensor,
-  *,
-  n_heads: int,
-  logical_head_dim: int,
-  physical_head_dim: int,
-) -> torch.Tensor:
-  tail = tensor.shape[1:]
-  source = tensor.reshape(3, n_heads, logical_head_dim, *tail)
-  padded = tensor.new_zeros((3, n_heads, physical_head_dim, *tail))
-  half = logical_head_dim // 2
-  if physical_head_dim % logical_head_dim != 0:
-    raise ValueError(
-      "physical head padding must be an integer multiple of logical head size"
-    )
-  stride = physical_head_dim // logical_head_dim
-  rope_indices = torch.arange(half, device=tensor.device) * stride
-  padded[:2, :, rope_indices] = source[:2, :, :half]
-  padded[:2, :, physical_head_dim // 2 + rope_indices] = source[:2, :, half:]
-  padded[2, :, :logical_head_dim] = source[2]
-  return padded.reshape(3 * n_heads * physical_head_dim, *tail)
-
-
-def _pad_attention_output(
-  tensor: torch.Tensor,
-  *,
-  n_heads: int,
-  logical_head_dim: int,
-  physical_head_dim: int,
-) -> torch.Tensor:
-  source = tensor.reshape(tensor.shape[0], n_heads, logical_head_dim)
-  padded = tensor.new_zeros((tensor.shape[0], n_heads, physical_head_dim))
-  padded[:, :, :logical_head_dim] = source
-  return padded.flatten(1)
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+      state = {name.removeprefix("model."): tensor for name, tensor in weights}
+      self.model.load_state_dict(state)
+      return {f"model.{name}" for name in state}

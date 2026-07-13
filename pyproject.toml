@@ -11,6 +11,12 @@ members = ["packages/*"]
 
 [tool.uv]
 no-build-isolation-package = ["flash-attn"]
+conflicts = [
+  [
+    { package = "flm-vllm" },
+    { package = "flm-modules", extra = "nvidia" },
+  ],
+]
 
 [tool.uv.sources]
 flm-modules = { workspace = true }

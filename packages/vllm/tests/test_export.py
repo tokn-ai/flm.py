@@ -11,12 +11,7 @@ from flm_llm import ReferenceModel, ReferenceModelConfig
 from flm_train.checkpoints import CheckpointState, save_checkpoint
 from flm_vllm.export import export_reference_checkpoint, reference_vllm_config
 from flm_vllm.importing import import_reference_export
-from flm_vllm.reference import (
-  FlmReferenceForCausalLM,
-  _pad_attention_output,
-  _pad_qkv_heads,
-  _vllm_weight_name,
-)
+from flm_vllm.reference import FlmReferenceForCausalLM
 from flm_vllm.registration import register_flm_models
 from flm_vllm.rollout import generate_vllm_rollouts, resolve_export_encoding_name
 from safetensors.torch import load_file
@@ -375,58 +370,6 @@ def test_register_flm_models_is_idempotent_and_lazy(monkeypatch) -> None:
   assert registrations == [
     ("FlmReferenceForCausalLM", "flm_vllm.reference:FlmReferenceForCausalLM")
   ]
-
-
-def test_reference_vllm_weight_names_match_native_llama_layers() -> None:
-  assert _vllm_weight_name("token_embedding.weight") == "model.embed_tokens.weight"
-  assert _vllm_weight_name("blocks.3.attn_norm.weight") == (
-    "model.layers.3.input_layernorm.weight"
-  )
-  assert _vllm_weight_name("blocks.3.attn.qkv.weight") == (
-    "model.layers.3.self_attn.qkv_proj.weight"
-  )
-  assert _vllm_weight_name("blocks.3.attn.out.weight") == (
-    "model.layers.3.self_attn.o_proj.weight"
-  )
-  assert _vllm_weight_name("blocks.3.ffn_norm.weight") == (
-    "model.layers.3.post_attention_layernorm.weight"
-  )
-  assert _vllm_weight_name("blocks.3.ffn.up.weight") == (
-    "model.layers.3.mlp.gate_up_proj.weight"
-  )
-  assert _vllm_weight_name("blocks.3.ffn.down.weight") == (
-    "model.layers.3.mlp.down_proj.weight"
-  )
-  assert _vllm_weight_name("norm.weight") == "model.norm.weight"
-  assert _vllm_weight_name("lm_head.weight") == "lm_head.weight"
-
-
-def test_reference_vllm_cpu_head_padding_preserves_logical_components() -> None:
-  qkv = torch.arange(3 * 2 * 4 * 3).reshape(3 * 2 * 4, 3)
-  padded_qkv = _pad_qkv_heads(
-    qkv,
-    n_heads=2,
-    logical_head_dim=4,
-    physical_head_dim=8,
-  ).reshape(3, 2, 8, 3)
-  source_qkv = qkv.reshape(3, 2, 4, 3)
-
-  torch.testing.assert_close(padded_qkv[:2, :, 0:4:2], source_qkv[:2, :, :2])
-  torch.testing.assert_close(padded_qkv[:2, :, 4:8:2], source_qkv[:2, :, 2:])
-  torch.testing.assert_close(padded_qkv[2, :, :4], source_qkv[2])
-  assert torch.count_nonzero(padded_qkv[:2, :, 1:4:2]) == 0
-  assert torch.count_nonzero(padded_qkv[:2, :, 5:8:2]) == 0
-  assert torch.count_nonzero(padded_qkv[2, :, 4:]) == 0
-
-  output = torch.arange(5 * 2 * 4).reshape(5, 2 * 4)
-  padded_output = _pad_attention_output(
-    output,
-    n_heads=2,
-    logical_head_dim=4,
-    physical_head_dim=8,
-  ).reshape(5, 2, 8)
-  torch.testing.assert_close(padded_output[:, :, :4], output.reshape(5, 2, 4))
-  assert torch.count_nonzero(padded_output[:, :, 4:]) == 0
 
 
 def test_reference_vllm_config_rejects_non_reference_model() -> None:
